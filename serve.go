@@ -126,6 +126,9 @@ type job struct {
 	Error   string    `json:"error,omitempty"`
 	Key     string    `json:"key,omitempty"`
 	Result  any       `json:"result,omitempty"` // index jobs
+	// Cached is when the result a triage job reused was made, if it
+	// reused one instead of running.
+	Cached *time.Time `json:"cached,omitempty"`
 
 	log *activity.Log
 }
@@ -418,9 +421,17 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 			return
 		}
 		j.Status, j.Key = "done", r.Key
+		j.markCached(r)
 		log.Printf("triage %s: %v (%s)", j.URL, r.Counts, r.Key)
 	}()
 	return j, nil
+}
+
+// markCached records a result made before the job started as reused.
+func (j *job) markCached(r *PRResult) {
+	if r.CreatedAt.Before(j.Started) {
+		j.Cached = &r.CreatedAt
+	}
 }
 
 // jobLog is the activity of a job, for the UI to watch while it runs.

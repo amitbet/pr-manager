@@ -299,6 +299,7 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 			j.Status, j.Error = "error", err.Error()
 		} else {
 			j.Status, j.Key = "done", r.Key
+			j.markCached(r)
 		}
 	}()
 	return j, nil

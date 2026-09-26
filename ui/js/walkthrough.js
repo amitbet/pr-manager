@@ -46,6 +46,19 @@ const HEADER_H = 54;
 
 // go shows step i. When the page is scrolled past the card, it scrolls back
 // to the card's top so the new step is read from its start.
+// showStep opens the walkthrough on unit id, including no-review units
+// if that's what it is; false if it isn't a step even then.
+export function showStep(id) {
+  let i = steps().findIndex((s) => s.u.id === id);
+  if (i < 0 && !S.wz.all) {
+    S.wz.all = true;
+    i = steps().findIndex((s) => s.u.id === id);
+  }
+  if (i < 0) return false;
+  go(i);
+  return true;
+}
+
 function go(i) {
   const st = steps();
   if (!st.length) return;
@@ -225,7 +238,7 @@ export const actions = {
 };
 
 export function onKeydown(e) {
-  if (S.tab !== "walk" || !S.result || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (S.tab !== "review" || S.mode !== "walk" || !S.result || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest?.("input, textarea, select")) return;
   if (e.key === "ArrowRight" || e.key === "j") S.wz.finished ? go(current(steps())) : step(1);
   else if (e.key === "ArrowLeft" || e.key === "k") S.wz.finished ? go(current(steps())) : step(-1);

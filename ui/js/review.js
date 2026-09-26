@@ -6,6 +6,7 @@ import { unitRows, diffTable, expandAllButton } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
 import { fixDisabled, issueFixButton } from "./fix.js";
 import { trText, trShown, trToggle } from "./entext.js";
+import { showStep } from "./walkthrough.js";
 
 const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
 
@@ -96,10 +97,13 @@ export function reviewHTML() {
     ${files.map(fileHTML).join("") || `<div class="empty">nothing to show</div>`}`;
 }
 
-// jumpToUnit opens the Review tab on one unit, with its details and code.
+// jumpToUnit opens the Review tab on one unit: its walkthrough step, or
+// in the classic list with its details and code.
 export function jumpToUnit(id) {
   S.tab = "review";
   syncURL();
+  if (S.mode === "walk" && showStep(id)) return;
+  S.mode = "classic";
   S.hidden.clear();
   S.details.add(id);
   S.diffOpen[id] = true;

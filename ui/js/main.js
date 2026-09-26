@@ -25,15 +25,17 @@ import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
 // the page.
+// The Review tab is the walkthrough or the classic list of every unit.
 const TABS = [
-  { id: "review", label: "Review", html: reviewHTML },
-  { id: "walk", label: "Walkthrough", html: walkHTML },
+  { id: "review", label: "Review", html: () => S.mode === "classic" ? reviewHTML() : walkHTML() },
   { id: "map", label: "Code map", html: treemapHTML, mount: renderTreemap },
 ];
+const MODES = [["walk", "Walkthrough"], ["classic", "Classic"]];
 
 const actions = {
   ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
+  mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
   "create-pr": async (el) => {
     el.disabled = true;
     el.textContent = "Creating PR…";
@@ -74,7 +76,9 @@ const translateBanner = (r) => r.translating
   : r.translate_error ? `<div class="tr-banner error" role="status">${esc(r.translate_error)}</div>` : "";
 
 const tabsHTML = () => `<div class="tabs">${TABS.map((t) =>
-  `<button class="${S.tab === t.id ? "on" : ""}" data-act="tab" data-tab="${t.id}">${t.label}</button>`).join("")}</div>`;
+  `<button class="${S.tab === t.id ? "on" : ""}" data-act="tab" data-tab="${t.id}">${t.label}</button>`).join("")}
+  <span class="spacer"></span>${S.tab === "review" ? `<span class="seg mode" title="How to review">${MODES.map(([m, l]) =>
+    `<button class="${S.mode === m ? "on" : ""}" data-act="mode" data-mode="${m}">${l}</button>`).join("")}</span>` : ""}</div>`;
 
 onRender(() => {
   const r = S.result;
@@ -135,6 +139,7 @@ document.addEventListener("keydown", walkKeydown);
   await loadList();
   const q = new URLSearchParams(location.search);
   if (TABS.some((t) => t.id === q.get("tab"))) S.tab = q.get("tab");
+  if (q.get("tab") === "walk") S.mode = "walk"; // links from before the tabs merged
   if (q.get("key")) await openResult(q.get("key"), q.get("pr") || q.get("path")).catch(() => {});
   else if (q.get("pr") || q.get("path")) triageURL(q.get("pr") || q.get("path"));
 })();

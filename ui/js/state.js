@@ -17,7 +17,8 @@ export const S = {
   files: {},              // "head:path" -> lines
   drafts: [],
   composer: null,         // {path, side, line, id?, body}
-  tab: "review",          // review | walk | map
+  tab: "review",          // review | map
+  mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | classic
   wz: { cur: null, done: new Set(), all: false, finished: false, view: localStorage.getItem("pr-manager.wzview") || "unified" },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both
   trees: {},              // treemap data by repo ("all" = workspace)
