@@ -52,6 +52,28 @@ func TestFixTargets(t *testing.T) {
 	}
 }
 
+func TestFixable(t *testing.T) {
+	pr := func(p triage.PRInfo) *PRResult { return &PRResult{PR: &p} }
+	for _, c := range []struct {
+		name string
+		r    *PRResult
+		loc  string
+		ok   bool
+	}{
+		{"open PR", pr(triage.PRInfo{State: "OPEN"}), "", true},
+		{"merged PR", pr(triage.PRInfo{State: "MERGED"}), "", false},
+		{"closed PR", pr(triage.PRInfo{State: "CLOSED"}), "", false},
+		{"local repo", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r"}), "worktree", true},
+		{"local with a PR", pr(triage.PRInfo{State: "MERGED", LocalPath: "/r"}), "", true},
+		{"local uncommitted", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r", Uncommitted: true}), "", false},
+		{"local in the clone", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r"}), "clone", false},
+	} {
+		if err := fixable(c.r, c.loc); (err == nil) != c.ok {
+			t.Errorf("%s: err=%v", c.name, err)
+		}
+	}
+}
+
 func TestCheckoutFixBranchAtPRHead(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(repo, 0o755); err != nil {

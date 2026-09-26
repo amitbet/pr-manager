@@ -51,8 +51,8 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if err != nil {
 		return nil, err
 	}
-	if r.PR.LocalPath != "" && ((r.PR.Uncommitted && r.LocalFixDir == "") || req.Location == "clone") {
-		return nil, errors.New("local fixes need a committed change and a separate worktree")
+	if err := fixable(r, req.Location); err != nil {
+		return nil, err
 	}
 	if len(fixTargets(r, req)) == 0 {
 		return nil, errors.New("no matching review issues")
@@ -70,6 +70,19 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 		j.Status, j.Key = "done", res.Key
 	}()
 	return j, nil
+}
+
+// fixable says why a result can't be fixed: a GitHub PR has to be open
+// (as of its triage), and a local checkout needs a committed change and a
+// separate worktree.
+func fixable(r *PRResult, location string) error {
+	if r.PR.LocalPath == "" && r.PR.State != "OPEN" {
+		return fmt.Errorf("the PR is %s; only open PRs and local repositories can be fixed", strings.ToLower(r.PR.State))
+	}
+	if r.PR.LocalPath != "" && ((r.PR.Uncommitted && r.LocalFixDir == "") || location == "clone") {
+		return errors.New("local fixes need a committed change and a separate worktree")
+	}
+	return nil
 }
 
 type targetedIssue struct {

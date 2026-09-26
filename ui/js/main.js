@@ -17,7 +17,7 @@ import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } fro
 import { initSidebar, loadList } from "./sidebar.js";
 import { initTriage, triageURL } from "./triage.js";
 import { initSettings, refreshSettings } from "./settings.js";
-import { actions as fixActions } from "./fix.js";
+import { fixBanner, initFix, actions as fixActions } from "./fix.js";
 import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
 import { actions as enActions } from "./entext.js";
@@ -81,7 +81,7 @@ onRender(() => {
   if (!r) return;
   const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
   updateReviewButton();
-  $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + tabsHTML() + tab.html();
+  $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + fixBanner() + tabsHTML() + tab.html();
   $("#main").classList.toggle("translating", !!r.translating);
   tab.mount?.();
   focusComposer();
@@ -130,6 +130,7 @@ document.addEventListener("keydown", walkKeydown);
   initPanel(showDraft);
   initTriage();
   initJobs(showKey, loadList);
+  initFix(showKey);
   initSettings(() => { if (S.result) { budget.apply(S.result, S.cfg); render(); } }, translate);
   await loadList();
   const q = new URLSearchParams(location.search);

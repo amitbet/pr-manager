@@ -26,3 +26,10 @@
 .act-lines:empty::after { content: "no output yet"; color: var(--muted); }
 .act-line.err { color: var(--human); }
 .act-ts { color: var(--muted); margin-right: 8px; user-select: none; }
+.log-dlg { width: min(1100px, calc(100vw - 32px)); }
+.log-dlg form { padding-bottom: 14px; }
+.log-dlg .activity { margin-top: 10px; }
+.log-dlg .act-list { max-height: calc(100vh - 220px); }
+.job-log-stage { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.job-log-stage .bar { margin: 6px 0 0; }
+.job-log-stage .error { padding: 0; }
