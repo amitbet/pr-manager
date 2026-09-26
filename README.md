@@ -1,48 +1,57 @@
 # pr-manager
 
-## Install
+## Install the desktop app
 
-macOS and Linux, with [Homebrew](https://brew.sh):
+macOS Apple silicon, with [Homebrew](https://brew.sh):
 
 ```sh
 brew tap amitbet/pr-manager https://github.com/amitbet/pr-manager
-brew install --cask amitbet/pr-manager/pr-manager
+brew install --cask amitbet/pr-manager/pr-manager-desktop
 ```
 
-For the desktop app on macOS Apple silicon, use
-`brew install --cask amitbet/pr-manager/pr-manager-desktop` instead.
+Open **PR Manager** from Applications. The app includes its own icon.
 
-Windows, with [Scoop](https://scoop.sh):
+Windows amd64, with [Scoop](https://scoop.sh):
 
 ```powershell
 scoop bucket add pr-manager https://github.com/amitbet/pr-manager
-scoop install pr-manager
+scoop install pr-manager-desktop
 ```
 
-For the Windows desktop app, use `scoop install pr-manager-desktop` instead.
+Open **PR Manager** from the Start menu. Scoop creates the shortcut with the app icon.
 
-## Update
+Linux amd64, download and extract the desktop app:
 
-macOS and Linux:
+```sh
+curl -fLO https://github.com/amitbet/pr-manager/releases/latest/download/pr-manager-linux-amd64.tar.gz
+tar -xzf pr-manager-linux-amd64.tar.gz
+```
+
+Run `./pr-manager-linux-amd64`. The app has a window icon; the archive does not
+install an application-menu shortcut. It requires GTK 3 and WebKit2GTK 4.1.
+
+## Update the desktop app
+
+macOS:
 
 ```sh
 brew update
-brew upgrade --cask amitbet/pr-manager/pr-manager
+brew upgrade --cask amitbet/pr-manager/pr-manager-desktop
 ```
 
 Windows:
 
 ```powershell
 scoop update
-scoop update pr-manager
+scoop update pr-manager-desktop
 ```
 
-For the desktop app, use `brew upgrade --cask amitbet/pr-manager/pr-manager-desktop`
-on macOS or `scoop update pr-manager-desktop` on Windows.
+Linux: close the app and repeat the two download and extract commands above
+in the same directory to replace the executable.
 
-After installing, run `gh auth login`, then `pr-manager serve` to open the UI
-in your browser, or launch the desktop app. See [installation details](#installation)
-for dependencies and other builds.
+Before opening the app for the first time, run `gh auth login`. On Linux,
+install `git` and `gh` first. See [installation details](#installation) for
+the CLI and other builds.
 
 ## About
 
