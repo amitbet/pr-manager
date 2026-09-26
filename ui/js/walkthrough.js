@@ -2,9 +2,9 @@
 // explanation beside the code.
 import { trText } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
-import { S, render, allUnits } from "./state.js";
+import { S, render, allUnits, fileByPath } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
-import { unitRows, diffTable } from "./diff.js";
+import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions as diffActions } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
 import { issueFixButton } from "./fix.js";
 import { openPanel } from "./panel.js";
@@ -153,11 +153,13 @@ function finishHTML(st) {
 function cardHTML(st, i) {
   const { u, f } = st[i];
   const b = u.decision.bucket;
-  const rows = unitRows(f, u);
+  // Expanded, the whole file shows, with other units' changes dimmed.
+  const whole = fullyExpanded(f);
+  const rows = whole ? fileRows(f, u) : unitRows(f, u);
   const issueLines = new Set((u.issues || []).map((x) => x.line).filter(Boolean));
   const shown = new Set();
   rows.forEach((r) => {
-    if (r.t === "del" || !r.n) return;
+    if (r.t === "del" || !r.n || r.other) return;
     shown.add(r.n);
     if (issueLines.has(r.n)) r.iss = true;
   });
@@ -175,7 +177,7 @@ function cardHTML(st, i) {
       <div class="wz-body">
         <section class="wz-explain">${explainHTML(f, u, shown)}</section>
         <section class="wz-code">
-          <div class="wz-codebar"><span>${esc(u.id)}</span><span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
+          <div class="wz-codebar"><span>${esc(u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
           ${diffTable(f, rows, S.wz.view)}
         </section>
       </div>
@@ -200,6 +202,12 @@ export function walkHTML() {
 }
 
 export const actions = {
+  // expand-all, then bring this step's change back into view.
+  "wz-expand-all": async (el) => {
+    const opening = !fullyExpanded(fileByPath(el.dataset.path));
+    if ((await diffActions["expand-all"](el)) === false) return false;
+    if (opening) setTimeout(() => document.querySelector(".wz-code tr.focus-start")?.scrollIntoView({ block: "center" }));
+  },
   "wz-go": (el) => { go(+el.dataset.i); return false; },
   "wz-prev": () => { step(-1); return false; },
   "wz-next": () => { step(1); return false; },

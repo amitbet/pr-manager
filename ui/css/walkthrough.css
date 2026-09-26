@@ -61,3 +61,7 @@
 .wz-finish h2 { margin: 0 0 8px; font-size: 24px; }
 .wz-finish p { color: var(--muted); margin: 0 0 18px; }
 .wz-finish .actions { display: flex; gap: 10px; justify-content: center; }
+/* Whole file: other units' changes are context here. */
+.wz-code tr.other td { opacity: .5; }
+.wz-code tr.other td.add, .wz-code tr.other td.del { background: transparent; }
+.wz-codebar .expand-all { font-size: 12px; padding: 0 8px; }

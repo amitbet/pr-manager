@@ -66,10 +66,10 @@ export function fullyExpanded(f) {
 
 // expandAllButton is the file header toggle that shows the whole file,
 // like GitHub's "Expand all".
-export function expandAllButton(f) {
+export function expandAllButton(f, act = "expand-all") {
   if (!canExpand(f)) return "";
   const on = fullyExpanded(f);
-  return `<button class="details-btn expand-all" data-act="expand-all" data-path="${esc(f.path)}" title="${on ? "Collapse expanded context" : "Show the whole file"}">${on ? "⤒ collapse all" : "↕ expand all"}</button>`;
+  return `<button class="details-btn expand-all" data-act="${act}" data-path="${esc(f.path)}" title="${on ? "Collapse expanded context" : "Show the whole file"}">${on ? "⤒ collapse all" : "↕ expand all"}</button>`;
 }
 
 async function ensureHead(f) {
@@ -119,6 +119,23 @@ function rowsFor(f, h, isLast) {
   return rows;
 }
 
+// fileRows is every display row of f, all units' hunks in file order.
+// Rows of other units' hunks are flagged other; the first changed row of
+// focus is flagged start, so the walkthrough can dim and scroll.
+export function fileRows(f, focus) {
+  const mine = new Set(focus.hunks || []);
+  const rows = [];
+  let started = false;
+  for (const h of fileHunks(f).sort((a, b) => a.new_start - b.new_start || a.old_start - b.old_start)) {
+    for (const r of rowsFor(f, h, h === f._last)) {
+      if (!mine.has(h) && (r.t === "add" || r.t === "del" || (r.t === "ctx" && !r.x) || r.t === "hh")) r.other = true;
+      if (mine.has(h) && !started && (r.t === "add" || r.t === "del")) r.start = started = true;
+      rows.push(r);
+    }
+  }
+  return rows;
+}
+
 // unitRows is every display row for a unit's hunks.
 export function unitRows(f, u) {
   const rows = [];
@@ -157,13 +174,13 @@ function expRow(r, cols) {
 
 // Rows flagged with iss (a review issue's line) get a marker and data-iss,
 // so the walkthrough can scroll to them.
-const issAttrs = (x, r) => `class="${x ? "ctx-x" : ""} ${r?.iss ? "iss" : ""}"${r?.iss ? ` data-iss="${r.n}"` : ""}`;
+const issAttrs = (x, r, start = r?.start) => `class="${x ? "ctx-x" : ""} ${r?.iss ? "iss" : ""} ${r?.other ? "other" : ""} ${start ? "focus-start" : ""}"${r?.iss ? ` data-iss="${r.n}"` : ""}`;
 
 function unifiedTable(f, rows) {
   let out = "";
   for (const r of rows) {
     if (r.t === "exp") { out += expRow(r, 3); continue; }
-    if (r.t === "hh" || r.t === "meta") { out += `<tr class="hh"><td class="n"></td><td class="n"></td><td class="c">${esc(r.text)}</td></tr>`; continue; }
+    if (r.t === "hh" || r.t === "meta") { out += `<tr class="hh ${r.other ? "other" : ""}"><td class="n"></td><td class="n"></td><td class="c">${esc(r.text)}</td></tr>`; continue; }
     const cls = r.t === "add" ? "add" : r.t === "del" ? "del" : "";
     const cm = !r.x && r.cm;
     // Unified: deletions comment on the old line, everything else on the new one.
@@ -205,11 +222,11 @@ function splitTable(f, rows) {
   let out = "";
   for (const p of pairs) {
     if (p.whole) {
-      out += p.whole.t === "exp" ? expRow(p.whole, 4) : `<tr class="hh"><td class="n"></td><td class="c" colspan="3">${esc(p.whole.text)}</td></tr>`;
+      out += p.whole.t === "exp" ? expRow(p.whole, 4) : `<tr class="hh ${p.whole.other ? "other" : ""}"><td class="n"></td><td class="c" colspan="3">${esc(p.whole.text)}</td></tr>`;
       continue;
     }
     const x = (p.l || p.r).x;
-    out += `<tr ${issAttrs(x, p.r)}>${cell(p.l, "LEFT")}${cell(p.r, "RIGHT")}</tr>`;
+    out += `<tr ${issAttrs(x, p.r || p.l, p.l?.start || p.r?.start)}>${cell(p.l, "LEFT")}${cell(p.r, "RIGHT")}</tr>`;
     if (!x) {
       const anchors = [];
       if (p.l) anchors.push({ side: "LEFT", line: p.l.o });
