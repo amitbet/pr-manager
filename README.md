@@ -1,5 +1,16 @@
 # pr-manager
 
+Reviewing [prometheus/prometheus#19805](https://github.com/prometheus/prometheus/pull/19805),
+a TSDB fix that preserves mapped chunks during WAL replay.
+
+Code map with the PR's changes marked on the files they touch:
+
+![Prometheus code map colored by impact and likelihood, with PR changes overlaid](docs/images/prometheus-codemap.png)
+
+Review walkthrough with the review notes and code diff side by side:
+
+![Review walkthrough for the Prometheus TSDB fix, showing review notes beside the diff](docs/images/prometheus-review-walkthrough.png)
+
 ## Install the desktop app
 
 macOS Apple silicon, with [Homebrew](https://brew.sh):
