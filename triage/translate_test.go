@@ -100,4 +100,13 @@ func TestApplyText(t *testing.T) {
 	if u.Headline != "H" || u.Summary != "S" || u.Focus[0] != "f1" || u.Issues[0].Title != "T" || u.Issues[0].Detail != "d" || u.Issues[0].Evidence != "x := 1" {
 		t.Errorf("applied: %+v", u)
 	}
+	u = &Unit{Decision: Decision{Reason: "r", Escalated: []string{"e"}}, Score: &Score{PinWhy: "p"}}
+	tx = TextOf(u)
+	if tx.Reason != "r" || tx.Escalated[0] != "e" || tx.PinWhy != "p" {
+		t.Errorf("bucket reasons: %+v", tx)
+	}
+	ApplyText(u, UnitText{Reason: "R", Escalated: []string{"E"}, PinWhy: "P"})
+	if u.Decision.Reason != "R" || u.Decision.Escalated[0] != "E" || u.Score.PinWhy != "P" || u.Score.FloorWhy != "" {
+		t.Errorf("bucket reasons applied: %+v %+v", u.Decision, u.Score)
+	}
 }

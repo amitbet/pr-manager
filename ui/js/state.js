@@ -9,6 +9,7 @@ export const S = {
   collapsed: new Set(),   // file paths
   diffOpen: {},           // unit id -> bool (default: open unless bucket none)
   details: new Set(),     // unit ids with the details panel open
+  more: new Set(),        // unit ids with the rest of the details open too
   allHidden: false,
   above: {},              // hunk key -> lines expanded above it
   below: {},              // file path -> lines expanded after its last hunk

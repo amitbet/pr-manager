@@ -85,7 +85,7 @@ async function showKey(key) {
   const r = await api(`/api/results/${encodeURIComponent(key)}`);
   budget.apply(r, S.cfg);
   S.result = r;
-  Object.assign(S, { collapsed: new Set(), details: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
+  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
   S.tm.zoom = [];
   loadProgress();
   S.drafts = await api(`${prBase()}/drafts`).catch(() => []);

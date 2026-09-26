@@ -110,7 +110,7 @@ func main() {
 	fs.BoolVar(&o.failOnHuman, "fail-on-human", false, "exit 2 if any unit needs human review")
 	fs.StringVar(&o.fixtures, "fixtures", "testdata/eval", "eval: directory of NAME.json cases")
 	fs.BoolVar(&o.judge, "judge", false, "eval: score summary faithfulness with OpenJev")
-	fs.StringVar(&o.addr, "addr", "127.0.0.1:0", "serve: listen address (port 0 chooses an available port)")
+	fs.StringVar(&o.addr, "addr", defaultAddr, "serve: listen address; the default port falls back to an available one when taken (port 0 always picks one)")
 	fs.StringVar(&o.cache, "cache", cacheRoot, "serve/prs/-pr: repo clones and cached results")
 	fs.StringVar(&o.repo, "repo", "", "prs: owner/repo, or host/owner/repo for GitHub Enterprise")
 	fs.StringVar(&o.author, "author", "@me", "prs: PR author")

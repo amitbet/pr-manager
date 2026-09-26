@@ -28,6 +28,8 @@
 .details p:last-child { margin-bottom: 0; }
 .details .lbl { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
 .details ul { margin: 0; padding-left: 18px; }
+.details .more-btn { display: block; margin: 4px 0 8px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer; }
+.details .more-btn:hover { text-decoration: underline; }
 .details .chips { display: flex; gap: 4px; flex-wrap: wrap; }
 .unit .diffwrap { border-top: 1px solid var(--border); }
 .unit.dim .diffwrap { display: none; }

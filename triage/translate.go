@@ -17,6 +17,12 @@ type UnitText struct {
 	Summary  string      `json:"summary,omitempty"`
 	Focus    []string    `json:"focus,omitempty"`
 	Issues   []IssueText `json:"issues,omitempty"`
+	// Why the unit is in its bucket: the classifier's reason, its
+	// escalations, and what pinned or raised the score.
+	Reason    string   `json:"reason,omitempty"`
+	Escalated []string `json:"escalated,omitempty"`
+	PinWhy    string   `json:"pin_why,omitempty"`
+	FloorWhy  string   `json:"floor_why,omitempty"`
 }
 
 type IssueText struct {
@@ -35,6 +41,10 @@ func TextOf(u *Unit) UnitText {
 	for _, is := range u.Issues {
 		t.Issues = append(t.Issues, IssueText{Title: is.Title, Detail: is.Detail, Scenario: is.Scenario})
 	}
+	t.Reason, t.Escalated = u.Decision.Reason, append([]string(nil), u.Decision.Escalated...)
+	if u.Score != nil {
+		t.PinWhy, t.FloorWhy = u.Score.PinWhy, u.Score.FloorWhy
+	}
 	return t
 }
 
@@ -47,12 +57,16 @@ func ApplyText(u *Unit, t UnitText) {
 	if t.Summary != "" {
 		u.Summary = t.Summary
 	}
-	if len(t.Focus) == len(u.Focus) {
-		for i, f := range t.Focus {
-			if f != "" {
-				u.Focus[i] = f
-			}
-		}
+	for i, f := range sameLen(t.Focus, u.Focus) {
+		set(&u.Focus[i], f)
+	}
+	for i, e := range sameLen(t.Escalated, u.Decision.Escalated) {
+		set(&u.Decision.Escalated[i], e)
+	}
+	set(&u.Decision.Reason, t.Reason)
+	if u.Score != nil {
+		set(&u.Score.PinWhy, t.PinWhy)
+		set(&u.Score.FloorWhy, t.FloorWhy)
 	}
 	if len(t.Issues) == len(u.Issues) {
 		for i, is := range t.Issues {
@@ -61,6 +75,14 @@ func ApplyText(u *Unit, t UnitText) {
 			set(&u.Issues[i].Scenario, is.Scenario)
 		}
 	}
+}
+
+// sameLen is t when it lines up with u, else nothing.
+func sameLen(t, u []string) []string {
+	if len(t) != len(u) {
+		return nil
+	}
+	return t
 }
 
 func set(dst *string, v string) {
@@ -77,7 +99,7 @@ func IsEnglish(lang string) bool {
 
 const translateSystem = `You translate the notes of a code review into %s.
 
-The user message is a JSON array of {"id", "text"} items. Translate each text and return every item with the same id. Keep code identifiers, file paths, flags, error strings, anything in backticks or quotes from the code, and severity words (low, medium, high, critical) as they are. Keep a leading "unverified:" or "summarizer:" label as it is. Translate the meaning, in the plain technical register a reviewer would write; don't add or drop anything.`
+The user message is a JSON array of {"id", "text"} items. Translate each text and return every item with the same id. Keep code identifiers, file paths, flags, error strings, anything in backticks or quotes from the code, and severity and bucket words (low, medium, high, critical; human, skim, none) as they are. Keep a leading "unverified:" or "summarizer:" label as it is. Translate the meaning, in the plain technical register a reviewer would write; don't add or drop anything.`
 
 var translateTool = llm.ToolDefinition{
 	Name:        "submit_translation",
@@ -125,6 +147,7 @@ func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string
 	for id, t := range texts {
 		t.Focus = append([]string(nil), t.Focus...)
 		t.Issues = append([]IssueText(nil), t.Issues...)
+		t.Escalated = append([]string(nil), t.Escalated...)
 		copies[id] = &t
 		for _, s := range textSlots(&t) {
 			if strings.TrimSpace(*s) != "" {
@@ -182,7 +205,10 @@ func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string
 
 // textSlots points at every string of t.
 func textSlots(t *UnitText) []*string {
-	s := []*string{&t.Headline, &t.Summary}
+	s := []*string{&t.Headline, &t.Summary, &t.Reason, &t.PinWhy, &t.FloorWhy}
+	for i := range t.Escalated {
+		s = append(s, &t.Escalated[i])
+	}
 	for i := range t.Focus {
 		s = append(s, &t.Focus[i])
 	}

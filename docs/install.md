@@ -17,9 +17,11 @@ gh auth login
 pr-manager serve
 ```
 
-Homebrew installs `git` and `gh` as dependencies. The server picks an available
-port on `127.0.0.1`, prints its URL and opens your browser. Stop it with Ctrl+C.
-`-addr` still accepts an explicit address.
+Homebrew installs `git` and `gh` as dependencies. The server listens on
+`127.0.0.1:8765`, prints its URL and opens your browser. Stop it with Ctrl+C.
+If the port is taken it picks another one. UI settings are saved to
+`ui-settings.json` in the cache directory, so they survive restarts and port
+changes. `-addr` accepts another address.
 
 The initial cask removes quarantine from this unsigned executable using a
 post-install hook. Apple signing and notarization are not configured yet.

@@ -478,6 +478,7 @@ func newServeHandler(o options) (http.Handler, error) {
 	static, _ := fs.Sub(uiFS, "ui")
 	mux := http.NewServeMux()
 	rv.routes(mux, t)
+	newUISettings(o.cache).routes(mux)
 	treemapRoute(mux, o)
 	mux.Handle("GET /", http.FileServerFS(static))
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
@@ -632,12 +633,20 @@ func newServeHandler(o options) (http.Handler, error) {
 	return mux, nil
 }
 
+// defaultAddr is a fixed port, so the UI's URL stays the same across
+// restarts.
+const defaultAddr = "127.0.0.1:8765"
+
 func runServe(ctx context.Context, o options) error {
 	mux, err := newServeHandler(o)
 	if err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", o.addr)
+	if err != nil && o.addr == defaultAddr {
+		log.Printf("%s is taken (%v); using another port", defaultAddr, err)
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+	}
 	if err != nil {
 		return fmt.Errorf("%w (another pr-manager serve running? `make stop` or `lsof -iTCP:%s`)", err, portOf(o.addr))
 	}

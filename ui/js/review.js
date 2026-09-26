@@ -21,17 +21,20 @@ function issuesHTML(f, u) {
   return `<p><span class="lbl">Issues found in review</span></p><ul class="issues">${items}</ul>`;
 }
 
+// detailsHTML shows the summary and the review; how the unit was bucketed
+// and scored stays collapsed until asked for.
 function detailsHTML(f, u) {
   const d = u.decision;
-  const parts = [];
-  if (u.summary) parts.push(`<p><span class="lbl">Summary</span><span dir="auto">${esc(u.summary)}</span></p>`);
-  parts.push(issuesHTML(f, u));
-  if (u.focus?.length) parts.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x) => `<li dir="auto">${esc(x)}</li>`).join("")}</ul>`);
-  parts.push(movesHTML(u));
-  if (d.reason) parts.push(`<p><span class="lbl">Classifier</span>${esc(d.reason)}</p>`);
-  parts.push(scoresHTML(u));
-  parts.push(classificationHTML(d));
-  return `<div class="details">${parts.join("")}</div>`;
+  const main = [];
+  if (u.summary) main.push(`<p><span class="lbl">Summary</span><span dir="auto">${esc(u.summary)}</span></p>`);
+  main.push(issuesHTML(f, u));
+  if (u.focus?.length) main.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x) => `<li dir="auto">${esc(x)}</li>`).join("")}</ul>`);
+  const rest = [movesHTML(u), d.reason ? `<p><span class="lbl">Classifier</span><span dir="auto">${esc(d.reason)}</span></p>` : "", scoresHTML(u), classificationHTML(d)];
+  const shown = main.filter(Boolean);
+  if (!shown.length) return `<div class="details">${rest.join("")}</div>`; // nothing reviewed
+  const open = S.more.has(u.id);
+  const btn = `<button class="more-btn" data-act="more" data-unit="${esc(u.id)}">${open ? "hide bucket, classifier and scores ▴" : "bucket, classifier and scores ▾"}</button>`;
+  return `<div class="details">${shown.join("")}${btn}${open ? rest.join("") : ""}</div>`;
 }
 
 function unitHTML(f, u) {
@@ -122,6 +125,7 @@ export const actions = {
   filter: (el) => { toggle(S.hidden, el.dataset.b); },
   collapse: (el) => { toggle(S.collapsed, el.dataset.path); },
   details: (el) => { toggle(S.details, el.dataset.unit); },
+  more: (el) => { toggle(S.more, el.dataset.unit); },
   toggle: (el) => {
     const u = S.result.files.flatMap((f) => f.units || []).find((x) => x.id === el.dataset.unit);
     S.diffOpen[u.id] = !diffShown(u);

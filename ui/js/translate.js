@@ -6,6 +6,7 @@ import { postJSON } from "./util.js";
 import { S, render } from "./state.js";
 import { jobSettings, summaryLang } from "./settings.js";
 import { syncComposer } from "./comments.js";
+import * as budget from "./budget.js";
 
 const english = new WeakMap(); // result -> {lang, units: id -> text}
 let seq = 0;
@@ -14,16 +15,23 @@ const units = (r) => r.files.flatMap((f) => f.units || []);
 const textOf = (u) => ({
   headline: u.headline, summary: u.summary, focus: u.focus && [...u.focus],
   issues: (u.issues || []).map((i) => ({ title: i.title, detail: i.detail, failure_scenario: i.failure_scenario })),
+  reason: u.decision.reason, escalated: u.decision.escalated && [...u.decision.escalated],
+  pin_why: u.score?.pin_why, floor_why: u.score?.floor_why,
 });
 
 function put(u, t, keep) {
-  const set = (o, k, v) => { if (v || !keep) o[k] = v; };
+  const set = (o, k, v) => { if (o && (v || !keep)) o[k] = v; };
+  const list = (to, from) => { if (from && to?.length === from.length) from.forEach((v, i) => set(to, i, v)); };
   set(u, "headline", t.headline);
   set(u, "summary", t.summary);
-  if (t.focus && u.focus?.length === t.focus.length) t.focus.forEach((f, i) => set(u.focus, i, f));
+  list(u.focus, t.focus);
   if (t.issues && (u.issues || []).length === t.issues.length) {
     t.issues.forEach((is, i) => { for (const k of ["title", "detail", "failure_scenario"]) set(u.issues[i], k, is[k]); });
   }
+  set(u.decision, "reason", t.reason);
+  list(u.decision.escalated, t.escalated);
+  set(u.score, "pin_why", t.pin_why);
+  set(u.score, "floor_why", t.floor_why);
 }
 
 // restore puts the result's own text back.
@@ -33,6 +41,7 @@ function restore(r) {
   for (const u of units(r)) if (en.units[u.id]) put(u, en.units[u.id], false);
   r.summary_lang = en.lang;
   english.delete(r);
+  budget.apply(r, S.cfg); // the bucket text quotes pin_why and floor_why
 }
 
 // translate shows the open result in the chosen summary language. English
@@ -59,6 +68,7 @@ export async function translate() {
       english.set(r, { lang: r.summary_lang, units: Object.fromEntries(units(r).map((u) => [u.id, textOf(u)])) });
       for (const u of units(r)) if (tr.units[u.id]) put(u, tr.units[u.id], true);
       r.summary_lang = tr.lang;
+      budget.apply(r, S.cfg);
     }
   } catch (e) {
     if (n !== seq || S.result !== r) return;

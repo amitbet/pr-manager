@@ -1,5 +1,5 @@
 BIN      := ./pr-manager
-ADDR     ?= 127.0.0.1:0
+ADDR     ?= 127.0.0.1:8765
 REPO     ?=
 AUTHOR   ?=
 LIMIT    ?= 20
