@@ -1,5 +1,51 @@
 # pr-manager
 
+## Install
+
+macOS and Linux, with [Homebrew](https://brew.sh):
+
+```sh
+brew tap amitbet/pr-manager https://github.com/amitbet/pr-manager
+brew install --cask amitbet/pr-manager/pr-manager
+```
+
+For the desktop app on macOS Apple silicon, use
+`brew install --cask amitbet/pr-manager/pr-manager-desktop` instead.
+
+Windows, with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add pr-manager https://github.com/amitbet/pr-manager
+scoop install pr-manager
+```
+
+For the Windows desktop app, use `scoop install pr-manager-desktop` instead.
+
+## Update
+
+macOS and Linux:
+
+```sh
+brew update
+brew upgrade --cask amitbet/pr-manager/pr-manager
+```
+
+Windows:
+
+```powershell
+scoop update
+scoop update pr-manager
+```
+
+For the desktop app, use `brew upgrade --cask amitbet/pr-manager/pr-manager-desktop`
+on macOS or `scoop update pr-manager-desktop` on Windows.
+
+After installing, run `gh auth login`, then `pr-manager serve` to open the UI
+in your browser, or launch the desktop app. See [installation details](#installation)
+for dependencies and other builds.
+
+## About
+
 Sorts a branch's diff into three buckets:
 
 - **human**: someone has to read it
