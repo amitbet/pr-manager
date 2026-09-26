@@ -7,8 +7,7 @@ import { S, render } from "./state.js";
 import { jobSettings, summaryLang } from "./settings.js";
 import { syncComposer } from "./comments.js";
 import * as budget from "./budget.js";
-
-const english = new WeakMap(); // result -> {lang, units: id -> text}
+import { english } from "./entext.js";
 let seq = 0;
 
 const units = (r) => r.files.flatMap((f) => f.units || []);
@@ -41,6 +40,7 @@ function restore(r) {
   for (const u of units(r)) if (en.units[u.id]) put(u, en.units[u.id], false);
   r.summary_lang = en.lang;
   english.delete(r);
+  S.showEn.clear();
   budget.apply(r, S.cfg); // the bucket text quotes pin_why and floor_why
 }
 

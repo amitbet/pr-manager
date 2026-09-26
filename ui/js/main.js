@@ -20,6 +20,7 @@ import { initSettings, refreshSettings } from "./settings.js";
 import { actions as fixActions } from "./fix.js";
 import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
+import { actions as enActions } from "./entext.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -31,7 +32,7 @@ const TABS = [
 ];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   "create-pr": async (el) => {
     el.disabled = true;
@@ -55,7 +56,7 @@ function prHeadHTML(r) {
       <h2>${local ? esc(pr.title || pr.head_ref) : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`}</h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}@${esc(pr.base_oid.slice(0, 8))}</code> ← <code>${esc(pr.head_ref)}@${esc(pr.head_oid.slice(0, 8))}</code> ·
-        +${pr.additions}/−${pr.deletions} · classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""}${r.translating ? ` · translating to ${esc(r.translating)}…` : ""}${r.translate_error ? ` · <span title="${esc(r.translate_error)}">not translated</span>` : ""} ·
+        +${pr.additions}/−${pr.deletions} · classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local ? `<div class="meta" style="margin-top:6px">${pr.ahead} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -67,6 +68,11 @@ function prHeadHTML(r) {
     </div>`;
 }
 
+// translateBanner says the text is being replaced, or why it wasn't.
+const translateBanner = (r) => r.translating
+  ? `<div class="tr-banner" role="status"><span class="spinner"></span>Translating to ${esc(r.translating)}… the English below is replaced when it's ready.</div>`
+  : r.translate_error ? `<div class="tr-banner error" role="status">${esc(r.translate_error)}</div>` : "";
+
 const tabsHTML = () => `<div class="tabs">${TABS.map((t) =>
   `<button class="${S.tab === t.id ? "on" : ""}" data-act="tab" data-tab="${t.id}">${t.label}</button>`).join("")}</div>`;
 
@@ -75,7 +81,8 @@ onRender(() => {
   if (!r) return;
   const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
   updateReviewButton();
-  $("#main").innerHTML = prHeadHTML(r) + tabsHTML() + tab.html();
+  $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + tabsHTML() + tab.html();
+  $("#main").classList.toggle("translating", !!r.translating);
   tab.mount?.();
   focusComposer();
   if (panelOpen()) renderPanel();
@@ -85,7 +92,7 @@ async function showKey(key) {
   const r = await api(`/api/results/${encodeURIComponent(key)}`);
   budget.apply(r, S.cfg);
   S.result = r;
-  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
+  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
   S.tm.zoom = [];
   loadProgress();
   S.drafts = await api(`${prBase()}/drafts`).catch(() => []);

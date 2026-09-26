@@ -113,3 +113,18 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
 .flash { animation: flash 1.2s; }
 @keyframes flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: none; } }
+
+/* Translation in progress: a banner under the PR title, a chip by each
+   headline, and the text that will be replaced pulses. */
+.tr-banner { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--fg); font-size: 14px; font-weight: 600; }
+.tr-banner.error { border-color: #cf222e; background: color-mix(in srgb, #cf222e 10%, transparent); font-weight: 400; }
+.tr-banner .spinner { flex: none; width: 14px; height: 14px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.tr-chip { flex: none; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; color: var(--accent); border: 1px dashed var(--accent); }
+.translating .tr { animation: tr-pulse 1.4s ease-in-out infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes tr-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .translating .tr, .tr-banner .spinner { animation: none; } .translating .tr { opacity: .6; } }
+/* EN toggle: read one translated text in English. */
+.tr-en { margin-inline-start: 6px; padding: 0 5px; vertical-align: 1px; font: 600 10px/15px var(--mono); letter-spacing: .03em; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; opacity: .7; }
+.tr-en:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.tr-en.on { opacity: 1; color: #fff; background: var(--accent); border-color: var(--accent); }
