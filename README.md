@@ -1,15 +1,17 @@
 # pr-manager
 
+PR Manager helps you review and fix code changes with a guided walkthrough and a code map. In **Pre-PR** mode, open your repository directory to review changes since your branch diverged from `origin/main` or the remote's default branch, including unpushed commits and uncommitted edits. In **On-PR** mode, paste a PR link to review the changes, fix issues, and approve the PR.
+
 Reviewing [prometheus/prometheus#19805](https://github.com/prometheus/prometheus/pull/19805),
 a TSDB fix that preserves mapped chunks during WAL replay.
-
-Code map with the PR's changes marked on the files they touch:
-
-![Prometheus code map colored by impact and likelihood, with PR changes overlaid](docs/images/prometheus-codemap.png)
 
 Review walkthrough with the review notes and code diff side by side:
 
 ![Review walkthrough for the Prometheus TSDB fix, showing review notes beside the diff](docs/images/prometheus-review-walkthrough.png)
+
+Code map with the PR's changes marked on the files they touch:
+
+![Prometheus code map colored by impact and likelihood, with PR changes overlaid](docs/images/prometheus-codemap.png)
 
 ## Install the desktop app
 
