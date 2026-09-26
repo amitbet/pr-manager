@@ -1,6 +1,6 @@
 // Walkthrough tab: one unit per step, most important first, with the
 // explanation beside the code.
-import { trText } from "./entext.js";
+import { trText, trDir } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
 import { S, render, allUnits, fileByPath } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
@@ -44,8 +44,6 @@ function current(st) {
 // HEADER_H is the sticky page header.
 const HEADER_H = 54;
 
-// go shows step i. When the page is scrolled past the card, it scrolls back
-// to the card's top so the new step is read from its start.
 // showStep opens the walkthrough on unit id, including no-review units
 // if that's what it is; false if it isn't a step even then.
 export function showStep(id) {
@@ -59,6 +57,9 @@ export function showStep(id) {
   return true;
 }
 
+// go shows step i. When the page is scrolled past the card, it scrolls back
+// to the card's top, just under the pinned step dots, so the new step is
+// read from its start.
 function go(i) {
   const st = steps();
   if (!st.length) return;
@@ -70,7 +71,8 @@ function go(i) {
   const card = $(".wz-card");
   if (!card) return;
   const top = card.getBoundingClientRect().top + card.clientTop; // inside the colored top border
-  if (top < HEADER_H) window.scrollTo({ top: top + window.scrollY - HEADER_H });
+  const pinned = HEADER_H + ($(".wz-steps")?.offsetHeight || 0);
+  if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
 }
 const step = (d) => go(current(steps()) + d);
 
@@ -122,8 +124,8 @@ function issueCard(f, u, is, shown) {
   acts.push(issueDraftButton(f, u, i));
   acts.push(issueFixButton(u, i, "linkbtn"));
   const a = acts.join("");
-  return `<div class="wz-issue ${sev}"><div class="it"><span class="dz ${sev}">${esc(is.severity)}</span><span class="tr" dir="auto">${trText(u, `issues.${i}.title`, is.title)}${issueCapChip(is)}</span></div>
-    ${is.detail ? `<div class="idt tr" dir="auto">${trText(u, `issues.${i}.detail`, is.detail)}</div>` : ""}${issueScenarioHTML(is, "idt", u, i)}${a ? `<div class="ia">${a}</div>` : ""}</div>`;
+  return `<div class="wz-issue ${sev}"><div class="it"><span class="dz ${sev}">${esc(is.severity)}</span><span class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}${issueCapChip(is)}</span></div>
+    ${is.detail ? `<div class="idt tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</div>` : ""}${issueScenarioHTML(is, "idt", u, i)}${a ? `<div class="ia">${a}</div>` : ""}</div>`;
 }
 
 function explainHTML(f, u, shown) {
@@ -133,9 +135,9 @@ function explainHTML(f, u, shown) {
   } else if (u.reviewed) {
     parts.push(`<div class="wz-sec"><h4>Review</h4><span class="wz-clean">✓ No issues found</span></div>`);
   }
-  if (u.summary) parts.push(`<div class="wz-sec"><h4>${d.bucket === "human" ? "Review notes" : "Summary"}</h4><p class="tr" dir="auto">${trText(u, "summary", u.summary)}</p></div>`);
-  if (u.focus?.length) parts.push(`<div class="wz-sec"><h4>What to check</h4><ul class="wz-check">${u.focus.map((x, j) => `<li class="tr" dir="auto">${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul></div>`);
-  parts.push(`<div class="wz-sec"><h4>Why it's here</h4><p><b>${esc(rankWhy(u))}</b></p>${movesHTML(u)}${d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" dir="auto">${trText(u, "reason", d.reason)}</span></p>` : ""}</div>`);
+  if (u.summary) parts.push(`<div class="wz-sec"><h4>${d.bucket === "human" ? "Review notes" : "Summary"}</h4><p class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</p></div>`);
+  if (u.focus?.length) parts.push(`<div class="wz-sec"><h4>What to check</h4><ul class="wz-check">${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul></div>`);
+  parts.push(`<div class="wz-sec"><h4>Why it's here</h4><p><b>${esc(rankWhy(u))}</b></p>${movesHTML(u)}${d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" ${trDir(u, "reason", d.reason)}>${trText(u, "reason", d.reason)}</span></p>` : ""}</div>`);
   parts.push(`<details class="wz-sec wz-more"><summary>Impact, likelihood and classification</summary>${scoresHTML(u)}${classificationHTML(d)}</details>`);
   return parts.join("");
 }
@@ -184,13 +186,13 @@ function cardHTML(st, i) {
         <div class="wz-where"><span class="pill ${b}">${LABEL[b]}</span><b>Step ${i + 1} of ${st.length}</b> ·
           <span class="path">${f.old_path && f.old_path !== f.path ? esc(f.old_path) + " → " : ""}${esc(f.path)}${u.line ? `:${u.line}` : ""}</span>
           ${u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="status chip">${esc(f.status)}</span></div>
-        <div class="wz-headline tr" dir="auto">${trText(u, "headline", headline(u))}</div>
+        <div class="wz-headline tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</div>
         <div class="row">${impactPill(u.impact)}${likelihoodPill(u.likelihood)}${attentionPill(u)}${decisionChips(u)}</div>
       </div>
       <div class="wz-body">
         <section class="wz-explain">${explainHTML(f, u, shown)}</section>
         <section class="wz-code">
-          <div class="wz-codebar"><span>${esc(u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
+          <div class="wz-codebar"><b>Step ${i + 1} of ${st.length}</b><span>${esc(u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
           ${diffTable(f, rows, S.wz.view)}
         </section>
       </div>

@@ -136,7 +136,7 @@ function showBudget() {
   range.max = list.length - 1;
   range.value = Math.max(0, list.findIndex((b) => b.name === cur));
   const b = list[range.value];
-  const rules = `human at score ≥ ${b.human}, skim ≥ ${b.skim}; a clean review lowers the score ${Math.round(b.trust * 100)}%`;
+  const rules = `human at score ≥ ${b.human}, skim ≥ ${b.skim}; a clean review lowers the score ${Math.round(b.trust * 100)}%${b.lift_floors ? " and lifts the skim floor" : ""}`;
   let pr = "";
   if (S.result && S.result.files.some((f) => (f.units || []).some((u) => u.score))) {
     const c = budget.counts(S.result, b);

@@ -20,6 +20,8 @@ tiers:
   # Override single fields of a step:
   # budgets:
   #   balanced: { trust: 0.3, human: 40, skim: 15 }
-  #   least:    { trust: 0.6, human: 50, skim: 20 }
+  #   least:    { trust: 0.6, human: 50, skim: 20, lift_floors: true }
+  # lift_floors: a clean review lets units held at skim (behavior changes,
+  # risk signals) drop to none. On by default for less and least.
   # kind_weights: { test: 0.8, refactor: 0.6 }
   critical_impact: 85         # units at or above always go to human (0: off)

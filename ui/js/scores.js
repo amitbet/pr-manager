@@ -1,5 +1,5 @@
 // Impact, likelihood and review-attention badges, and their details blocks.
-import { trText } from "./entext.js";
+import { trText, trDir } from "./entext.js";
 import { esc } from "./util.js";
 
 // Issue severity -> pill color: low issues are yellow, not green.
@@ -12,7 +12,7 @@ export const issueCapChip = (is) => is.claimed_severity
 // issueScenarioHTML is the failure scenario of u's issue i and the quoted
 // evidence.
 export const issueScenarioHTML = (is, cls, u, i) =>
-  (is.failure_scenario ? `<span class="${cls}"><b>When:</b> <span class="tr" dir="auto">${trText(u, `issues.${i}.failure_scenario`, is.failure_scenario)}</span></span>` : "") +
+  (is.failure_scenario ? `<span class="${cls}"><b>When:</b> <span class="tr" ${trDir(u, `issues.${i}.failure_scenario`, is.failure_scenario)}>${trText(u, `issues.${i}.failure_scenario`, is.failure_scenario)}</span></span>` : "") +
   (is.evidence ? `<code class="${cls} ievidence">${esc(is.evidence)}</code>` : "");
 
 export const attLevel = (a) => a >= 75 ? "critical" : a >= 45 ? "high" : a > 0 ? "medium" : "low";

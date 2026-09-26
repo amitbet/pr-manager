@@ -72,10 +72,13 @@ type TierPolicy struct {
 // Budget is one step of the review budget. Trust (0-1) is how much a clean
 // review lowers a unit's score (half as much with only low issues). A unit
 // scoring Human or more goes to human review, Skim or more to skim.
+// LiftFloors lets a review that found nothing lift a unit's floor, so a
+// clean behavior change can drop to none.
 type Budget struct {
-	Trust float64 `yaml:"trust" json:"trust"`
-	Human int     `yaml:"human" json:"human"`
-	Skim  int     `yaml:"skim" json:"skim"`
+	Trust      float64 `yaml:"trust" json:"trust"`
+	Human      int     `yaml:"human" json:"human"`
+	Skim       int     `yaml:"skim" json:"skim"`
+	LiftFloors bool    `yaml:"lift_floors" json:"lift_floors,omitempty"`
 }
 
 // BudgetNames orders the steps from the most human review to the least.
@@ -91,8 +94,8 @@ func DefaultTierPolicy() TierPolicy {
 			"most":     {Trust: 0, Human: 30, Skim: 10},
 			"more":     {Trust: 0.15, Human: 35, Skim: 12},
 			"balanced": {Trust: 0.3, Human: 40, Skim: 15},
-			"less":     {Trust: 0.45, Human: 45, Skim: 18},
-			"least":    {Trust: 0.6, Human: 50, Skim: 20},
+			"less":     {Trust: 0.45, Human: 45, Skim: 18, LiftFloors: true},
+			"least":    {Trust: 0.6, Human: 50, Skim: 20, LiftFloors: true},
 		},
 		KindWeights: map[string]float64{
 			"behavior": 1, "config": 1, "test": 0.8, "refactor": 0.6, "rename": 0.5,
@@ -188,6 +191,9 @@ func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string
 	}
 	why := fmt.Sprintf("score %d = %s → %s (%s on %s)", t, s.arithmetic(b, attention), bk, cut, name)
 	if s.Floor != "" && s.Floor.rank() > bk.rank() {
+		if b.LiftFloors && s.Clean == 1 {
+			return bk, t, why + fmt.Sprintf("; %s lifted by the clean review", s.FloorWhy)
+		}
 		bk = s.Floor
 		why += fmt.Sprintf("; raised to %s: %s", bk, s.FloorWhy)
 	}

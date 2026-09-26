@@ -20,10 +20,18 @@ const translated = (u, path, text) => { const en = original(u, path); return en 
 
 // trShown is the text at path as it is to be shown: the translation, or
 // the English when its toggle is on.
-export function trShown(u, path, text) {
+const shown = (u, path, text) => {
   const en = translated(u, path, text);
-  return esc(en !== undefined && S.showEn.has(keyOf(u, path)) ? en : text);
-}
+  return en !== undefined && S.showEn.has(keyOf(u, path)) ? en : text;
+};
+export const trShown = (u, path, text) => esc(shown(u, path, text));
+
+// trDir is the dir attribute for the text at path as shown. A translation
+// often opens with an identifier ("SystemdProperties now …"), which makes
+// dir="auto" take a Hebrew or Arabic sentence as left-to-right, so any
+// right-to-left letter makes it rtl.
+const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+export const trDir = (u, path, text) => `dir="${RTL.test(shown(u, path, text) || "") ? "rtl" : "auto"}"`;
 
 // trToggle is the EN button for a translated text, "" for the rest.
 export function trToggle(u, path, text) {

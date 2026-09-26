@@ -5,7 +5,7 @@ import { SEV_CLASS, issueCapChip, issueScenarioHTML, impactPill, likelihoodPill,
 import { unitRows, diffTable, expandAllButton } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
 import { fixDisabled, issueFixButton } from "./fix.js";
-import { trText, trShown, trToggle } from "./entext.js";
+import { trText, trShown, trToggle, trDir } from "./entext.js";
 import { showStep } from "./walkthrough.js";
 
 const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
@@ -16,9 +16,9 @@ function issuesHTML(f, u) {
     const draft = issueDraftButton(f, u, i);
     const fix = issueFixButton(u, i);
     return `<li><span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>` +
-      `${is.line ? `<span class="ln">line ${is.line}</span>` : ""}<b class="tr" dir="auto">${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}` +
+      `${is.line ? `<span class="ln">line ${is.line}</span>` : ""}<b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}` +
       `${draft ? ` ${draft}` : ""} ${fix}` +
-      `${is.detail ? `<span class="idetail tr" dir="auto">${trText(u, `issues.${i}.detail`, is.detail)}</span>` : ""}${issueScenarioHTML(is, "idetail", u, i)}</li>`;
+      `${is.detail ? `<span class="idetail tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</span>` : ""}${issueScenarioHTML(is, "idetail", u, i)}</li>`;
   }).join("");
   return `<p><span class="lbl">Issues found in review</span></p><ul class="issues">${items}</ul>`;
 }
@@ -28,10 +28,10 @@ function issuesHTML(f, u) {
 function detailsHTML(f, u) {
   const d = u.decision;
   const main = [];
-  if (u.summary) main.push(`<p><span class="lbl">Summary</span><span class="tr" dir="auto">${trText(u, "summary", u.summary)}</span></p>`);
+  if (u.summary) main.push(`<p><span class="lbl">Summary</span><span class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</span></p>`);
   main.push(issuesHTML(f, u));
-  if (u.focus?.length) main.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x, j) => `<li class="tr" dir="auto">${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul>`);
-  const rest = [movesHTML(u), d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" dir="auto">${trText(u, "reason", d.reason)}</span></p>` : "", scoresHTML(u), classificationHTML(d)];
+  if (u.focus?.length) main.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul>`);
+  const rest = [movesHTML(u), d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" ${trDir(u, "reason", d.reason)}>${trText(u, "reason", d.reason)}</span></p>` : "", scoresHTML(u), classificationHTML(d)];
   const shown = main.filter(Boolean);
   if (!shown.length) return `<div class="details">${rest.join("")}</div>`; // nothing reviewed
   const open = S.more.has(u.id);
@@ -55,7 +55,7 @@ function unitHTML(f, u) {
         ${decisionChips(u)}
         <span class="src">${esc(d.source)}${d.confidence ? ` · ${(d.confidence * 100).toFixed(0)}%` : ""}</span>
       </div>
-      <div class="headline"><span class="text tr" dir="auto" title="${esc(headline(u))}">${trShown(u, "headline", headline(u))}</span>${trToggle(u, "headline", headline(u))}${S.result.translating ? `<span class="tr-chip">translating…</span>` : ""}
+      <div class="headline"><span class="text tr" ${trDir(u, "headline", headline(u))} title="${esc(headline(u))}">${trShown(u, "headline", headline(u))}</span>${trToggle(u, "headline", headline(u))}${S.result.translating ? `<span class="tr-chip">translating…</span>` : ""}
         <button class="details-btn ${more ? "on" : ""}" data-act="details" data-unit="${esc(u.id)}">${more ? "hide details ▴" : "details ▾"}</button>
         <button class="details-btn" data-act="toggle" data-unit="${esc(u.id)}">${open ? "hide code ▴" : "show code ▾"}</button>
       </div>

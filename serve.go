@@ -221,7 +221,7 @@ func (t *triager) latestCached(ref triage.PRRef, head string) (*PRResult, error)
 func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, progress func(stage string, done, total int)) (*PRResult, error) {
 	o := t.options(jo)
 	progress("fetch", 0, 0)
-	info, src, err := t.fetcher.Fetch(ctx, ref)
+	info, err := t.fetcher.Resolve(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -233,6 +233,10 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 		if r, err := t.latestCached(ref, info.HeadOid); err == nil {
 			return r, nil
 		}
+	}
+	src, err := t.fetcher.Source(ctx, info)
+	if err != nil {
+		return nil, err
 	}
 	if err := ensureCodeMap(ctx, o, ref, progress); err != nil {
 		return nil, err
@@ -332,6 +336,13 @@ func (t *triager) Load(key string) (*PRResult, error) {
 		_, r.ReviewBudget, _ = tp.Budget("")
 		r.Budgets = tp.OrderedBudgets()
 		r.Counts = (&triage.Report{Units: units}).Counts()
+	}
+	// Results cached before lift_floors: built-in steps get it back.
+	def := triage.DefaultTierPolicy().Budgets
+	for i, b := range r.Budgets {
+		if d, ok := def[b.Name]; ok && d.Trust == b.Trust && d.Human == b.Human && d.Skim == b.Skim {
+			r.Budgets[i].LiftFloors = d.LiftFloors
+		}
 	}
 	return &r, nil
 }

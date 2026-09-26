@@ -140,6 +140,7 @@ func ParsePolicy(b []byte) (Policy, error) {
 			Budgets      map[string]struct {
 				Trust       *float64 `yaml:"trust"`
 				Human, Skim *int
+				LiftFloors  *bool `yaml:"lift_floors"`
 			} `yaml:"budgets"`
 			KindWeights    map[string]float64 `yaml:"kind_weights"`
 			CriticalImpact *int               `yaml:"critical_impact"`
@@ -162,6 +163,9 @@ func ParsePolicy(b []byte) (Policy, error) {
 		}
 		if ub.Skim != nil {
 			bud.Skim = *ub.Skim
+		}
+		if ub.LiftFloors != nil {
+			bud.LiftFloors = *ub.LiftFloors
 		}
 		if bud.Trust < 0 || bud.Trust > 1 || bud.Skim > bud.Human {
 			return p, fmt.Errorf("tiers.budgets.%s: want 0 <= trust <= 1 and skim <= human, got %+v", name, bud)

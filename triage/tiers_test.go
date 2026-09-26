@@ -200,7 +200,8 @@ func TestTierMoves(t *testing.T) {
 		t.Errorf("human order = %v", human)
 	}
 
-	// Other budgets re-bucket without a re-run; pins and floors hold.
+	// Other budgets re-bucket without a re-run; pins hold, and floors hold
+	// until a budget lets a clean review lift them.
 	all := sortedUnits(units)
 	bucketsAt := func(budget string) map[string]Bucket {
 		t.Helper()
@@ -218,8 +219,12 @@ func TestTierMoves(t *testing.T) {
 		t.Errorf("most: %v", most)
 	}
 	least := bucketsAt("least")
-	if least["svc/both.go"] != BucketSkim || least["svc/issue.go"] != BucketHuman || least["db/migrations/1.sql"] != BucketHuman || least["svc/flaky.go"] != BucketSkim {
+	if least["svc/both.go"] != BucketSkim || least["svc/issue.go"] != BucketHuman || least["db/migrations/1.sql"] != BucketHuman ||
+		least["svc/flaky.go"] != BucketNone || least["svc/test_like.go"] != BucketNone || least["svc/calm2.go"] != BucketSkim { // a low issue keeps the floor
 		t.Errorf("least: %v", least)
+	}
+	if u := units["svc/flaky.go"]; !strings.Contains(u.Score.Why, "a behavior change is never skipped lifted by the clean review") {
+		t.Errorf("flaky on least: %q", u.Score.Why)
 	}
 	if err := Rebucket(all, DefaultTierPolicy(), "nope"); err == nil {
 		t.Error("unknown budget: want an error")
@@ -238,7 +243,8 @@ func TestBudgetsOnErrorCachePR(t *testing.T) {
 	want := map[string]map[Bucket]int{
 		"most":     {BucketHuman: 9},
 		"balanced": {BucketHuman: 1, BucketSkim: 8},
-		"least":    {BucketSkim: 9},
+		"less":     {BucketSkim: 9},
+		"least":    {BucketSkim: 4, BucketNone: 5},
 	}
 	for budget, counts := range want {
 		got := map[Bucket]int{}

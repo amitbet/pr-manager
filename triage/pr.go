@@ -125,6 +125,7 @@ type PRInfo struct {
 	Adds         int    `json:"additions"`
 	Dels         int    `json:"deletions"`
 	MergedAt     string `json:"merged_at,omitempty"`
+	mergeOid     string // merge commit of a merged PR, for Source
 }
 
 // PRFetcher keeps blobless clones under Dir and diffs PRs locally, so
@@ -204,10 +205,21 @@ func (f *PRFetcher) RepoDir(ref PRRef) string {
 
 // Fetch resolves the PR with gh, fetches its commits and returns its diff.
 func (f *PRFetcher) Fetch(ctx context.Context, ref PRRef) (*PRInfo, *Source, error) {
+	info, err := f.Resolve(ctx, ref)
+	if err != nil {
+		return nil, nil, err
+	}
+	src, err := f.Source(ctx, info)
+	return info, src, err
+}
+
+// Resolve looks the PR up with gh, without touching git, so a caller can
+// check its head against saved results before the slower fetch.
+func (f *PRFetcher) Resolve(ctx context.Context, ref PRRef) (*PRInfo, error) {
 	raw, err := run(ctx, "", "gh", "pr", "view", strconv.Itoa(ref.Number), "-R", ref.RepoArg(), "--json",
 		"url,title,author,state,headRefOid,baseRefName,headRefName,body,additions,deletions,mergedAt,mergeCommit")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var v struct {
 		URL         string                 `json:"url"`
@@ -226,23 +238,32 @@ func (f *PRFetcher) Fetch(ctx context.Context, ref PRRef) (*PRInfo, *Source, err
 		} `json:"mergeCommit"`
 	}
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	info := &PRInfo{
 		PRRef: ref, URL: v.URL, Title: v.Title, Author: v.Author.Login, State: v.State,
 		HeadOid: v.HeadRefOid, BaseRef: v.BaseRefName, HeadRef: v.HeadRefName, Body: v.Body,
 		Adds: v.Additions, Dels: v.Deletions, MergedAt: v.MergedAt,
 	}
+	if v.MergeCommit != nil {
+		info.mergeOid = v.MergeCommit.Oid
+	}
+	return info, nil
+}
 
+// Source fetches a resolved PR's commits and returns its diff, setting
+// info.BaseOid to the merge base.
+func (f *PRFetcher) Source(ctx context.Context, info *PRInfo) (*Source, error) {
+	ref := info.PRRef
 	unlock := f.lock(ref.RepoArg())
 	defer unlock()
 	dir := f.RepoDir(ref)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if _, err := run(ctx, "", "gh", "repo", "clone", ref.RepoArg(), dir, "--", "--filter=blob:none", "--no-checkout", "--quiet"); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
@@ -254,26 +275,26 @@ func (f *PRFetcher) Fetch(ctx context.Context, ref PRRef) (*PRInfo, *Source, err
 	fetch := []string{"fetch", "--quiet", "--no-tags", "origin",
 		fmt.Sprintf("+refs/pull/%d/head:refs/triage/pr/%d", ref.Number, ref.Number)}
 	var baseCandidate string
-	if v.MergeCommit != nil && v.MergeCommit.Oid != "" {
-		baseCandidate = v.MergeCommit.Oid + "^1"
-		fetch = append(fetch, v.MergeCommit.Oid)
+	if info.mergeOid != "" {
+		baseCandidate = info.mergeOid + "^1"
+		fetch = append(fetch, info.mergeOid)
 	} else {
 		baseCandidate = fmt.Sprintf("refs/triage/base/%d", ref.Number)
-		fetch = append(fetch, fmt.Sprintf("+refs/heads/%s:%s", v.BaseRefName, baseCandidate))
+		fetch = append(fetch, fmt.Sprintf("+refs/heads/%s:%s", info.BaseRef, baseCandidate))
 	}
 	if _, err := GitCtx(ctx, dir, fetch...); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	base, err := GitCtx(ctx, dir, "merge-base", baseCandidate, v.HeadRefOid)
+	base, err := GitCtx(ctx, dir, "merge-base", baseCandidate, info.HeadOid)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	info.BaseOid = strings.TrimSpace(base)
 	src, err := FromGit(dir, info.BaseOid, info.HeadOid)
 	if src != nil {
 		src.Title = info.Title
 	}
-	return info, src, err
+	return src, err
 }
 
 // ListPRs returns PR refs by author (state: open|closed|merged|all). repo

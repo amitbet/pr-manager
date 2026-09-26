@@ -33,6 +33,7 @@ export function place(u, b) {
   if (att > lowered) x = `review attention ${att} (over ${x})`;
   let why = `score ${total} = ${x} → ${bucket} (${cut} on ${b.name})`;
   if (s.floor && RANK[s.floor] > RANK[bucket]) {
+    if (b.lift_floors && s.clean === 1) return { bucket, total, why: `${why}; ${s.floor_why} lifted by the clean review` };
     bucket = s.floor;
     why += `; raised to ${bucket}: ${s.floor_why}`;
   }

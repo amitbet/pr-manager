@@ -247,7 +247,12 @@ async function expand(el, apply) {
   el.disabled = true;
   el.textContent = "loading…";
   try { await ensureHead(fileByPath(el.dataset.path)); }
-  catch (err) { el.textContent = "could not load file: " + err.message; return false; }
+  catch (err) {
+    // A network error (server restarting) leaves no status; let a click retry.
+    el.disabled = false;
+    el.textContent = `could not load file: ${err instanceof TypeError ? "server unreachable" : err.message} (click to retry)`;
+    return false;
+  }
   apply();
 }
 
