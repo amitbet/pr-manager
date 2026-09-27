@@ -234,6 +234,7 @@ export function initSettings(changed, langChanged) {
   onLang = langChanged;
   const dlg = $("#settings");
   $("#settings-btn").onclick = () => { showBudget(); dlg.showModal(); };
+  $("#theme-btn").onclick = () => window.toggleTheme();
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); }); // backdrop
   $("#budget").oninput = (e) => {
     const b = budgetList()[e.target.value];

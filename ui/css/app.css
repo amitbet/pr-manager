@@ -6,13 +6,14 @@
   --empty-bg: #f6f8fa; --exp-bg: #ddf4ff; --draft-bg: #fff8c5; --high: #bc4c00; --high-bg: #fff1e5;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
-    --human: #ff7b72; --human-bg: #3d1417; --skim: #e3b341; --skim-bg: #3a2e0a; --none: #3fb950; --none-bg: #0f2d19;
-    --add-bg: #12261e; --add-num: #1b4428; --del-bg: #25171c; --del-num: #542426; --hunk-bg: #121d2f; --accent: #4493f8;
-    --empty-bg: #161b22; --exp-bg: #121d2f; --draft-bg: #2b2412; --high: #f0883e; --high-bg: #3d2410;
-  }
+/* js/theme.js sets data-theme from the saved choice or the system. */
+:root { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
+  --human: #ff7b72; --human-bg: #3d1417; --skim: #e3b341; --skim-bg: #3a2e0a; --none: #3fb950; --none-bg: #0f2d19;
+  --add-bg: #12261e; --add-num: #1b4428; --del-bg: #25171c; --del-num: #542426; --hunk-bg: #121d2f; --accent: #4493f8;
+  --empty-bg: #161b22; --exp-bg: #121d2f; --draft-bg: #2b2412; --high: #f0883e; --high-bg: #3d2410;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); }
@@ -26,6 +27,8 @@ button { cursor: pointer; background: var(--bg3); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button:disabled { opacity: .6; cursor: default; }
 button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 5px; line-height: 0; }
+#theme-btn .sun, [data-theme="dark"] #theme-btn .moon { display: none; }
+[data-theme="dark"] #theme-btn .sun { display: inline; }
 .settings-line { color: var(--muted); font-size: 12px; font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-dlg { width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .settings-dlg::backdrop { background: rgba(0,0,0,.35); }

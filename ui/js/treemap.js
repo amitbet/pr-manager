@@ -24,7 +24,7 @@ const STOPS = {
   },
 };
 const MODES = { impact: "impact", likelihood: "likelihood", both: "impact + likelihood" };
-const isDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+const isDark = () => document.documentElement.dataset.theme === "dark";
 const BRANK = { none: 0, skim: 1, human: 2 };
 
 function rampRGB(kind, d) {
@@ -396,4 +396,4 @@ window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(renderTreemap, 150);
 });
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => S.tab === "map" && renderTreemap());
+addEventListener("themechange", () => S.tab === "map" && renderTreemap());
