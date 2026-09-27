@@ -39,12 +39,15 @@ type options struct {
 	codeRoot, org                          string // code map sources, see codemap_build.go
 	classifyEffort, reviewEffort           string
 	reviewTools                            bool
-	summaryLang                            string
-	reviewBudget                           string
-	concurrency, reviewConcurrency         int
-	failOnHuman                            bool
-	fixtures                               string
-	judge                                  bool
+	// groupReview is only consulted when the flag was given; otherwise
+	// grouping follows the policy file.
+	groupReview, groupReviewSet    bool
+	summaryLang                    string
+	reviewBudget                   string
+	concurrency, reviewConcurrency int
+	failOnHuman                    bool
+	fixtures                       string
+	judge                          bool
 	// serve / prs
 	addr, cache         string
 	repo, author, state string
@@ -97,6 +100,7 @@ func main() {
 	fs.StringVar(&o.classifyEffort, "classify-effort", "low", "reasoning effort for classify (openai, codex, claude-code): none|minimal|low|medium|high|xhigh ('' = model default)")
 	fs.StringVar(&o.reviewEffort, "review-effort", "medium", "reasoning effort for summarize/review (openai, codex, claude-code; '' = model default)")
 	fs.BoolVar(&o.reviewTools, "review-tools", true, "let the codex/claude-code reviewer read the repo at the PR head (a git worktree) and the Go module cache; slower, catches claims about code outside the diff (-review-tools=false to turn off)")
+	fs.BoolVar(&o.groupReview, "group-review", true, "review related change units together in one call instead of one call each: fewer, larger review tasks and much less repeated context (-group-review=false to turn off; grouping in .triage.yaml overrides when this flag is not given)")
 	fs.StringVar(&o.summaryLang, "summary-lang", "", "language to translate summaries, review notes and issue text into, e.g. Hebrew or Japanese (default English: no translation)")
 	fs.StringVar(&o.reviewBudget, "review-budget", "", "how much goes to human review: "+strings.Join(triage.BudgetNames, "|")+" (default: tiers.review_budget in the policy, else "+triage.DefaultBudget+")")
 	fs.StringVar(&o.openjevURL, "openjev-url", "", "OpenJev server (default $OPENJEV_BASE_URL or http://127.0.0.1:8771)")
@@ -129,6 +133,12 @@ func main() {
 		sub = fs.Arg(0)
 		_ = fs.Parse(fs.Args()[1:])
 	}
+
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "group-review" {
+			o.groupReviewSet = true
+		}
+	})
 
 	if sub == "" && len(os.Args) == 1 && desktopBuild {
 		sub = "desktop"
@@ -393,6 +403,9 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 			return nil, err
 		}
 		policy.Tiers.ReviewBudget = o.reviewBudget
+	}
+	if o.groupReviewSet {
+		policy.Grouping.Enabled = o.groupReview
 	}
 	pipe := &triage.Pipeline{
 		Presorter:         &triage.Presorter{Policy: policy, GitattributesGenerated: gitattrs},

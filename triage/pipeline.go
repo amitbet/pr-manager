@@ -126,7 +126,9 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		if limit <= 0 {
 			limit = p.Concurrency
 		}
-		p.each(ctx, "summarize", limit, toSummarize, sum.Summarize)
+		groups := reviewGroups(toSummarize, p.Presorter.Policy.Grouping)
+		setGroupContext(groups, units, src.BaseContent, p.Presorter.Policy.ReviewContextChars)
+		runStage(ctx, p, "summarize", limit, groups, (*ReviewGroup).ID, sum.SummarizeGroup)
 		for _, u := range toSummarize {
 			tiers.afterReview(u, prev[u])
 		}
@@ -167,20 +169,28 @@ func fileOf(src *Source, p string) FileDiff {
 }
 
 func (p *Pipeline) each(ctx context.Context, stage string, limit int, units []*Unit, fn func(context.Context, *Unit)) {
+	runStage(ctx, p, stage, limit, units, (*Unit).id, fn)
+}
+
+func (u *Unit) id() string { return u.ID }
+
+// runStage runs one concurrent LLM stage over units or review groups,
+// reporting progress in the items the stage actually works on.
+func runStage[T any](ctx context.Context, p *Pipeline, stage string, limit int, items []T, id func(T) string, fn func(context.Context, T)) {
 	var mu sync.Mutex
 	done := 0
 	report := func() {
 		if p.Progress != nil {
-			p.Progress(stage, done, len(units))
+			p.Progress(stage, done, len(items))
 		}
 	}
 	report()
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(max(1, limit))
-	for _, u := range units {
+	for _, it := range items {
 		g.Go(func() error {
-			ctx, t := activity.Start(ctx, "llm", "%s %s", stage, u.ID)
-			fn(ctx, u)
+			ctx, t := activity.Start(ctx, "llm", "%s %s", stage, id(it))
+			fn(ctx, it)
 			t.Finish(nil)
 			mu.Lock()
 			done++
@@ -190,6 +200,24 @@ func (p *Pipeline) each(ctx context.Context, stage string, limit int, units []*U
 		})
 	}
 	_ = g.Wait()
+}
+
+// reviewGroups splits the units to review into review calls. Human units
+// group separately from the rest: the two buckets use different prompts
+// and answer different questions. Grouping off means one call per unit.
+func reviewGroups(units []*Unit, policy GroupPolicy) []*ReviewGroup {
+	if !policy.Enabled {
+		return soloGroups(units)
+	}
+	var human, rest []*Unit
+	for _, u := range units {
+		if u.Decision.Bucket == BucketHuman {
+			human = append(human, u)
+		} else {
+			rest = append(rest, u)
+		}
+	}
+	return append(BuildReviewGroups(human, policy), BuildReviewGroups(rest, policy)...)
 }
 
 // setRelated gives each unit the IDs of the other units, capped so large

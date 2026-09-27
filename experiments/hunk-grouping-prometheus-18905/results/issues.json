@@ -1,0 +1,465 @@
+[
+  {
+    "id": "baseline-000-0",
+    "members": [
+      "tsdb/db.go:(*DB).compactHeadViewLocked"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "if compactHeadViewBeforeEvictTestingCallback != nil { ... compactHeadViewBeforeEvictTestingCallback = nil }",
+    "failure_scenario": "If multiple DB instances perform concurrent compactions and both reach this check point with the callback non-nil, both can read it as non-nil before either sets it to nil. The callback could be called twice instead of once, causing test assertions to fail or side effects to occur unexpectedly.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Data race on package-global testing callback variable"
+  },
+  {
+    "id": "baseline-007-0",
+    "members": [
+      "tsdb/head.go:hasAppendIDAbove"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Docstring states \"Must be called with s.Lock held\", but the call path is: stripeSeries.gcSeries \u2192 s.iterForDeletion(check) \u2192 check(...) \u2192 shouldEvict(series) \u2192 hasAppendIDAbove(s, watermark). No visible series.Lock acquisition before hasAppendIDAbove.",
+    "failure_scenario": "If iterForDeletion doesn't acquire series.Lock before invoking the predicate, concurrent appends could modify s.txs during iteration, corrupting the iterator state or causing the watermark check to return false when it should return true. The series would then be evicted despite containing samples with appendID > watermark, causing data loss.",
+    "introduced_by_pr": true,
+    "severity": "high",
+    "title": "Series lock requirement not visibly enforced"
+  },
+  {
+    "id": "baseline-018-0",
+    "members": [
+      "tsdb/head.go:(*SelectedSeriesHead).NumSeries"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "`return uint64(len(h.selectedSeriesRefs.sortedByRef))` returns raw count without filtering",
+    "failure_scenario": "SelectedSeriesHead with refs [ref1, ref2] where ref2 has OOO data: NumSeries() returns 2, but selectedSeriesIndex filters ref2, so visible series count is 1. BlockMeta.Stats.NumSeries would be 2 while actual block contains 1 series.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "NumSeries() does not filter like Index() does"
+  },
+  {
+    "id": "baseline-028-0",
+    "members": [
+      "tsdb/compact_test.go:pickRefsEvenly"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "When count==0 and len(refs)>0, the division at line 1370 panics. All current callers guard against this with max(1, ...), but the function itself lacks input validation.",
+    "evidence": "step := float64(len(refs)) / float64(count)",
+    "failure_scenario": "Calling pickRefsEvenly(refs, 0) with non-empty refs causes runtime panic: division by zero",
+    "introduced_by_pr": true,
+    "line": 1370,
+    "severity": "low",
+    "title": "Division by zero when count is 0"
+  },
+  {
+    "id": "baseline-029-0",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "require.NoError(b, db.CompactSelectedSeries(selectedRefs)) at line 1345 followed by b.StopTimer() and require.NoError(b, db.Close()) at lines 1347-1348",
+    "failure_scenario": "If CompactSelectedSeries returns an error, require.NoError calls b.Fatal() which panics and prevents db.Close() from executing. Database resources (file descriptors, memory) are leaked within the benchmark iteration.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Database not closed if CompactSelectedSeries fails"
+  },
+  {
+    "id": "baseline-032-0",
+    "members": [
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "`var compactHeadViewBeforeEvictTestingCallback func()` at package scope; both tests set it and production code (called from tests) reads/writes it without synchronization. Test sets it: `compactHeadViewBeforeEvictTestingCallback = func() { ... }`, invoked in `compactHeadViewLocked`: `if compactHeadViewBeforeEvictTestingCallback != nil { compactHeadViewBeforeEvictTestingCallback(); compactHeadViewBeforeEvictTestingCallback = nil }`",
+    "failure_scenario": "Two tests running concurrently both set different callbacks to this global; Test A's compaction may read and execute Test B's callback instead, causing wrong test behavior or failure.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Data race on global testing callback variable"
+  },
+  {
+    "id": "baseline-044-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Lines 10062-10063 create DB1 without cleanup registration. Only the callback cleanup (line 10102) is registered before line 10137 where DB1 is explicitly closed. The DB2 cleanup (line 10139) only applies after reassignment.",
+    "failure_scenario": "Test assertion fails at line 10105 (hookErr check) or any subsequent line before db.Close() at line 10137. DB1 remains open and is not cleaned up at end of test.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Initial DB not cleaned up if test fails before restart"
+  },
+  {
+    "id": "baseline-046-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "The database created by newTestDB is never closed. All other test functions in this PR (TestCompactSelectedSeries, TestCompactSelectedSeries_EmptyRefs, etc.) explicitly call db.Close() in a t.Cleanup callback.",
+    "evidence": "Test function ends without `t.Cleanup(func() { require.NoError(t, db.Close()) })`",
+    "failure_scenario": "Test completes without closing the database, leaking resources (file handles, memory). If run in parallel with other tests, may interfere with them or cause resource exhaustion.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Test missing database cleanup"
+  },
+  {
+    "id": "deterministic-005-0",
+    "members": [
+      "tsdb/db.go:type dbMetrics"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "The headSeriesEvictor docstring states 'When isolation is disabled, appendIDWatermark is always 0' but the code unconditionally dereferences db.head.iso without checking for nil. This will crash if isolation is disabled.",
+    "evidence": "appendIDWatermark := db.head.iso.lastAppendID() at line ~1745",
+    "failure_scenario": "Call CompactSelectedSeries or CompactStaleHead with IsolationDisabled=true \u2192 db.head.iso is nil \u2192 panic on .lastAppendID()",
+    "introduced_by_pr": true,
+    "line": 1745,
+    "severity": "high",
+    "title": "Nil pointer when isolation is disabled in compactHeadViewLocked"
+  },
+  {
+    "id": "deterministic-009-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "`db := newTestDB(t, withOpts(opts))` at line ~10064 is never registered with `t.Cleanup()`, only the DB reopened at line ~10146 is. The initial DB is only closed explicitly at line ~10145.",
+    "failure_scenario": "If any `require.NoError()` or other `require.` assertion before line ~10145 fails, calling `t.FailNow()` and exiting the test function early, the original DB remains unclosed and is leaked. This can happen at preconditions like the `require.LessOrEqual(t, appendableMinValid, int64(400), ...)` check at line ~10082.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Initial DB not cleaned up on early assertion failure"
+  },
+  {
+    "id": "model-000-0",
+    "members": [
+      "tsdb/head_read.go:type seriesRefs",
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+      "tsdb/head_read.go:type allSelectedSeriesPostings",
+      "tsdb/head.go:type SelectedSeriesHead",
+      "tsdb/head.go:var selectedSeriesHeadULID",
+      "tsdb/head.go:isSeriesWithoutOOO",
+      "tsdb/head.go:isStaleSeries",
+      "tsdb/head.go:hasAppendIDAbove",
+      "tsdb/block.go:const indexFilename"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "The SortedPostings method checks for allSelectedSeriesPostings type and delegates to headIndexReader.SortedPostings otherwise. The comment should reference headSelectedSeriesIndexReader not the old headStaleIndexReader.",
+    "evidence": "Comment line: \"This implementation expects the input postings to be the one returned by headStaleIndexReader.Postings()\"",
+    "failure_scenario": "Developer reading the method documentation sees reference to 'headStaleIndexReader' but the function is actually on 'headSelectedSeriesIndexReader', causing confusion about which type's Postings() returns the expected marker.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "SortedPostings comment references old type name"
+  },
+  {
+    "id": "model-002-0",
+    "members": [
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "// This implementation expects the input postings to be the one returned by headStaleIndexReader.Postings() with AllPostingsKey,",
+    "failure_scenario": "Developer reading the SortedPostings method sees a comment mentioning the old headStaleIndexReader class, creating confusion about which type is actually involved. The comment should refer to headSelectedSeriesIndexReader instead.",
+    "introduced_by_pr": true,
+    "line": 334,
+    "severity": "low",
+    "title": "Comment references old type name in SortedPostings"
+  },
+  {
+    "id": "model-004-0",
+    "members": [
+      "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+      "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData",
+      "tsdb/head.go:(*stripeSeries).gcSeries",
+      "tsdb/head.go:(*Head).gcSeries"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "`hasAppendIDAbove(s, appendIDWatermark)` called from `shouldEvict` callback in `truncateSeries` \u2192 `gcSeries` \u2192 `iterForDeletion`, but lock not visibly held",
+    "failure_scenario": "If `iterForDeletion` does not hold the series lock when invoking the check callback, `hasAppendIDAbove` races when reading `s.txs` and `s.txs.txIDCount`, potentially skipping series that should be evicted or evicting series with in-flight appends that may not have made it to the compacted block.",
+    "introduced_by_pr": true,
+    "line": 2343,
+    "severity": "high",
+    "title": "Implicit lock requirement for `shouldEvict` callback"
+  },
+  {
+    "id": "model-007-0",
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "Line 1841 (`db.metrics.selectedSeriesCompactionsTriggered.Inc()`) occurs before line 1854\u20131859 (early return if `len(selectedSeriesRefs.sortedByRef) == 0`)",
+    "failure_scenario": "Caller invokes `CompactSelectedSeries([]storage.SeriesRef{ref1, ref2, ...})` where all refs have out-of-order data. Counter increments to indicate a trigger, but no blocks are written and no series are evicted because all refs are filtered out. Test coverage does not verify this edge case.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Triggered counter may not reflect actual compaction attempts"
+  },
+  {
+    "id": "model-012-0",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "Line 1398: `b.StartTimer()` after `db.Close()` inside the `for b.Loop()` loop",
+    "failure_scenario": "Timer left running after cleanup and before next iteration's StopTimer call. Timer will be active during setup of subsequent iteration (lines 1389-1391), including that setup time in measurements and skewing benchmark results.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Unnecessary StartTimer at loop end skews measurements"
+  },
+  {
+    "id": "model-017-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "The callback `compactHeadViewBeforeEvictTestingCallback` is set and cleaned up, but its invocation in `compactHeadViewLocked` is not shown. When `defaultIsolationDisabled=true`, the test would pass even if the hook is never called.",
+    "failure_scenario": "If `compactHeadViewLocked` fails to call the hook, the late sample is never appended. In isolation-disabled mode, the test still expects 2 samples and would get 2 (from the block), passing silently without testing the intended race condition.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Test sensitive to hook invocation point not verified"
+  },
+  {
+    "id": "model-017-1",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "Line sets global `compactHeadViewBeforeEvictTestingCallback` and cleans up via `t.Cleanup()`. Multiple concurrent uses of this variable are not protected.",
+    "failure_scenario": "If tests run in parallel or cleanup is delayed, test interference could occur. One test's hook could be invoked by another test's compaction, or vice versa.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Global callback variable without synchronization"
+  },
+  {
+    "id": "model-018-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "Database created with newTestDB is never closed, leaving file descriptors and temporary files open. This causes resource leaks and may result in failures in subsequent tests, especially on systems with limited file descriptor limits.",
+    "evidence": "db := newTestDB(t, withOpts(opts))\ndb.DisableCompactions()",
+    "failure_scenario": "Test completes without releasing database resources; file descriptors remain open, causing cumulative resource depletion across test runs and potential 'too many open files' errors.",
+    "introduced_by_pr": true,
+    "line": 10225,
+    "severity": "medium",
+    "title": "Missing database cleanup in test"
+  },
+  {
+    "id": "model-018-1",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "Database created with newTestDB is never closed, leaving file descriptors and temporary files open. This causes resource leaks and may result in failures in subsequent tests, especially on systems with limited file descriptor limits.",
+    "evidence": "db := newTestDB(t, withOpts(opts))\ndb.DisableCompactions()",
+    "failure_scenario": "Test completes without releasing database resources; file descriptors remain open, causing cumulative resource depletion across test runs and potential 'too many open files' errors.",
+    "introduced_by_pr": true,
+    "line": 10301,
+    "severity": "medium",
+    "title": "Missing database cleanup in test"
+  },
+  {
+    "id": "linked-004-0",
+    "members": [
+      "tsdb/db.go:type headViewFactory",
+      "tsdb/db.go:type headSeriesEvictor",
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback",
+      "tsdb/db.go:(*DB).compactHeadViewLocked"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Line ~1776-1779: `if compactHeadViewBeforeEvictTestingCallback != nil { compactHeadViewBeforeEvictTestingCallback(); ... }` reads and calls a global variable that is written by tests (line in test: `compactHeadViewBeforeEvictTestingCallback = func() { ... }`)",
+    "failure_scenario": "If test sets the callback while another test or production code concurrently calls compactHeadViewLocked (e.g., in parallel test execution or multiple goroutines), a data race occurs on reading/writing the function pointer. Go's race detector would flag this as `concurrent map/slice read and write`.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Race condition on global testing callback variable"
+  },
+  {
+    "id": "linked-006-0",
+    "members": [
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+      "tsdb/head_read.go:type allSelectedSeriesPostings",
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "\"This implementation expects the input postings to be the one returned by headStaleIndexReader.Postings() with AllPostingsKey\"",
+    "failure_scenario": "Comment on the new headSelectedSeriesIndexReader.SortedPostings method still mentions headStaleIndexReader.Postings(), confusing readers about which method is being described.",
+    "introduced_by_pr": true,
+    "line": 237,
+    "severity": "low",
+    "title": "Stale comment references old type in SortedPostings."
+  },
+  {
+    "id": "linked-007-0",
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "Lines with `if err != nil { return err }` after filterSeriesAndSortPostings (~1850) and compactHeadViewLocked (~1886) return early before reaching the metric observation at the end; contrast with the all-filtered-out case which explicitly observes at line ~1862",
+    "failure_scenario": "When filterSeriesAndSortPostings or compactHeadViewLocked fail and the function returns an error, selectedSeriesCompactionDuration histogram is not populated. Successful compactions and no-op returns (returning nil) both record durations, but failures don't, leaving gaps in timing data that operators depend on for monitoring and diagnostics.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Duration metric not observed on error returns"
+  },
+  {
+    "id": "linked-012-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges",
+      "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost"
+    ],
+    "depends_on_unseen_code": false,
+    "detail": "The database created in TestCompactSelectedSeries_ChunkBoundarySampleNotLost is never closed, leaking file handles and memory. All other tests in the same file follow the cleanup pattern explicitly.",
+    "evidence": "TestCompactSelectedSeries_ChunkBoundarySampleNotLost creates db via `newTestDB(t, withOpts(opts))` at line 10166 without calling `t.Cleanup(func() { require.NoError(t, db.Close()) })`",
+    "failure_scenario": "Database handle remains open after test completes; resource accumulation over multiple test runs; potential file descriptor exhaustion in CI.",
+    "introduced_by_pr": true,
+    "line": 10166,
+    "severity": "medium",
+    "title": "Missing database cleanup in boundary sample test"
+  },
+  {
+    "id": "linked-016-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Function ends without `t.Cleanup(func() { require.NoError(t, db.Close()) })`",
+    "failure_scenario": "Database created by newTestDB(t, ...) is never closed. Resources, WAL segments, and temporary block files remain allocated after test ends.",
+    "introduced_by_pr": true,
+    "line": 10293,
+    "severity": "low",
+    "title": "Missing database cleanup in TestCompactSelectedSeries_SparseSelectedAcrossWideHead"
+  },
+  {
+    "id": "linked-016-1",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Function ends without `t.Cleanup(func() { require.NoError(t, db.Close()) })`",
+    "failure_scenario": "Database created by newTestDB(t, ...) is never closed. Resources, WAL segments, and checkpoint files remain allocated after test ends.",
+    "introduced_by_pr": true,
+    "line": 10358,
+    "severity": "low",
+    "title": "Missing database cleanup in TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+  },
+  {
+    "id": "linked-018-0",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "`require.NoError(b, db.CompactSelectedSeries(selectedRefs))` followed by `b.StopTimer()` then `require.NoError(b, db.Close())` on lines ~1410-1413",
+    "failure_scenario": "CompactSelectedSeries returns error \u2192 require.NoError panics with Fatalf \u2192 db.Close() never executes \u2192 database file handles remain open until b.TempDir() cleanup",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Database not closed on CompactSelectedSeries error"
+  },
+  {
+    "id": "oracle-003-0",
+    "members": [
+      "tsdb/head.go:(*Head).truncateStaleSeries",
+      "tsdb/head.go:(*Head).truncateSelectedSeries"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Function comment states \"Must be called with s.Lock held\" but the lock acquisition by iterForDeletion caller is not visible in the diff.",
+    "failure_scenario": "If iterForDeletion does not lock the series before calling the predicate callback, concurrent writes could race with s.txs and s.txs.txIDCount access in hasAppendIDAbove, causing incorrect transaction iteration or data races.",
+    "introduced_by_pr": true,
+    "severity": "high",
+    "title": "hasAppendIDAbove requires series lock but contract enforcement unclear"
+  },
+  {
+    "id": "oracle-004-0",
+    "members": [
+      "tsdb/db.go:type headViewFactory",
+      "tsdb/db.go:type headSeriesEvictor",
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "Declaration: `var compactHeadViewBeforeEvictTestingCallback func()` (line 1569). Usage in compactHeadViewLocked: `if compactHeadViewBeforeEvictTestingCallback != nil { compactHeadViewBeforeEvictTestingCallback(); compactHeadViewBeforeEvictTestingCallback = nil }`",
+    "failure_scenario": "If test harness runs tests in parallel (e.g., go test -parallel), different DB instances can call compactHeadViewLocked concurrently, both accessing and modifying the global callback variable. One test's cleanup could set it to nil while another test's compaction reads/calls it, causing nil dereference panic or skipped/wrong callback execution. Also vulnerable if cleanup runs asynchronously.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "Data race on global testing callback variable"
+  },
+  {
+    "id": "oracle-007-0",
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "uids, err := db.compactor.Write(db.dir, view, view.Meta().MinTime, view.Meta().MaxTime+1, meta)",
+    "failure_scenario": "If compactor.Write expects an inclusive max time (not exclusive), passing MaxTime+1 causes block time ranges to be off by one, corrupting block metadata. Subsequent queries may skip or double-count samples at range boundaries.",
+    "introduced_by_pr": true,
+    "line": 1755,
+    "severity": "high",
+    "title": "Meta().MaxTime conversion may disagree with compactor Write API"
+  },
+  {
+    "id": "oracle-007-1",
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "appendIDWatermark := db.head.iso.lastAppendID() // captured before loop\nfor ; mint <= maxt; mint += ... {\n    uids, err := db.compactor.Write(...) // block write happens here\n    if err := db.reloadBlocks() { ... }\n}\nif err := evict(maxt, appendIDWatermark)",
+    "failure_scenario": "A sample appended to series S after watermark is captured but before its block is written will be included in the block. When evict() checks hasAppendIDAbove(S, watermark) later, it skips S because the appendID is > watermark. But the sample IS in the block, then S gets deleted from head anyway during a later compaction cycle, orphaning that sample in a block that still claims to contain S.",
+    "introduced_by_pr": true,
+    "severity": "high",
+    "title": "AppendIDWatermark captured before isolation snapshot may miss concurrent writes"
+  },
+  {
+    "id": "oracle-007-2",
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "it := s.txs.iterator()\nfor i := uint32(0); i < s.txs.txIDCount; i++ {\n    if it.At() > watermark {\n        return true\n    }\n    it.Next()\n}\nreturn false",
+    "failure_scenario": "If txIDCount changes concurrently (txs being modified), the loop may iterate past the valid range or miss entries. Iterator bounds are not checked; if txIDCount > actual iterator size, it.At() may read invalid data.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "hasAppendIDAbove loop iterates s.txs.txIDCount but never advances iterator past boundary"
+  },
+  {
+    "id": "oracle-014-0",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "TestCompactSelectedSeries_SparseSelectedAcrossWideHead and TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint do not call db.Close() via t.Cleanup()",
+    "failure_scenario": "If test framework does not automatically clean up resources, the test may leave DB handles and temp directories open, causing resource leaks. Other tests in the diff use t.Cleanup(func() { require.NoError(t, db.Close()) }).",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Missing explicit DB cleanup in test"
+  },
+  {
+    "id": "oracle-014-1",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "depends_on_unseen_code": true,
+    "evidence": "TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint loops at most 10 times before expecting LastCheckpoint to succeed at line 10339",
+    "failure_scenario": "If the WAL implementation requires more than 10 truncation cycles to produce a checkpoint (e.g., under high load or with certain WAL configuration), the test fails with 'a checkpoint must have been produced' even though the feature works correctly.",
+    "introduced_by_pr": true,
+    "severity": "low",
+    "title": "Hard-coded WAL checkpoint iteration limit may cause flaky test"
+  },
+  {
+    "id": "oracle-016-0",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ],
+    "depends_on_unseen_code": false,
+    "evidence": "Line 1415-1416: `b.StopTimer()` after `db.Close()` followed by `b.StartTimer()`",
+    "failure_scenario": "Timer is restarted with no measured work remaining in the loop body. The timer runs through the b.Loop() condition check and loop overhead before the next iteration's b.StopTimer() is called, causing benchmark measurements to include inter-iteration overhead and producing inaccurate performance data.",
+    "introduced_by_pr": true,
+    "severity": "medium",
+    "title": "BenchmarkCompactSelectedSeries restarts timer after cleanup"
+  }
+]

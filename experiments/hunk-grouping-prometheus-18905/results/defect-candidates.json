@@ -1,0 +1,65 @@
+{
+  "baseline": {
+    "issues": 8,
+    "candidates": {
+      "inflight_appender": [
+        "baseline-007-0"
+      ],
+      "single_timestamp": [],
+      "unsorted_refs": [
+        "baseline-018-0"
+      ],
+      "duplicate_refs": []
+    }
+  },
+  "deterministic": {
+    "issues": 2,
+    "candidates": {
+      "inflight_appender": [
+        "deterministic-005-0"
+      ],
+      "single_timestamp": [],
+      "unsorted_refs": [],
+      "duplicate_refs": []
+    }
+  },
+  "model": {
+    "issues": 9,
+    "candidates": {
+      "inflight_appender": [
+        "model-004-0"
+      ],
+      "single_timestamp": [],
+      "unsorted_refs": [
+        "model-000-0",
+        "model-002-0",
+        "model-007-0"
+      ],
+      "duplicate_refs": []
+    }
+  },
+  "linked": {
+    "issues": 7,
+    "candidates": {
+      "inflight_appender": [],
+      "single_timestamp": [],
+      "unsorted_refs": [
+        "linked-006-0"
+      ],
+      "duplicate_refs": []
+    }
+  },
+  "oracle": {
+    "issues": 8,
+    "candidates": {
+      "inflight_appender": [
+        "oracle-003-0",
+        "oracle-007-1",
+        "oracle-007-2"
+      ],
+      "single_timestamp": [],
+      "unsorted_refs": [],
+      "duplicate_refs": []
+    }
+  }
+}

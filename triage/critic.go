@@ -35,7 +35,7 @@ var criticTool = llm.ToolDefinition{
 
 // criticize uses a fresh conversation for each issue. A failed or malformed
 // verdict leaves the original issue in place rather than hiding a defect.
-func (s *Summarizer) criticize(ctx context.Context, u *Unit, issues []Issue) []Issue {
+func (s *Summarizer) criticize(ctx context.Context, u *Unit, issues []Issue, context string) []Issue {
 	critic := s.Critic
 	if critic == nil {
 		critic = s.LLM
@@ -44,7 +44,6 @@ func (s *Summarizer) criticize(ctx context.Context, u *Unit, issues []Issue) []I
 		return issues
 	}
 	kept := make([]Issue, 0, len(issues))
-	context := s.prompt(u, "")
 	for _, issue := range issues {
 		claim, _ := json.Marshal(issue)
 		args, _, err := llm.CallToolIn(ctx, critic, s.workspace, []llm.ChatMessage{

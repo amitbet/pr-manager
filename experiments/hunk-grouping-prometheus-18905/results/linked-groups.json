@@ -1,0 +1,181 @@
+[
+  {
+    "members": [
+      "tsdb/head.go:isStaleSeries",
+      "tsdb/head.go:isSeriesWithoutOOO",
+      "tsdb/head.go:hasAppendIDAbove"
+    ],
+    "reason": "Small utility functions that define filtering criteria, used throughout the filtering and eviction predicates",
+    "title": "Helper predicates for series filtering"
+  },
+  {
+    "members": [
+      "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+      "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData",
+      "tsdb/head_read.go:type seriesRefs",
+      "tsdb/head_test.go:TestHead_FilterSelectedSeriesAndSortPostings"
+    ],
+    "reason": "filterSeriesAndSortPostings is the core filtering function; staleSeriesRefsNoOOOData uses it; seriesRefs holds the output; test directly exercises this path",
+    "title": "Filtering and sorting logic with test"
+  },
+  {
+    "members": [
+      "tsdb/head.go:(*stripeSeries).gcSeries",
+      "tsdb/head.go:(*Head).gcSeries"
+    ],
+    "reason": "stripeSeries.gcSeries refactored to take a predicate and return staleSeriesDeleted count; Head.gcSeries calls it and updates metrics using the new count",
+    "title": "Series eviction and GC refactoring"
+  },
+  {
+    "members": [
+      "tsdb/head.go:(*Head).truncateSeries",
+      "tsdb/head.go:(*Head).truncateStaleSeries",
+      "tsdb/head.go:(*Head).truncateSelectedSeries"
+    ],
+    "reason": "truncateSeries is the generic base; truncateStaleSeries and truncateSelectedSeries build on it with different predicates; reviewer must see the pattern and verify correctness of each predicate",
+    "title": "Head truncation methods"
+  },
+  {
+    "members": [
+      "tsdb/db.go:type headViewFactory",
+      "tsdb/db.go:type headSeriesEvictor",
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback",
+      "tsdb/db.go:(*DB).compactHeadViewLocked"
+    ],
+    "reason": "compactHeadViewLocked orchestrates the compaction; headViewFactory and headSeriesEvictor define its strategy; testing callback enables critical race condition testing",
+    "title": "Block view factory and compaction orchestrator"
+  },
+  {
+    "members": [
+      "tsdb/head.go:type SelectedSeriesHead",
+      "tsdb/head.go:var selectedSeriesHeadULID",
+      "tsdb/head.go:NewSelectedSeriesHead",
+      "tsdb/head.go:(*SelectedSeriesHead).Index",
+      "tsdb/head.go:(*SelectedSeriesHead).NumSeries",
+      "tsdb/head.go:(*SelectedSeriesHead).Meta",
+      "tsdb/head.go:(*SelectedSeriesHead).String"
+    ],
+    "reason": "All methods comprise the SelectedSeriesHead type's contract; reviewer must verify the view correctly exposes filtered series to compactor.Write",
+    "title": "SelectedSeriesHead view type"
+  },
+  {
+    "members": [
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+      "tsdb/head_read.go:type allSelectedSeriesPostings",
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues"
+    ],
+    "reason": "All necessary to implement the index reader that compactor.Write uses; Postings returns the filtered refs; SortedPostings uses the marker type to optimize sorting",
+    "title": "Index reader for selected series"
+  },
+  {
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries"
+    ],
+    "reason": "Coordinates filtering, block writing, and eviction for a caller-provided series list; reader must verify it correctly uses all helper functions",
+    "title": "CompactSelectedSeries public API"
+  },
+  {
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ],
+    "reason": "Refactored to delegate to compactHeadViewLocked; shows how the new generic framework replaces the stale-specific implementation",
+    "title": "CompactStaleHead refactored"
+  },
+  {
+    "members": [
+      "tsdb/block.go:const indexFilename",
+      "tsdb/block.go:(*BlockMetaCompaction).SetSelectedSeries",
+      "tsdb/block.go:(*BlockMetaCompaction).FromSelectedSeries",
+      "tsdb/db.go:(*DB).inOrderBlocksMaxTime",
+      "tsdb/compact.go:(*LeveledCompactor).Write",
+      "tsdb/block_test.go:TestBlockMetaCompaction_SetSelectedSeries"
+    ],
+    "reason": "All needed to track selected-series blocks; const defines the hint; SetSelectedSeries and FromSelectedSeries manage the flag; inOrderBlocksMaxTime excludes these blocks; Write propagates the hint; test verifies idempotence and independence",
+    "title": "Block metadata for selected-series hint"
+  },
+  {
+    "members": [
+      "tsdb/db.go:type dbMetrics",
+      "tsdb/db.go:newDBMetrics"
+    ],
+    "reason": "Both must be consistent; type defines the metric fields; newDBMetrics initializes and registers them",
+    "title": "Metrics for selected series compaction"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EmptyRefs"
+    ],
+    "reason": "Happy path and edge case (empty refs); verify basic eviction and no-op behavior",
+    "title": "Basic CompactSelectedSeries functionality"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges",
+      "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost"
+    ],
+    "reason": "Both test the loop bounds in compactHeadViewLocked; MultipleChunkRanges verifies one block per range; ChunkBoundarySampleNotLost verifies mint \u2264 maxt boundary condition",
+    "title": "Chunk range and boundary handling"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted",
+      "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData"
+    ],
+    "reason": "Both test filtering predicates; DecrementsNumStaleSeriesWhenStaleSeriesCompacted verifies staleSeriesDeleted count is used correctly; SkipsSeriesWithOOOData verifies isSeriesWithoutOOO predicate",
+    "title": "Stale and OOO series handling"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_HintPropagation",
+      "tsdb/db_test.go:TestInOrderBlocksMaxTime_ExcludesSelectedSeriesBlocks"
+    ],
+    "reason": "Both verify block metadata tracking; HintPropagation tests that SetSelectedSeries and Write propagation work; ExcludesSelectedSeriesBlocks tests inOrderBlocksMaxTime filtering",
+    "title": "Hint propagation and block tracking"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "reason": "Complex test of the critical appendIDWatermark guard; verifies that samples appended between block write and eviction survive via the watermark check in hasAppendIDAbove",
+    "title": "AppendID watermark guard for late appends"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "reason": "SparseSelectedAcrossWideHead verifies no empty blocks are written when selected series span only part of head range; EvictedSeriesRecordKeptInCheckpoint verifies WAL expiry and checkpoint handling",
+    "title": "WAL and sparse series handling"
+  },
+  {
+    "members": [
+      "tsdb/compact_test.go:setupDBForSelectedSeriesBenchmark",
+      "tsdb/compact_test.go:pickRefsEvenly"
+    ],
+    "reason": "Shared helpers; setupDBForSelectedSeriesBenchmark builds a db with known series refs; pickRefsEvenly samples evenly for postings intersection workload testing",
+    "title": "Benchmark infrastructure for selected-series tests"
+  },
+  {
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ],
+    "reason": "Both measure scalability with varying selectivity; CompactSelectedSeries measures end-to-end; FilterSeriesAndSortPostings isolates the fixed-cost filtering step",
+    "title": "CompactSelectedSeries and FilterSeriesAndSortPostings benchmarks"
+  },
+  {
+    "members": [
+      "tsdb/head_test.go:TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative",
+      "tsdb/head_test.go:TestWALReplayRaceWithStaleSeriesCompaction",
+      "tsdb/head_test.go:TestHead_mmapHeadChunks",
+      "tsdb/db_test.go:TestCompactStaleHead_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "reason": "Updates to existing tests to accommodate changed function signatures (truncateStaleSeries now takes appendIDWatermark); verify backward compatibility",
+    "title": "Other head and db test updates"
+  }
+]

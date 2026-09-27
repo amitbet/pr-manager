@@ -48,7 +48,7 @@ func TestCriticKeepsIssueOnMalformedVerdict(t *testing.T) {
 		return toolResp("judge_issue", map[string]any{"valid": true, "severity": "urgent"}), nil
 	}}
 	s := &Summarizer{Critic: critic, Policy: DefaultPolicy()}
-	got := s.criticize(context.Background(), &Unit{File: "a.go"}, []Issue{{Title: "bug", Severity: "medium"}})
+	got := s.criticize(context.Background(), &Unit{File: "a.go"}, []Issue{{Title: "bug", Severity: "medium"}}, "")
 	if len(got) != 1 || got[0].Severity != "medium" {
 		t.Errorf("issues = %+v", got)
 	}

@@ -32,59 +32,85 @@ func setReviewContext(units []*Unit, base ContentFunc, budget int) {
 		if len(u.Hunks) == 0 {
 			continue
 		}
-		var notes []string
+		u.ReviewContext = buildContext([]*Unit{u}, units, baseDecls, lines, budget)
+	}
+}
+
+// buildContext renders the rest of the PR for one review task. The units
+// in members are its focus and are left out; everything else is context,
+// most related first, until budget characters are used. One member
+// produces exactly the per-unit context; several share the budget instead
+// of spending it once each, and their notes carry the unit ID.
+func buildContext(members, units []*Unit, baseDecls map[string]map[string]bool, lines map[*Unit]changed, budget int) string {
+	member := make(map[*Unit]bool, len(members))
+	for _, u := range members {
+		member[u] = true
+	}
+	label := func(u *Unit) string {
+		if len(members) == 1 {
+			return ""
+		}
+		return u.ID + ": "
+	}
+	var notes []string
+	moved := map[*Unit]int{}
+	for _, u := range members {
 		switch {
 		case u.Status == StatusAdded:
-			notes = append(notes, "This file is new in the PR.")
+			notes = append(notes, label(u)+"This file is new in the PR.")
 		case u.Symbol != "" && baseDecls[u.File] != nil && !baseDecls[u.File][u.Symbol]:
-			notes = append(notes, fmt.Sprintf("%s does not exist at the merge base: it is new or renamed. Removed lines in the other units show what it replaced.", u.Symbol))
+			notes = append(notes, label(u)+fmt.Sprintf("%s does not exist at the merge base: it is new or renamed. Removed lines in the other units show what it replaced.", u.Symbol))
 		}
-		moved := map[*Unit]int{}
 		for _, o := range units {
-			if o == u || !reviewable(o) {
+			if member[o] || !reviewable(o) {
 				continue
 			}
 			n, sample := overlap(lines[u].added, lines[o].removed)
 			if n >= minMovedLines {
-				moved[o] = n
-				notes = append(notes, fmt.Sprintf("%d added lines here were removed from %s in this PR (e.g. `%s`): that code moved, so the behavior it carries is not new.", n, o.ID, sample))
+				moved[o] = max(moved[o], n)
+				notes = append(notes, label(u)+fmt.Sprintf("%d added lines here were removed from %s in this PR (e.g. `%s`): that code moved, so the behavior it carries is not new.", n, o.ID, sample))
 			}
 		}
-		related := rankRelated(u, units, moved)
-		var sb strings.Builder
-		var hidden []string
-		left := budget
-		for _, o := range related {
-			d := o.Diff()
-			if budget > 0 && len(d) > left {
-				hidden = append(hidden, o.ID)
-				continue
-			}
-			left -= len(d)
-			fmt.Fprintf(&sb, "\n#### %s (%s)\n```diff\n%s\n```\n", o.ID, o.Status, d)
-		}
-		for _, o := range units {
-			if o != u && !reviewable(o) {
-				hidden = append(hidden, o.ID)
-			}
-		}
-		var out strings.Builder
-		if len(notes) > 0 {
-			out.WriteString("\nNotes on this unit:\n")
-			for _, n := range notes {
-				out.WriteString("- " + n + "\n")
-			}
-		}
-		if sb.Len() > 0 {
-			out.WriteString("\nOther changes in the same PR, for context. Review only the unit above, but use these to judge it: a caller or fallback here may limit or cause a problem.\n")
-			out.WriteString(sb.String())
-		}
-		if len(hidden) > 0 {
-			sort.Strings(hidden)
-			fmt.Fprintf(&out, "\nAlso changed, not shown: %s\n", strings.Join(hidden, ", "))
-		}
-		u.ReviewContext = out.String()
 	}
+	var sb strings.Builder
+	var hidden []string
+	left := budget
+	for _, o := range rankRelated(members, units, moved) {
+		d := o.Diff()
+		if budget > 0 && len(d) > left {
+			hidden = append(hidden, o.ID)
+			continue
+		}
+		left -= len(d)
+		fmt.Fprintf(&sb, "\n#### %s (%s)\n```diff\n%s\n```\n", o.ID, o.Status, d)
+	}
+	for _, o := range units {
+		if !member[o] && !reviewable(o) {
+			hidden = append(hidden, o.ID)
+		}
+	}
+	noun := "the unit above"
+	heading := "\nNotes on this unit:\n"
+	if len(members) > 1 {
+		noun = "the units above"
+		heading = "\nNotes on these units:\n"
+	}
+	var out strings.Builder
+	if len(notes) > 0 {
+		out.WriteString(heading)
+		for _, n := range notes {
+			out.WriteString("- " + n + "\n")
+		}
+	}
+	if sb.Len() > 0 {
+		fmt.Fprintf(&out, "\nOther changes in the same PR, for context. Review only %s, but use these to judge it: a caller or fallback here may limit or cause a problem.\n", noun)
+		out.WriteString(sb.String())
+	}
+	if len(hidden) > 0 {
+		sort.Strings(hidden)
+		fmt.Fprintf(&out, "\nAlso changed, not shown: %s\n", strings.Join(hidden, ", "))
+	}
+	return out.String()
 }
 
 // reviewable reports whether another unit's diff is worth showing: rule
@@ -93,26 +119,38 @@ func reviewable(u *Unit) bool {
 	return len(u.Hunks) > 0 && !(u.Decision.Source == "rule" && u.Decision.Bucket == BucketNone)
 }
 
-// rankRelated orders the other units: code moved from them, then units
-// that name each other (callers and callees), then the same file, then the
-// rest, keeping PR order inside each group.
-func rankRelated(u *Unit, units []*Unit, moved map[*Unit]int) []*Unit {
-	name := shortName(u.Symbol)
-	uDiff := u.Diff()
+// rankRelated orders the units outside members: code moved from them,
+// then units that name a member or that a member names (callers and
+// callees), then the same file, then the rest, keeping PR order inside
+// each group. A unit any member ranks highly is shown early.
+func rankRelated(members, units []*Unit, moved map[*Unit]int) []*Unit {
+	member := make(map[*Unit]bool, len(members))
+	names := make([]string, len(members))
+	diffs := make([]string, len(members))
+	for i, u := range members {
+		member[u] = true
+		names[i] = shortName(u.Symbol)
+		diffs[i] = u.Diff()
+	}
 	rank := func(o *Unit) int {
-		switch {
-		case moved[o] > 0:
+		if moved[o] > 0 {
 			return 0
-		case mentions(o.Diff(), name) || mentions(uDiff, shortName(o.Symbol)):
-			return 1
-		case o.File == u.File:
-			return 2
 		}
-		return 3
+		oDiff, oName := o.Diff(), shortName(o.Symbol)
+		best := 3
+		for i, u := range members {
+			switch {
+			case mentions(oDiff, names[i]) || mentions(diffs[i], oName):
+				return 1
+			case o.File == u.File:
+				best = min(best, 2)
+			}
+		}
+		return best
 	}
 	var out []*Unit
 	for _, o := range units {
-		if o != u && reviewable(o) {
+		if !member[o] && reviewable(o) {
 			out = append(out, o)
 		}
 	}

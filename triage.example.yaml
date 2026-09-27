@@ -11,6 +11,17 @@ thresholds:
 max_unit_chars: 24000
 # Other units' diffs shown with each unit in the review prompt, most related first.
 review_context_chars: 32000
+# Review related units together in one call instead of one call each: units
+# that name each other, a test named after the symbol it exercises, and small
+# changes in the same file. On by default; -group-review=false also turns it
+# off for a run.
+grouping:
+  enabled: true
+  max_chars: 12000    # cap on one group's combined diff
+  max_members: 8      # cap on units per group (0: no cap). Both caps were
+                      # picked by experiments/grouping-tuning; without the
+                      # member cap a chain of links can pull 20+ units into
+                      # one review, and those reviews report less.
 # Buckets come from one score per unit (see README, Tiers):
 #   prior = sqrt(impact x likelihood) x change-kind weight
 #   score = max(review attention, prior x (1 - trust)) after a clean review

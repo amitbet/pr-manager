@@ -1,0 +1,187 @@
+[
+  {
+    "members": [
+      "tsdb/head_read.go:type seriesRefs",
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+      "tsdb/head_read.go:type allSelectedSeriesPostings",
+      "tsdb/head.go:type SelectedSeriesHead",
+      "tsdb/head.go:var selectedSeriesHeadULID",
+      "tsdb/head.go:isSeriesWithoutOOO",
+      "tsdb/head.go:isStaleSeries",
+      "tsdb/head.go:hasAppendIDAbove",
+      "tsdb/block.go:const indexFilename"
+    ],
+    "reason": "Core type definitions and simple predicate functions that form the foundation for series filtering and selection logic.",
+    "title": "Type Definitions and Basic Helper Functions"
+  },
+  {
+    "members": [
+      "tsdb/block.go:(*BlockMetaCompaction).FromSelectedSeries",
+      "tsdb/block.go:(*BlockMetaCompaction).SetSelectedSeries",
+      "tsdb/db.go:(*DB).inOrderBlocksMaxTime",
+      "tsdb/compact.go:(*LeveledCompactor).Write"
+    ],
+    "reason": "Block-level metadata operations to track and propagate selected-series compaction hints through the block layer and compactor.",
+    "title": "Block Metadata Support for Selected Series"
+  },
+  {
+    "members": [
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues"
+    ],
+    "reason": "Index reader implementation that restricts head index queries to an explicit list of series references during compaction.",
+    "title": "Head Index Reader Implementation for Selected Series"
+  },
+  {
+    "members": [
+      "tsdb/head.go:NewSelectedSeriesHead",
+      "tsdb/head.go:(*SelectedSeriesHead).Index",
+      "tsdb/head.go:(*SelectedSeriesHead).NumSeries",
+      "tsdb/head.go:(*SelectedSeriesHead).Meta",
+      "tsdb/head.go:(*SelectedSeriesHead).String"
+    ],
+    "reason": "BlockReader implementation that provides a restricted view of head data for selected series during compaction.",
+    "title": "SelectedSeriesHead BlockReader Implementation"
+  },
+  {
+    "members": [
+      "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+      "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData",
+      "tsdb/head.go:(*stripeSeries).gcSeries",
+      "tsdb/head.go:(*Head).gcSeries"
+    ],
+    "reason": "Core head-level operations for filtering series based on predicates and removing them from the in-memory index with appropriate metrics updates.",
+    "title": "Head Operations: Series Filtering and Garbage Collection"
+  },
+  {
+    "members": [
+      "tsdb/head.go:(*Head).truncateSeries",
+      "tsdb/head.go:(*Head).truncateSelectedSeries",
+      "tsdb/head.go:(*Head).truncateStaleSeries"
+    ],
+    "reason": "Truncation functions that safely remove series from the head while recording WAL tombstones and handling safety checks for late-arriving samples.",
+    "title": "Head Truncation Operations"
+  },
+  {
+    "members": [
+      "tsdb/db.go:type headViewFactory",
+      "tsdb/db.go:type headSeriesEvictor",
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback",
+      "tsdb/db.go:(*DB).compactHeadViewLocked"
+    ],
+    "reason": "Generic compaction infrastructure for writing head views to blocks and evicting series, used by both selected-series and stale-series compaction.",
+    "title": "Compaction Infrastructure: View Factory and Evictor Types"
+  },
+  {
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries"
+    ],
+    "reason": "Primary public API for compacting an explicit caller-supplied list of series references without advancing HeadMinTime.",
+    "title": "CompactSelectedSeries Main Implementation"
+  },
+  {
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ],
+    "reason": "Refactored to use shared compactHeadViewLocked infrastructure, now consistent with CompactSelectedSeries pattern.",
+    "title": "Refactored CompactStaleHead Implementation"
+  },
+  {
+    "members": [
+      "tsdb/db.go:type dbMetrics",
+      "tsdb/db.go:newDBMetrics"
+    ],
+    "reason": "Prometheus metrics definitions and registration for selected-series compaction operations and durations.",
+    "title": "Metrics Definition and Registration"
+  },
+  {
+    "members": [
+      "tsdb/block_test.go:TestBlockMetaCompaction_SetSelectedSeries"
+    ],
+    "reason": "Tests for block metadata hint tracking and idempotency.",
+    "title": "Block Metadata Tests"
+  },
+  {
+    "members": [
+      "tsdb/compact_test.go:setupDBForSelectedSeriesBenchmark",
+      "tsdb/compact_test.go:pickRefsEvenly"
+    ],
+    "reason": "Shared test helpers for setting up benchmark scenarios and selecting representative series samples.",
+    "title": "Benchmark Infrastructure Helpers"
+  },
+  {
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ],
+    "reason": "Performance benchmarks measuring end-to-end compaction cost and filtering operations across varying selection fractions.",
+    "title": "Compaction Benchmarks"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EmptyRefs"
+    ],
+    "reason": "Basic functional tests verifying correct behavior for normal and edge cases (empty inputs).",
+    "title": "Happy Path and Basic Functional Tests"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges",
+      "tsdb/db_test.go:TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted"
+    ],
+    "reason": "Tests for multiple chunk-range handling and correct stale-series counter management.",
+    "title": "Multi-Range and Stale Series Interaction Tests"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData",
+      "tsdb/db_test.go:TestCompactSelectedSeries_HintPropagation"
+    ],
+    "reason": "Tests for OOO data handling (series skipping) and hint propagation through block compaction.",
+    "title": "Out-of-Order Data and Block Hint Propagation Tests"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestInOrderBlocksMaxTime_ExcludesSelectedSeriesBlocks",
+      "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost"
+    ],
+    "reason": "Tests for correct handling of block watermarks and edge-case samples at chunk-range boundaries.",
+    "title": "Block Watermark and Boundary Sample Tests"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "reason": "Critical safety test for append-ID watermark protection against samples appended during compaction, including restart verification.",
+    "title": "Late Append Safety Test"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "reason": "Tests for correct handling of sparse series selection across wide time ranges and WAL checkpoint record retention.",
+    "title": "Sparse Series and WAL Checkpoint Tests"
+  },
+  {
+    "members": [
+      "tsdb/db_test.go:TestCompactStaleHead_EvictedSeriesRecordKeptInCheckpoint"
+    ],
+    "reason": "Verification that stale-series eviction records are properly retained in WAL checkpoints.",
+    "title": "Stale Series Compaction Checkpoint Test"
+  },
+  {
+    "members": [
+      "tsdb/head_test.go:TestHead_FilterSelectedSeriesAndSortPostings",
+      "tsdb/head_test.go:TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative",
+      "tsdb/head_test.go:TestWALReplayRaceWithStaleSeriesCompaction",
+      "tsdb/head_test.go:TestHead_mmapHeadChunks"
+    ],
+    "reason": "Head-level tests for filtering operations, WAL handling, and stale-series interactions with chunk metrics.",
+    "title": "Head-Level Functional and Integration Tests"
+  }
+]

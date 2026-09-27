@@ -1,0 +1,798 @@
+{
+  "wall_seconds": 519.22061675,
+  "concurrency": 4,
+  "completed": [
+    {
+      "arm": "baseline",
+      "index": 0,
+      "seconds": 90.084363708,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 0,
+      "seconds": 85.559801416,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 0,
+      "seconds": 120.092096292,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 0,
+      "seconds": 121.300955625,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 0,
+      "seconds": 127.408017875,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 1,
+      "seconds": 79.33723625,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 1,
+      "seconds": 190.291981541,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 1,
+      "seconds": 113.195404708,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 1,
+      "seconds": 54.790884125,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 1,
+      "seconds": 120.792105041,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 2,
+      "seconds": 119.284029792,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 2,
+      "seconds": 108.879323792,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 2,
+      "seconds": 145.574827083,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 2,
+      "seconds": 48.93025925,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 2,
+      "seconds": 108.4331785,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 3,
+      "seconds": 64.083407084,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 3,
+      "seconds": 78.7732185,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 3,
+      "seconds": 142.865640792,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 3,
+      "seconds": 57.979380958,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 3,
+      "seconds": 125.167466417,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 4,
+      "seconds": 70.604240458,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 4,
+      "seconds": 181.1860065,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 4,
+      "seconds": 124.832407916,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 4,
+      "seconds": 162.470248583,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 4,
+      "seconds": 59.817511375,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 5,
+      "seconds": 98.435572417,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 5,
+      "seconds": 160.016653875,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 5,
+      "seconds": 61.84414375,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 5,
+      "seconds": 166.701079667,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 5,
+      "seconds": 73.002312208,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 6,
+      "seconds": 115.974151917,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 6,
+      "seconds": 102.097362875,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 6,
+      "seconds": 46.098174917,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 6,
+      "seconds": 59.386716166,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 6,
+      "seconds": 91.079525375,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 7,
+      "seconds": 130.304451291,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 7,
+      "seconds": 88.962924166,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 7,
+      "seconds": 97.02353225,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 7,
+      "seconds": 104.219628458,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 7,
+      "seconds": 122.464828542,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 8,
+      "seconds": 90.746010333,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 8,
+      "seconds": 96.170692708,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 8,
+      "seconds": 125.041315334,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 8,
+      "seconds": 137.827479875,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 8,
+      "seconds": 37.052582834,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 9,
+      "seconds": 50.491967541,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 9,
+      "seconds": 89.208626625,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 9,
+      "seconds": 61.44072275,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 9,
+      "seconds": 49.027281292,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 9,
+      "seconds": 61.408487417,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 10,
+      "seconds": 20.236821542,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 10,
+      "seconds": 54.141302917,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 10,
+      "seconds": 50.1725,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 10,
+      "seconds": 99.33064275,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 10,
+      "seconds": 77.996095292,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 11,
+      "seconds": 130.609242541,
+      "error": null
+    },
+    {
+      "arm": "deterministic",
+      "index": 11,
+      "seconds": 112.488091583,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 11,
+      "seconds": 61.166893958,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 11,
+      "seconds": 96.206623542,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 11,
+      "seconds": 36.326668125,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 12,
+      "seconds": 96.468635917,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 12,
+      "seconds": 85.252930625,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 12,
+      "seconds": 109.781813916,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 12,
+      "seconds": 68.706081042,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 13,
+      "seconds": 38.049218958,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 13,
+      "seconds": 82.154185166,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 13,
+      "seconds": 43.818196917,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 13,
+      "seconds": 51.074482208,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 14,
+      "seconds": 37.868157166,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 14,
+      "seconds": 36.868579125,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 14,
+      "seconds": 59.040896584,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 14,
+      "seconds": 137.178047042,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 15,
+      "seconds": 121.518467375,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 15,
+      "seconds": 120.988267542,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 15,
+      "seconds": 71.005921209,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 15,
+      "seconds": 91.590130666,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 16,
+      "seconds": 28.009021667,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 16,
+      "seconds": 117.981256375,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 16,
+      "seconds": 82.92587825,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 16,
+      "seconds": 57.785461375,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 17,
+      "seconds": 26.654824,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 17,
+      "seconds": 74.979208209,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 17,
+      "seconds": 106.394159791,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 17,
+      "seconds": 51.885570333,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 18,
+      "seconds": 100.182762791,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 18,
+      "seconds": 144.413037625,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 18,
+      "seconds": 100.07917725,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 18,
+      "seconds": 139.856170417,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 19,
+      "seconds": 43.835796458,
+      "error": null
+    },
+    {
+      "arm": "linked",
+      "index": 19,
+      "seconds": 73.328313,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 19,
+      "seconds": 29.405256167,
+      "error": null
+    },
+    {
+      "arm": "oracle",
+      "index": 19,
+      "seconds": 148.617004583,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 20,
+      "seconds": 24.549088042,
+      "error": null
+    },
+    {
+      "arm": "model",
+      "index": 20,
+      "seconds": 77.287839625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 21,
+      "seconds": 30.742232917,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 22,
+      "seconds": 69.501164416,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 23,
+      "seconds": 20.475721917,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 24,
+      "seconds": 23.168991542,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 25,
+      "seconds": 26.579482417,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 26,
+      "seconds": 44.969217625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 27,
+      "seconds": 59.6981985,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 28,
+      "seconds": 57.800521625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 29,
+      "seconds": 64.567487333,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 30,
+      "seconds": 56.219640583,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 31,
+      "seconds": 43.192276333,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 32,
+      "seconds": 49.16036825,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 33,
+      "seconds": 78.811528625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 34,
+      "seconds": 33.835810917,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 35,
+      "seconds": 80.24497875,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 36,
+      "seconds": 17.90856825,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 37,
+      "seconds": 58.662374166,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 38,
+      "seconds": 32.409876375,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 39,
+      "seconds": 57.481998417,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 40,
+      "seconds": 66.285121334,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 41,
+      "seconds": 28.033669292,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 42,
+      "seconds": 46.213221542,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 43,
+      "seconds": 33.443791791,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 44,
+      "seconds": 134.235553875,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 45,
+      "seconds": 128.130585084,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 46,
+      "seconds": 68.80126025,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 47,
+      "seconds": 60.816620875,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 48,
+      "seconds": 83.797819667,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 49,
+      "seconds": 82.984102625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 50,
+      "seconds": 38.288462666,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 51,
+      "seconds": 44.896959666,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 52,
+      "seconds": 55.207435292,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 53,
+      "seconds": 26.157986791,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 54,
+      "seconds": 116.83296075,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 55,
+      "seconds": 44.557794333,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 56,
+      "seconds": 77.023140875,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 57,
+      "seconds": 35.214887625,
+      "error": null
+    },
+    {
+      "arm": "baseline",
+      "index": 58,
+      "seconds": 21.633689375,
+      "error": null
+    }
+  ]
+}

@@ -187,12 +187,163 @@ func (s *Summarizer) reviewNotes(ctx context.Context, u *Unit) {
 // see become things to check. A reply without an issues field was not a
 // review, so it cannot count as "nothing found".
 func (s *Summarizer) setIssues(ctx context.Context, u *Unit, args map[string]any) {
+	s.setIssuesIn(ctx, u, args, s.prompt(u, ""))
+}
+
+// setIssuesIn is setIssues with the text the critic re-reads, which for a
+// grouped review is the whole group's prompt: an issue in one member is
+// often only checkable against another.
+func (s *Summarizer) setIssuesIn(ctx context.Context, u *Unit, args map[string]any, context string) {
 	v, ok := args["issues"]
 	var checks []string
 	u.Issues, checks = decodeIssues(v)
-	u.Issues = s.criticize(ctx, u, u.Issues)
+	u.Issues = s.criticize(ctx, u, u.Issues, context)
 	u.Reviewed = ok
 	for _, c := range checks {
 		u.Focus = append(u.Focus, "unverified: "+c)
+	}
+}
+
+// groupSystem is prepended for a grouped review. The members are related
+// changes, so a defect may only be visible across two of them.
+const groupSystem = `
+You are reviewing several related change units in one pass. They were grouped because a reviewer should read them together: one may call, test or replace another, so a defect can be visible only across two of them.
+Return one entry per unit, using the exact unit id given with its diff. Cover every unit, including ones you find nothing wrong with. Anchor each issue to the unit whose diff causes it.`
+
+// groupTool builds the per-member tool schema from a single unit's
+// properties, so grouped and ungrouped reviews stay in step.
+func groupTool(name, description string, unit map[string]any, required []string) llm.ToolDefinition {
+	props := map[string]any{"id": map[string]any{"type": "string", "description": "The unit id this entry reviews, copied exactly."}}
+	for k, v := range unit {
+		props[k] = v
+	}
+	return llm.ToolDefinition{
+		Name:        name,
+		Description: description,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"units": map[string]any{
+					"type":        "array",
+					"description": "One entry per change unit, in the order given.",
+					"items": map[string]any{
+						"type":       "object",
+						"properties": props,
+						"required":   append([]string{"id"}, required...),
+					},
+				},
+			},
+			"required": []string{"units"},
+		},
+	}
+}
+
+var (
+	groupReviewNotesTool = groupTool("submit_group_review_notes", "Submit review notes for every unit in this group.",
+		reviewNotesTool.InputSchema["properties"].(map[string]any),
+		[]string{"headline", "summary", "focus", "issues"})
+	groupSummaryTool = groupTool("submit_group_summary", "Submit the summary for every unit in this group.",
+		summaryTool.InputSchema["properties"].(map[string]any),
+		[]string{"headline", "summary", "safe", "issues"})
+)
+
+// groupPrompt lays out every member's diff and code-map context, then the
+// rest of the PR once for the whole group.
+func (s *Summarizer) groupPrompt(g *ReviewGroup) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Review these %d related change units.\n", len(g.Members))
+	for _, u := range g.Members {
+		p, _ := unitDiff(u, s.Policy.MaxUnitChars)
+		fmt.Fprintf(&sb, "\n#### unit id: %s\n%s%sTriage said: %s (%s)\n",
+			u.ID, p, reviewContext(u), u.Decision.Bucket, u.Decision.Reason)
+	}
+	sb.WriteString(g.Context)
+	return sb.String()
+}
+
+// SummarizeGroup reviews a group in one call and writes the result back to
+// each member, so everything downstream still sees per-unit notes. A group
+// of one is an ordinary review. Members the reply leaves out are reviewed
+// on their own rather than silently going unreviewed.
+func (s *Summarizer) SummarizeGroup(ctx context.Context, g *ReviewGroup) {
+	human := g.Members[0].Decision.Bucket == BucketHuman
+	mixed := false
+	for _, u := range g.Members {
+		// The two buckets ask different questions and answer with
+		// different tools, so a mixed group cannot be one call.
+		mixed = mixed || (u.Decision.Bucket == BucketHuman) != human
+	}
+	if mixed || len(g.Members) == 1 {
+		for _, u := range g.Members {
+			s.Summarize(ctx, u)
+		}
+		return
+	}
+	system, tool := summarizeSystem, groupSummaryTool
+	if human {
+		system, tool = reviewNotesSystem, groupReviewNotesTool
+	}
+	prompt := s.groupPrompt(g)
+	args, _, err := llm.CallToolIn(ctx, s.LLM, s.workspace, []llm.ChatMessage{
+		{Role: "system", Content: s.system(system) + groupSystem},
+		{Role: "user", Content: prompt},
+	}, tool, groupMaxTokens(len(g.Members)))
+	if err != nil {
+		// One failed call must not drop a whole group's review.
+		for _, u := range g.Members {
+			s.Summarize(ctx, u)
+		}
+		return
+	}
+	byID := map[string]map[string]any{}
+	if list, ok := args["units"].([]any); ok {
+		for _, it := range list {
+			e, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, ok := e["id"].(string); ok {
+				byID[id] = e
+			}
+		}
+	}
+	for _, u := range g.Members {
+		e, ok := byID[u.ID]
+		if !ok {
+			s.Summarize(ctx, u)
+			continue
+		}
+		s.applyReview(ctx, u, e, prompt, human)
+	}
+}
+
+// groupMaxTokens scales the output cap with the number of units, since one
+// reply now carries what several used to.
+func groupMaxTokens(members int) int32 {
+	n := int32(members) * reviewMaxTokens / 2
+	return min(max(n, reviewMaxTokens), 4*reviewMaxTokens)
+}
+
+// applyReview writes one review entry onto a unit. It is the grouped
+// equivalent of the tail of Summarize and reviewNotes.
+func (s *Summarizer) applyReview(ctx context.Context, u *Unit, args map[string]any, context string, human bool) {
+	u.Summary, _ = args["summary"].(string)
+	u.Headline, _ = args["headline"].(string)
+	if fs, ok := args["focus"].([]any); ok {
+		for _, f := range fs {
+			if str, ok := f.(string); ok && strings.TrimSpace(str) != "" {
+				u.Focus = append(u.Focus, strings.TrimSpace(str))
+			}
+		}
+	}
+	s.setIssuesIn(ctx, u, args, context)
+	if human {
+		return
+	}
+	safe, ok := args["safe"].(bool)
+	why, _ := args["escalate_reason"].(string)
+	why = strings.TrimSpace(why)
+	if (!ok || !safe) && why != "" && severityWeight[worstIssue(u.Issues).Severity] < severityWeight["medium"] {
+		u.Focus = append(u.Focus, "summarizer: "+why)
 	}
 }

@@ -71,6 +71,8 @@ type Policy struct {
 	ReviewContextChars int `yaml:"review_context_chars"`
 	// Tiers moves units using code-map impact, likelihood and review attention.
 	Tiers TierPolicy `yaml:"tiers"`
+	// Grouping reviews related units in one call instead of one each.
+	Grouping GroupPolicy `yaml:"grouping"`
 }
 
 func DefaultPolicy() Policy {
@@ -96,6 +98,7 @@ func DefaultPolicy() Policy {
 		MaxUnitChars:       24000,
 		ReviewContextChars: DefaultReviewContextChars,
 		Tiers:              DefaultTierPolicy(),
+		Grouping:           DefaultGroupPolicy(),
 	}
 }
 
@@ -132,6 +135,34 @@ func ParsePolicy(b []byte) (Policy, error) {
 	if user.ReviewContextChars > 0 {
 		p.ReviewContextChars = user.ReviewContextChars
 	}
+	// Grouping.Enabled defaults to true, so an absent key and an explicit
+	// false must be told apart.
+	var grouping struct {
+		Grouping struct {
+			Enabled    *bool `yaml:"enabled"`
+			MaxChars   *int  `yaml:"max_chars"`
+			MaxMembers *int  `yaml:"max_members"`
+		} `yaml:"grouping"`
+	}
+	if err := yaml.Unmarshal(b, &grouping); err != nil {
+		return p, err
+	}
+	if grouping.Grouping.Enabled != nil {
+		p.Grouping.Enabled = *grouping.Grouping.Enabled
+	}
+	if n := grouping.Grouping.MaxChars; n != nil {
+		if *n <= 0 {
+			return p, fmt.Errorf("grouping.max_chars: want > 0, got %d", *n)
+		}
+		p.Grouping.MaxChars = *n
+	}
+	if n := grouping.Grouping.MaxMembers; n != nil {
+		if *n < 0 {
+			return p, fmt.Errorf("grouping.max_members: want >= 0 (0: no cap), got %d", *n)
+		}
+		p.Grouping.MaxMembers = *n
+	}
+
 	// Tiers: fields the file sets override the defaults, the rest stay,
 	// down to single budget fields.
 	var tiers struct {

@@ -1,0 +1,50 @@
+[
+  {
+    "defect": "inflight_appender",
+    "relationship": "watermark and guard",
+    "a": "tsdb/db.go:(*DB).compactHeadViewLocked",
+    "b": "tsdb/head.go:hasAppendIDAbove",
+    "pair_bytes": 3693,
+    "baseline": false,
+    "deterministic": false,
+    "model": false,
+    "linked": false,
+    "oracle": true
+  },
+  {
+    "defect": "inflight_appender",
+    "relationship": "implementation and late-append test",
+    "a": "tsdb/db.go:(*DB).compactHeadViewLocked",
+    "b": "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart",
+    "pair_bytes": 7871,
+    "baseline": false,
+    "deterministic": false,
+    "model": false,
+    "linked": false,
+    "oracle": true
+  },
+  {
+    "defect": "single_timestamp",
+    "relationship": "write loop and eviction guard",
+    "a": "tsdb/db.go:(*DB).compactHeadViewLocked",
+    "b": "tsdb/head.go:(*Head).truncateSeries",
+    "pair_bytes": 4512,
+    "baseline": false,
+    "deterministic": false,
+    "model": false,
+    "linked": false,
+    "oracle": true
+  },
+  {
+    "defect": "unsorted_refs",
+    "relationship": "input and ordering",
+    "a": "tsdb/db.go:(*DB).CompactSelectedSeries",
+    "b": "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+    "pair_bytes": 7708,
+    "baseline": false,
+    "deterministic": false,
+    "model": false,
+    "linked": false,
+    "oracle": true
+  }
+]

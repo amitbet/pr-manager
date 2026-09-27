@@ -1,0 +1,133 @@
+[
+  {
+    "title": "compactHeadViewLocked / compactHeadViewBeforeEvictTestingCallback / Write",
+    "members": [
+      "tsdb/db.go:(*DB).compactHeadViewLocked",
+      "tsdb/compact.go:(*LeveledCompactor).Write",
+      "tsdb/head.go:NewSelectedSeriesHead",
+      "tsdb/head.go:(*SelectedSeriesHead).Index",
+      "tsdb/head.go:(*SelectedSeriesHead).NumSeries",
+      "tsdb/head.go:(*SelectedSeriesHead).Meta",
+      "tsdb/head.go:(*SelectedSeriesHead).String",
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings",
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback",
+      "tsdb/db.go:type headViewFactory",
+      "tsdb/db.go:type headSeriesEvictor",
+      "tsdb/db.go:(*DB).CompactStaleHead",
+      "tsdb/db_test.go:TestCompactStaleHead_EvictedSeriesRecordKeptInCheckpoint",
+      "tsdb/head.go:type SelectedSeriesHead",
+      "tsdb/head.go:var selectedSeriesHeadULID",
+      "tsdb/head_test.go:TestWALReplayRaceWithStaleSeriesCompaction"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "gcSeries / gcSeries / truncateSelectedSeries",
+    "members": [
+      "tsdb/head.go:(*stripeSeries).gcSeries",
+      "tsdb/head.go:isStaleSeries",
+      "tsdb/head.go:(*Head).truncateSeries",
+      "tsdb/head.go:hasAppendIDAbove",
+      "tsdb/head.go:(*Head).gcSeries",
+      "tsdb/head.go:(*Head).truncateSelectedSeries",
+      "tsdb/head.go:isSeriesWithoutOOO",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint",
+      "tsdb/head.go:(*Head).truncateStaleSeries",
+      "tsdb/head_test.go:TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "CompactSelectedSeries / setupDBForSelectedSeriesBenchmark / BenchmarkCompactSelectedSeries",
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries",
+      "tsdb/compact_test.go:setupDBForSelectedSeriesBenchmark",
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+      "tsdb/db_test.go:TestCompactSelectedSeries",
+      "tsdb/db_test.go:TestCompactSelectedSeries_EmptyRefs",
+      "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "inOrderBlocksMaxTime / SetSelectedSeries / TestBlockMetaCompaction_SetSelectedSeries",
+    "members": [
+      "tsdb/block.go:(*BlockMetaCompaction).SetSelectedSeries",
+      "tsdb/db.go:(*DB).inOrderBlocksMaxTime",
+      "tsdb/block.go:(*BlockMetaCompaction).FromSelectedSeries",
+      "tsdb/block.go:const indexFilename",
+      "tsdb/block_test.go:TestBlockMetaCompaction_SetSelectedSeries",
+      "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData",
+      "tsdb/db_test.go:TestCompactSelectedSeries_HintPropagation",
+      "tsdb/db_test.go:TestInOrderBlocksMaxTime_ExcludesSelectedSeriesBlocks",
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "selectedSeriesIndex / headSelectedSeriesIndexReader / seriesRefs",
+    "members": [
+      "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues",
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+      "tsdb/head_read.go:type allSelectedSeriesPostings",
+      "tsdb/head_read.go:type seriesRefs",
+      "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData",
+      "tsdb/head_test.go:TestHead_FilterSelectedSeriesAndSortPostings"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "dbMetrics",
+    "members": [
+      "tsdb/db.go:type dbMetrics"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "pickRefsEvenly",
+    "members": [
+      "tsdb/compact_test.go:pickRefsEvenly"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "newDBMetrics",
+    "members": [
+      "tsdb/db.go:newDBMetrics"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "TestCompactSelectedSeries_ChunkBoundarySampleNotLost",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  },
+  {
+    "title": "TestHead_mmapHeadChunks",
+    "members": [
+      "tsdb/head_test.go:TestHead_mmapHeadChunks"
+    ],
+    "reason": "Greedy reference/test-name links, 12 KB focus cap."
+  }
+]

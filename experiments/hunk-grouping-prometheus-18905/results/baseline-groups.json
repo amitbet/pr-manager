@@ -1,0 +1,356 @@
+[
+  {
+    "title": "tsdb/db.go:(*DB).compactHeadViewLocked",
+    "members": [
+      "tsdb/db.go:(*DB).compactHeadViewLocked"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings",
+    "members": [
+      "tsdb/head_read.go:(*Head).filterSeriesAndSortPostings"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*stripeSeries).gcSeries",
+    "members": [
+      "tsdb/head.go:(*stripeSeries).gcSeries"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:(*DB).CompactSelectedSeries",
+    "members": [
+      "tsdb/db.go:(*DB).CompactSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:isStaleSeries",
+    "members": [
+      "tsdb/head.go:isStaleSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*Head).truncateSeries",
+    "members": [
+      "tsdb/head.go:(*Head).truncateSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings",
+    "members": [
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).Postings"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:hasAppendIDAbove",
+    "members": [
+      "tsdb/head.go:hasAppendIDAbove"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*Head).gcSeries",
+    "members": [
+      "tsdb/head.go:(*Head).gcSeries"
+    ]
+  },
+  {
+    "title": "tsdb/compact.go:(*LeveledCompactor).Write",
+    "members": [
+      "tsdb/compact.go:(*LeveledCompactor).Write"
+    ]
+  },
+  {
+    "title": "tsdb/block.go:(*BlockMetaCompaction).SetSelectedSeries",
+    "members": [
+      "tsdb/block.go:(*BlockMetaCompaction).SetSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*Head).truncateSelectedSeries",
+    "members": [
+      "tsdb/head.go:(*Head).truncateSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings",
+    "members": [
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).SortedPostings"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:(*DB).inOrderBlocksMaxTime",
+    "members": [
+      "tsdb/db.go:(*DB).inOrderBlocksMaxTime"
+    ]
+  },
+  {
+    "title": "tsdb/block.go:(*BlockMetaCompaction).FromSelectedSeries",
+    "members": [
+      "tsdb/block.go:(*BlockMetaCompaction).FromSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:isSeriesWithoutOOO",
+    "members": [
+      "tsdb/head.go:isSeriesWithoutOOO"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:NewSelectedSeriesHead",
+    "members": [
+      "tsdb/head.go:NewSelectedSeriesHead"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*SelectedSeriesHead).Index",
+    "members": [
+      "tsdb/head.go:(*SelectedSeriesHead).Index"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*SelectedSeriesHead).NumSeries",
+    "members": [
+      "tsdb/head.go:(*SelectedSeriesHead).NumSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*SelectedSeriesHead).Meta",
+    "members": [
+      "tsdb/head.go:(*SelectedSeriesHead).Meta"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*SelectedSeriesHead).String",
+    "members": [
+      "tsdb/head.go:(*SelectedSeriesHead).String"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*Head).selectedSeriesIndex",
+    "members": [
+      "tsdb/head_read.go:(*Head).selectedSeriesIndex"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching",
+    "members": [
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForLabelMatching"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues",
+    "members": [
+      "tsdb/head_read.go:(*headSelectedSeriesIndexReader).PostingsForAllLabelValues"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:type dbMetrics",
+    "members": [
+      "tsdb/db.go:type dbMetrics"
+    ]
+  },
+  {
+    "title": "tsdb/block.go:const indexFilename",
+    "members": [
+      "tsdb/block.go:const indexFilename"
+    ]
+  },
+  {
+    "title": "tsdb/block_test.go:TestBlockMetaCompaction_SetSelectedSeries",
+    "members": [
+      "tsdb/block_test.go:TestBlockMetaCompaction_SetSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/compact_test.go:setupDBForSelectedSeriesBenchmark",
+    "members": [
+      "tsdb/compact_test.go:setupDBForSelectedSeriesBenchmark"
+    ]
+  },
+  {
+    "title": "tsdb/compact_test.go:pickRefsEvenly",
+    "members": [
+      "tsdb/compact_test.go:pickRefsEvenly"
+    ]
+  },
+  {
+    "title": "tsdb/compact_test.go:BenchmarkCompactSelectedSeries",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkCompactSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings",
+    "members": [
+      "tsdb/compact_test.go:BenchmarkFilterSeriesAndSortPostings"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:newDBMetrics",
+    "members": [
+      "tsdb/db.go:newDBMetrics"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback",
+    "members": [
+      "tsdb/db.go:var compactHeadViewBeforeEvictTestingCallback"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:type headViewFactory",
+    "members": [
+      "tsdb/db.go:type headViewFactory"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:type headSeriesEvictor",
+    "members": [
+      "tsdb/db.go:type headSeriesEvictor"
+    ]
+  },
+  {
+    "title": "tsdb/db.go:(*DB).CompactStaleHead",
+    "members": [
+      "tsdb/db.go:(*DB).CompactStaleHead"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactStaleHead_EvictedSeriesRecordKeptInCheckpoint",
+    "members": [
+      "tsdb/db_test.go:TestCompactStaleHead_EvictedSeriesRecordKeptInCheckpoint"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_EmptyRefs",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_EmptyRefs"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_MultipleChunkRanges"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_DecrementsNumStaleSeriesWhenStaleSeriesCompacted"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_HintPropagation",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_HintPropagation"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestInOrderBlocksMaxTime_ExcludesSelectedSeriesBlocks",
+    "members": [
+      "tsdb/db_test.go:TestInOrderBlocksMaxTime_ExcludesSelectedSeriesBlocks"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_LateAppendDuringCompactionSurvivesRestart"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_ChunkBoundarySampleNotLost"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SparseSelectedAcrossWideHead"
+    ]
+  },
+  {
+    "title": "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint",
+    "members": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:(*Head).truncateStaleSeries",
+    "members": [
+      "tsdb/head.go:(*Head).truncateStaleSeries"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:type SelectedSeriesHead",
+    "members": [
+      "tsdb/head.go:type SelectedSeriesHead"
+    ]
+  },
+  {
+    "title": "tsdb/head.go:var selectedSeriesHeadULID",
+    "members": [
+      "tsdb/head.go:var selectedSeriesHeadULID"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:type headSelectedSeriesIndexReader",
+    "members": [
+      "tsdb/head_read.go:type headSelectedSeriesIndexReader"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:type allSelectedSeriesPostings",
+    "members": [
+      "tsdb/head_read.go:type allSelectedSeriesPostings"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:type seriesRefs",
+    "members": [
+      "tsdb/head_read.go:type seriesRefs"
+    ]
+  },
+  {
+    "title": "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData",
+    "members": [
+      "tsdb/head_read.go:(*Head).staleSeriesRefsNoOOOData"
+    ]
+  },
+  {
+    "title": "tsdb/head_test.go:TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative",
+    "members": [
+      "tsdb/head_test.go:TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative"
+    ]
+  },
+  {
+    "title": "tsdb/head_test.go:TestHead_FilterSelectedSeriesAndSortPostings",
+    "members": [
+      "tsdb/head_test.go:TestHead_FilterSelectedSeriesAndSortPostings"
+    ]
+  },
+  {
+    "title": "tsdb/head_test.go:TestWALReplayRaceWithStaleSeriesCompaction",
+    "members": [
+      "tsdb/head_test.go:TestWALReplayRaceWithStaleSeriesCompaction"
+    ]
+  },
+  {
+    "title": "tsdb/head_test.go:TestHead_mmapHeadChunks",
+    "members": [
+      "tsdb/head_test.go:TestHead_mmapHeadChunks"
+    ]
+  }
+]
