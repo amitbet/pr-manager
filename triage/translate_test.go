@@ -40,16 +40,23 @@ func TestTranslate(t *testing.T) {
 	}
 	for _, lang := range []string{"", "English", " english "} {
 		calls := 0
-		got, err := Translate(context.Background(), prefixLLM(&calls, false), lang, texts)
+		got, _, err := Translate(context.Background(), prefixLLM(&calls, false), lang, texts, nil)
 		if err != nil || calls != 0 || got["a.go"].Summary != "Retries `Fetch`." {
 			t.Errorf("%q: calls=%d err=%v got=%+v, want no translation", lang, calls, err, got)
 		}
 	}
 
 	calls := 0
-	got, err := Translate(context.Background(), prefixLLM(&calls, false), "Hebrew", texts)
+	ov := &Overview{Why: "Fetch fails on flaky links.", How: []string{"Wraps `Fetch` in a retry"}}
+	got, gotOv, err := Translate(context.Background(), prefixLLM(&calls, false), "Hebrew", texts, ov)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gotOv.Why != "he:Fetch fails on flaky links." || gotOv.How[0] != "he:Wraps `Fetch` in a retry" || len(gotOv.Issues) != 0 {
+		t.Errorf("overview = %+v", gotOv)
+	}
+	if ov.Why != "Fetch fails on flaky links." || ov.How[0] != "Wraps `Fetch` in a retry" {
+		t.Errorf("input overview changed: %+v", ov)
 	}
 	a := got["a.go"]
 	if a.Headline != "he:Adds retries" || a.Summary != "he:Retries `Fetch`." || a.Focus[0] != "he:unverified: timeouts" ||
@@ -63,7 +70,7 @@ func TestTranslate(t *testing.T) {
 		t.Errorf("input changed: %+v", texts["a.go"])
 	}
 
-	if _, err := Translate(context.Background(), prefixLLM(new(int), true), "Hebrew", texts); err == nil {
+	if _, _, err := Translate(context.Background(), prefixLLM(new(int), true), "Hebrew", texts, nil); err == nil {
 		t.Error("a missing item should fail the translation")
 	}
 }
@@ -75,7 +82,7 @@ func TestTranslateBatches(t *testing.T) {
 		texts[id] = UnitText{Summary: id + long}
 	}
 	calls := 0
-	got, err := Translate(context.Background(), prefixLLM(&calls, false), "Hebrew", texts)
+	got, _, err := Translate(context.Background(), prefixLLM(&calls, false), "Hebrew", texts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

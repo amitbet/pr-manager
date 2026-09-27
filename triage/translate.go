@@ -134,12 +134,13 @@ type translateItem struct {
 	Text string `json:"text"`
 }
 
-// Translate translates texts (keyed by unit ID) into lang, in batches.
-// English returns texts as they are, without a call. Any failed batch
-// fails the whole translation, so a half-translated PR is never cached.
-func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string]UnitText) (map[string]UnitText, error) {
+// Translate translates texts (keyed by unit ID) and ov, which may be nil,
+// into lang, in batches. English returns them as they are, without a call.
+// Any failed batch fails the whole translation, so a half-translated PR is
+// never cached.
+func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string]UnitText, ov *Overview) (map[string]UnitText, *Overview, error) {
 	if IsEnglish(lang) {
-		return texts, nil
+		return texts, ov, nil
 	}
 	// Copies of the texts, and pointers to each string to translate.
 	copies := make(map[string]*UnitText, len(texts))
@@ -149,14 +150,40 @@ func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string
 		t.Issues = append([]IssueText(nil), t.Issues...)
 		t.Escalated = append([]string(nil), t.Escalated...)
 		copies[id] = &t
-		for _, s := range textSlots(&t) {
-			if strings.TrimSpace(*s) != "" {
-				slots = append(slots, s)
-			}
+		slots = append(slots, textSlots(&t)...)
+	}
+	if ov != nil {
+		c := Overview{Why: ov.Why, How: append([]string(nil), ov.How...), Issues: append([]string(nil), ov.Issues...)}
+		ov = &c
+		slots = append(slots, &c.Why)
+		for i := range c.How {
+			slots = append(slots, &c.How[i])
+		}
+		for i := range c.Issues {
+			slots = append(slots, &c.Issues[i])
+		}
+	}
+	if err := translateSlots(ctx, l, lang, slots); err != nil {
+		return nil, nil, err
+	}
+	out := make(map[string]UnitText, len(copies))
+	for id, t := range copies {
+		out[id] = *t
+	}
+	return out, ov, nil
+}
+
+// translateSlots replaces each non-blank string in slots with its
+// translation.
+func translateSlots(ctx context.Context, l llm.LLMTool, lang string, all []*string) error {
+	var slots []*string
+	for _, s := range all {
+		if strings.TrimSpace(*s) != "" {
+			slots = append(slots, s)
 		}
 	}
 	if len(slots) == 0 {
-		return texts, nil
+		return nil
 	}
 
 	var batches [][]translateItem
@@ -188,7 +215,7 @@ func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string
 	wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	for _, r := range results {
@@ -196,11 +223,7 @@ func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string
 			*slots[i] = text
 		}
 	}
-	out := make(map[string]UnitText, len(copies))
-	for id, t := range copies {
-		out[id] = *t
-	}
-	return out, nil
+	return nil
 }
 
 // textSlots points at every string of t.

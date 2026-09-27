@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -69,5 +71,58 @@ func TestTranslationCache(t *testing.T) {
 	r.SummaryLang = "Hebrew" // reviewed in Hebrew before translation
 	if got, _ := tr.translation(context.Background(), r, lang("Hebrew")); got.Lang != "" || fake.calls != 2 {
 		t.Errorf("a result already in the language is shown as it is: %+v", got)
+	}
+}
+
+type overviewLLM struct{ calls int }
+
+func (c *overviewLLM) Call(context.Context, llm.LLMRequest) (*llm.LLMResponse, error) {
+	c.calls++
+	return &llm.LLMResponse{ToolCalls: []llm.ToolCall{{Name: "submit_overview", Arguments: map[string]any{
+		"why": "Fetch fails on flaky links.", "how": []any{"Retries Fetch"}, "issues": []any{"Slower failures"}}}}}, nil
+}
+func (c *overviewLLM) ModelID() string { return "fake" }
+func (c *overviewLLM) Name() string    { return "fake" }
+
+func TestOverviewWrittenOnceAndTranslated(t *testing.T) {
+	fake := &overviewLLM{}
+	oldO := newOverviewer
+	newOverviewer = func(options) (llm.LLMTool, error) { return fake, nil }
+	defer func() { newOverviewer = oldO }()
+	tfake := &countingLLM{}
+	oldT := newTranslator
+	newTranslator = func(options) (llm.LLMTool, error) { return tfake, nil }
+	defer func() { newTranslator = oldT }()
+
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &triage.Unit{ID: "a.go", File: "a.go", Headline: "Adds retries", Summary: "Retries Fetch."}
+	r := &PRResult{Key: "k1", PR: &triage.PRInfo{Title: "Retry"}, Budgets: triage.DefaultTierPolicy().OrderedBudgets(),
+		Files: []resultFile{{Units: []resultUnit{{Unit: u}}}}}
+	b, _ := json.Marshal(r)
+	if err := os.WriteFile(filepath.Join(tr.results, "k1.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		ov, err := tr.overview(context.Background(), "k1", jobOptions{})
+		if err != nil || ov.Why != "Fetch fails on flaky links." {
+			t.Fatalf("overview: %+v %v", ov, err)
+		}
+	}
+	if fake.calls != 1 {
+		t.Errorf("calls = %d, want the overview saved with the result", fake.calls)
+	}
+
+	saved, err := tr.Load("k1")
+	if err != nil || saved.Overview == nil {
+		t.Fatalf("saved: %+v %v", saved, err)
+	}
+	s := "Hebrew"
+	got, err := tr.translation(context.Background(), saved, jobOptions{SummaryLang: &s})
+	if err != nil || got.Overview == nil || got.Overview.Why != "he:Fetch fails on flaky links." || got.Overview.Issues[0] != "he:Slower failures" || got.Units["a.go"].Summary != "he:Retries Fetch." {
+		t.Errorf("translation: %+v %v", got, err)
 	}
 }

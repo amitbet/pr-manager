@@ -45,6 +45,9 @@ type PRResult struct {
 	CreatedAt   time.Time             `json:"created_at"`
 	DurationMS  int64                 `json:"duration_ms"`
 	Counts      map[triage.Bucket]int `json:"counts"`
+	// Overview is nil for results from before overviews, and when it
+	// could not be written; see overview.
+	Overview *triage.Overview `json:"overview,omitempty"`
 	// Impact, Likelihood and Attention are the highest unit scores; Impact
 	// is nil for results triaged without a code map.
 	Impact     *triage.Impact     `json:"impact,omitempty"`
@@ -281,6 +284,17 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	}
 	if o.reviewTools && (o.summarizer == "codex" || o.summarizer == "claude-code") {
 		r.Summarizer += " +repo tools"
+	}
+	if pipe.Summarizer != nil {
+		if pipe.Progress != nil {
+			pipe.Progress("overview", 0, 1)
+		}
+		// Without one, the result gets it when it is opened.
+		ov, err := triage.WriteOverview(ctx, pipe.Summarizer.LLM, info, units)
+		if err != nil {
+			log.Printf("overview %s: %v", key, err)
+		}
+		r.Overview = ov
 	}
 	byFile := map[string][]resultUnit{}
 	for _, u := range units {
@@ -568,6 +582,19 @@ func newServeHandler(o options) (http.Handler, error) {
 			return
 		}
 		writeJSON(w, 200, tr)
+	})
+	mux.HandleFunc("POST /api/results/{key}/overview", func(w http.ResponseWriter, r *http.Request) {
+		var jo jobOptions
+		if err := json.NewDecoder(r.Body).Decode(&jo); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		ov, err := t.overview(r.Context(), r.PathValue("key"), jo)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, ov)
 	})
 	mux.HandleFunc("POST /api/triage", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

@@ -122,10 +122,12 @@ type PRInfo struct {
 	BaseRef      string `json:"base_ref"`
 	HeadRef      string `json:"head_ref"`
 	Body         string `json:"body,omitempty"`
-	Adds         int    `json:"additions"`
-	Dels         int    `json:"deletions"`
-	MergedAt     string `json:"merged_at,omitempty"`
-	mergeOid     string // merge commit of a merged PR, for Source
+	// Commits are the messages of the PR's commits, oldest first.
+	Commits  []string `json:"commits,omitempty"`
+	Adds     int      `json:"additions"`
+	Dels     int      `json:"deletions"`
+	MergedAt string   `json:"merged_at,omitempty"`
+	mergeOid string   // merge commit of a merged PR, for Source
 }
 
 // PRFetcher keeps blobless clones under Dir and diffs PRs locally, so
@@ -290,6 +292,7 @@ func (f *PRFetcher) Source(ctx context.Context, info *PRInfo) (*Source, error) {
 		return nil, err
 	}
 	info.BaseOid = strings.TrimSpace(base)
+	info.Commits = CommitMessages(ctx, dir, info.BaseOid, info.HeadOid)
 	src, err := FromGit(dir, info.BaseOid, info.HeadOid)
 	if src != nil {
 		src.Title = info.Title

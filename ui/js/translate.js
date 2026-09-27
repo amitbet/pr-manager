@@ -8,6 +8,7 @@ import { jobSettings, summaryLang } from "./settings.js";
 import { syncComposer } from "./comments.js";
 import * as budget from "./budget.js";
 import { english } from "./entext.js";
+import { OVERVIEW_ID, overviewText } from "./overview.js";
 let seq = 0;
 
 const units = (r) => r.files.flatMap((f) => f.units || []);
@@ -38,6 +39,7 @@ function restore(r) {
   const en = english.get(r);
   if (!en) return;
   for (const u of units(r)) if (en.units[u.id]) put(u, en.units[u.id], false);
+  if (en.units[OVERVIEW_ID]) r.overview = en.units[OVERVIEW_ID];
   r.summary_lang = en.lang;
   english.delete(r);
   S.showEn.clear();
@@ -65,8 +67,11 @@ export async function translate() {
     const tr = await postJSON(`/api/results/${encodeURIComponent(r.key)}/translate`, { ...jobSettings(), summary_lang: lang });
     if (n !== seq || S.result !== r) return;
     if (tr.lang) {
-      english.set(r, { lang: r.summary_lang, units: Object.fromEntries(units(r).map((u) => [u.id, textOf(u)])) });
+      const en = Object.fromEntries(units(r).map((u) => [u.id, textOf(u)]));
+      if (r.overview) en[OVERVIEW_ID] = overviewText(r.overview);
+      english.set(r, { lang: r.summary_lang, units: en });
       for (const u of units(r)) if (tr.units[u.id]) put(u, tr.units[u.id], true);
+      if (r.overview && tr.overview) r.overview = tr.overview;
       r.summary_lang = tr.lang;
       budget.apply(r, S.cfg);
     }

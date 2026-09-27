@@ -8,6 +8,7 @@ import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions 
 import { issueDraftButton } from "./comments.js";
 import { issueFixButton } from "./fix.js";
 import { openPanel } from "./panel.js";
+import { overviewHTML, hasOverview } from "./overview.js";
 
 // Steps are ordered by bucket, then score, then review attention, then risk
 // (impact times likelihood), then file order. "no review" units only on request.
@@ -24,12 +25,16 @@ function steps() {
       || a.i - b.i);
 }
 
-// Progress is kept per result, so a reload resumes where the reviewer left off.
+// Progress is kept per result, so a reload resumes where the reviewer left
+// off. A walkthrough not started yet opens on the overview.
 const storeKey = () => `pr-manager.walk.${S.result.key}`;
 export function loadProgress() {
   const saved = JSON.parse(localStorage.getItem(storeKey()) || "{}");
   Object.assign(S.wz, { cur: saved.cur || null, done: new Set(saved.done || []), finished: false });
+  S.wz.intro = !S.wz.cur && !S.wz.done.size;
 }
+// onIntro is whether the overview is the page shown.
+const onIntro = () => S.wz.intro && hasOverview(S.result);
 const save = () => localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
 
 // current is the index of the shown step: the saved one, else the first
@@ -64,7 +69,7 @@ function go(i) {
   const st = steps();
   if (!st.length) return;
   S.wz.cur = st[Math.max(0, Math.min(st.length - 1, i))].u.id;
-  S.wz.finished = false;
+  S.wz.finished = S.wz.intro = false;
   S.composer = null;
   save();
   render();
@@ -74,7 +79,19 @@ function go(i) {
   const pinned = HEADER_H + ($(".wz-steps")?.offsetHeight || 0);
   if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
 }
-const step = (d) => go(current(steps()) + d);
+// step moves d steps; back from the first step is the overview.
+function step(d) {
+  const i = current(steps()) + d;
+  if (i < 0 && hasOverview(S.result)) { showIntro(); return; }
+  go(i);
+}
+function showIntro() {
+  S.wz.intro = true;
+  S.wz.finished = false;
+  S.composer = null;
+  render();
+  window.scrollTo({ top: 0 });
+}
 
 function toggleReviewed() {
   const st = steps();
@@ -144,9 +161,11 @@ function explainHTML(f, u, shown) {
 
 function progressHTML(st, i, toggle) {
   const done = st.filter((s) => S.wz.done.has(s.u.id)).length;
-  const dots = st.map((s, j) => {
+  const intro = onIntro();
+  const ovDot = hasOverview(S.result) ? `<button class="wz-dot ov-dot ${intro ? "cur" : ""}" data-act="wz-intro" title="Overview of the PR">Overview</button>` : "";
+  const dots = ovDot + st.map((s, j) => {
     const ok = S.wz.done.has(s.u.id);
-    return `<button class="wz-dot ${s.u.decision.bucket} ${ok ? "done" : ""} ${j === i && !S.wz.finished ? "cur" : ""}"
+    return `<button class="wz-dot ${s.u.decision.bucket} ${ok ? "done" : ""} ${j === i && !S.wz.finished && !intro ? "cur" : ""}"
       data-act="wz-go" data-i="${j}" title="${esc(`${j + 1}. ${s.u.id}\n${headline(s.u)}`)}">${ok ? "✓" : j + 1}</button>`;
   }).join("");
   return `
@@ -163,6 +182,19 @@ function finishHTML(st) {
     <p>${nd ? `${nd} pending comment${nd > 1 ? "s" : ""} ready to submit.` : "No pending comments."}</p>
     <div class="actions"><button data-act="wz-go" data-i="0">Back to step 1</button><button data-act="wz-reset">Start over</button>
       <button class="primary" data-act="wz-submit">Submit review…</button></div></div></div>`;
+}
+
+// introHTML is the overview page before step 1.
+function introHTML(st, i) {
+  const started = S.wz.cur || S.wz.done.size;
+  return `
+    <div class="wz-card none"><div class="wz-intro">${overviewHTML(S.result, false)}</div>
+      <div class="wz-nav">
+        <span class="keys"><kbd>→</kbd> ${started ? "back to the steps" : "start"}</span>
+        <span class="spacer"></span>
+        <button class="primary" data-act="wz-start">${started ? `Back to step ${i + 1} →` : `Start walkthrough: ${st.length} step${st.length > 1 ? "s" : ""} →`}</button>
+      </div>
+    </div>`;
 }
 
 function cardHTML(st, i) {
@@ -197,7 +229,7 @@ function cardHTML(st, i) {
         </section>
       </div>
       <div class="wz-nav">
-        <button data-act="wz-prev" ${i === 0 ? "disabled" : ""}>← Previous</button>
+        <button data-act="wz-prev" ${i === 0 && !hasOverview(S.result) ? "disabled" : ""}>← ${i === 0 ? "Overview" : "Previous"}</button>
         <button data-act="wz-next" ${i === st.length - 1 ? "disabled" : ""}>Next →</button>
         <span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>x</kbd> toggle reviewed · <kbd>r</kbd> reviewed and next</span>
         <span class="spacer"></span>
@@ -211,9 +243,9 @@ export function walkHTML() {
   const st = steps();
   const nNone = allUnits().filter(({ u }) => u.decision.bucket === "none").length;
   const toggle = nNone ? `<label><input type="checkbox" data-act="wz-all" ${S.wz.all ? "checked" : ""}> include ${nNone} no-review unit${nNone > 1 ? "s" : ""}</label>` : "";
-  if (!st.length) return `<div class="wz-top">${toggle}</div><div class="empty">Nothing in this PR needs review.</div>`;
+  if (!st.length) return `<div class="wz-top">${toggle}</div>${overviewHTML(S.result, true)}<div class="empty">Nothing in this PR needs review.</div>`;
   const i = current(st);
-  return progressHTML(st, i, toggle) + (S.wz.finished ? finishHTML(st) : cardHTML(st, i));
+  return progressHTML(st, i, toggle) + (onIntro() ? introHTML(st, i) : S.wz.finished ? finishHTML(st) : cardHTML(st, i));
 }
 
 export const actions = {
@@ -224,6 +256,8 @@ export const actions = {
     if (opening) setTimeout(() => document.querySelector(".wz-code tr.focus-start")?.scrollIntoView({ block: "center" }));
   },
   "wz-go": (el) => { go(+el.dataset.i); return false; },
+  "wz-intro": () => { showIntro(); return false; },
+  "wz-start": () => { go(current(steps())); return false; },
   "wz-prev": () => { step(-1); return false; },
   "wz-next": () => { step(1); return false; },
   "wz-mark": () => { markAndNext(); return false; },
@@ -242,6 +276,12 @@ export const actions = {
 export function onKeydown(e) {
   if (S.tab !== "review" || S.mode !== "walk" || !S.result || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest?.("input, textarea, select")) return;
+  if (onIntro()) {
+    if (e.key !== "ArrowRight" && e.key !== "j" && e.key !== "Enter") return;
+    e.preventDefault();
+    go(current(steps()));
+    return;
+  }
   if (e.key === "ArrowRight" || e.key === "j") S.wz.finished ? go(current(steps())) : step(1);
   else if (e.key === "ArrowLeft" || e.key === "k") S.wz.finished ? go(current(steps())) : step(-1);
   else if (e.key === "r" && !S.wz.finished) markAndNext();

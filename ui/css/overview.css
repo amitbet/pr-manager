@@ -1,0 +1,21 @@
+/* PR overview: before the walkthrough's first step, above the classic list. */
+.ov { margin: 14px 0 10px; font-size: 15.5px; line-height: 1.6; }
+.ov.collapsible { padding: 10px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+.ov-title { margin: 0 0 12px; font-size: 22px; }
+.ov-head { padding: 0; border: 0; background: none; font-size: 14px; font-weight: 650; color: var(--fg); cursor: pointer; }
+.ov.collapsible .ov-head + .ov-sec { margin-top: 10px; }
+.ov-sec { margin: 0 0 14px; max-width: 900px; }
+.ov-sec:last-child { margin-bottom: 0; }
+.ov-sec h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.ov-sec p { margin: 0; }
+.ov-sec ul { margin: 0; padding-left: 20px; }
+.ov-sec li { margin-bottom: 3px; }
+.ov-sec.issues h4 { color: var(--high); }
+.ov code { font-family: var(--mono); font-size: 13px; }
+.ov-loading { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+.ov-loading .spinner { flex: none; width: 14px; height: 14px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.ov-none { margin: 10px 0; font-size: 13px; color: var(--muted); }
+.wz-intro { padding: 22px 26px; }
+.wz-intro .ov { margin: 0; }
+.wz-dot.ov-dot { width: auto; padding: 0 9px; border-radius: 12px; border-color: var(--accent); color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .ov-loading .spinner { animation: none; } }

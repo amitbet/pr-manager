@@ -11,6 +11,7 @@ export const S = {
   details: new Set(),     // unit ids with the details panel open
   more: new Set(),        // unit ids with the rest of the details open too
   showEn: new Set(),      // "unit id|path" of translated texts shown in English
+  ovOpen: localStorage.getItem("pr-manager.ovopen") !== "0", // the overview above the classic list
   allHidden: false,
   above: {},              // hunk key -> lines expanded above it
   below: {},              // file path -> lines expanded after its last hunk
@@ -19,7 +20,7 @@ export const S = {
   composer: null,         // {path, side, line, id?, body}
   tab: "review",          // review | map
   mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | classic
-  wz: { cur: null, done: new Set(), all: false, finished: false, view: localStorage.getItem("pr-manager.wzview") || "unified" },
+  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified" },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both
   trees: {},              // treemap data by repo ("all" = workspace)
 };

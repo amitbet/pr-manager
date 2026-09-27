@@ -188,6 +188,7 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 	}
 	author, _ := triage.Git(dir, "log", "-1", "--format=%an", "HEAD")
 	info := &triage.PRInfo{PRRef: ref, LocalPath: dir, Title: strings.TrimSpace(title), Author: strings.TrimSpace(author), State: "LOCAL", BaseRef: baseBranch, HeadRef: branch, BaseOid: base, HeadOid: head, Ahead: ahead, Behind: behind, Uncommitted: strings.TrimSpace(status) != ""}
+	info.Commits = triage.CommitMessages(ctx, dir, base, head)
 	digest := sha256.Sum256([]byte(raw))
 	info.SnapshotHash = hex.EncodeToString(digest[:])
 	for _, f := range files {

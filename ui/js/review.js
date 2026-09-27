@@ -7,6 +7,7 @@ import { issueDraftButton } from "./comments.js";
 import { fixDisabled, issueFixButton } from "./fix.js";
 import { trText, trShown, trToggle, trDir } from "./entext.js";
 import { showStep } from "./walkthrough.js";
+import { overviewHTML } from "./overview.js";
 
 const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
 
@@ -86,7 +87,7 @@ function fileHTML(f) {
 export function reviewHTML() {
   const r = S.result;
   const files = r.files.filter((f) => f.units?.length);
-  return `
+  return `${overviewHTML(r, true)}
     <div class="toolbar">
       ${BUCKETS.map((b) => `<span class="filter ${b} ${S.hidden.has(b) ? "off" : ""}" data-act="filter" data-b="${b}"><b>${r.counts?.[b] || 0}</b> ${LABEL[b]}</span>`).join("")}
       <span class="spacer"></span>

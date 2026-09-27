@@ -21,6 +21,7 @@ import { fixBanner, initFix, actions as fixActions } from "./fix.js";
 import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
 import { actions as enActions } from "./entext.js";
+import { loadOverview, actions as overviewActions } from "./overview.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -33,7 +34,7 @@ const TABS = [
 const MODES = [["walk", "Walkthrough"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
   "create-pr": async (el) => {
@@ -60,7 +61,7 @@ function prHeadHTML(r) {
         <code>${esc(pr.base_ref)}@${esc(pr.base_oid.slice(0, 8))}</code> ← <code>${esc(pr.head_ref)}@${esc(pr.head_oid.slice(0, 8))}</code> ·
         +${pr.additions}/−${pr.deletions} · classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
-      ${local ? `<div class="meta" style="margin-top:6px">${pr.ahead} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
+      ${local ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${impactPill(r.impact, "max impact")}${r.impact?.basis ? `<code>${esc(r.impact.basis)}</code>` : ""}
         ${likelihoodPill(r.likelihood, "max likelihood")}
@@ -95,6 +96,7 @@ onRender(() => {
 async function showKey(key) {
   const r = await api(`/api/results/${encodeURIComponent(key)}`);
   budget.apply(r, S.cfg);
+  r.overview_loading = !r.overview; // loadOverview below writes it
   S.result = r;
   Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
   S.tm.zoom = [];
@@ -107,7 +109,8 @@ async function showKey(key) {
   render();
   refreshSettings();
   loadList();
-  translate();
+  // The translation takes the overview along, so it waits for one being written.
+  loadOverview().finally(() => { if (S.result === r) translate(); });
 }
 
 // openResult shows a result, or the log of the triage that is replacing it
