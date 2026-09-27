@@ -1,0 +1,29 @@
+=== RUN   TestGroupingValidate
+    tuning_test.go:394: off                    prometheus/prometheus#18905      groups= 71 calls= 71(solo 71) reviewed=71/71 issues=1 err=0
+    tuning_test.go:394: off                    grafana/grafana#133630           groups= 36 calls= 36(solo 36) reviewed=36/36 issues=1 err=0
+    tuning_test.go:394: off                    kubernetes/kubernetes#142277     groups= 25 calls= 25(solo 25) reviewed=25/25 issues=0 err=0
+    tuning_test.go:394: off                    elastic/elasticsearch#160261     groups= 76 calls= 76(solo 76) reviewed=76/76 issues=3 err=0
+    tuning_test.go:394: off                    vercel/next.js#99189             groups=  9 calls=  9(solo 9) reviewed=9/9 issues=0 err=0
+    tuning_test.go:394: chars=6000 members=6   prometheus/prometheus#18905      groups= 30 calls= 30(solo 16) reviewed=71/71 issues=3 err=0
+    tuning_test.go:394: chars=6000 members=6   grafana/grafana#133630           groups= 12 calls= 12(solo 7) reviewed=36/36 issues=1 err=0
+    tuning_test.go:394: chars=6000 members=6   kubernetes/kubernetes#142277     groups=  8 calls=  8(solo 3) reviewed=25/25 issues=0 err=0
+    tuning_test.go:394: chars=6000 members=6   elastic/elasticsearch#160261     groups= 15 calls= 15(solo 2) reviewed=76/76 issues=2 err=0
+    tuning_test.go:394: chars=6000 members=6   vercel/next.js#99189             groups=  9 calls=  9(solo 9) reviewed=9/9 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=8  prometheus/prometheus#18905      groups= 22 calls= 22(solo 10) reviewed=71/71 issues=1 err=0
+    tuning_test.go:394: chars=12000 members=8  grafana/grafana#133630           groups=  9 calls=  9(solo 5) reviewed=36/36 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=8  kubernetes/kubernetes#142277     groups=  8 calls=  8(solo 4) reviewed=25/25 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=8  elastic/elasticsearch#160261     groups= 13 calls= 13(solo 3) reviewed=76/76 issues=3 err=0
+    tuning_test.go:394: chars=12000 members=8  vercel/next.js#99189             groups=  8 calls=  8(solo 7) reviewed=9/9 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=0  prometheus/prometheus#18905      groups= 18 calls= 18(solo 7) reviewed=71/71 issues=1 err=0
+    tuning_test.go:394: chars=12000 members=0  grafana/grafana#133630           groups=  9 calls=  9(solo 5) reviewed=36/36 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=0  kubernetes/kubernetes#142277     groups=  5 calls=  5(solo 2) reviewed=25/25 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=0  elastic/elasticsearch#160261     groups=  8 calls=  8(solo 3) reviewed=76/76 issues=0 err=0
+    tuning_test.go:394: chars=12000 members=0  vercel/next.js#99189             groups=  8 calls=  8(solo 7) reviewed=9/9 issues=0 err=0
+    tuning_test.go:394: chars=32000 members=0  prometheus/prometheus#18905      groups=  8 calls=  9(solo 4) reviewed=71/71 issues=1 err=0
+    tuning_test.go:394: chars=32000 members=0  grafana/grafana#133630           groups=  4 calls=  4(solo 2) reviewed=36/36 issues=1 err=0
+    tuning_test.go:394: chars=32000 members=0  kubernetes/kubernetes#142277     groups=  1 calls=  1(solo 0) reviewed=25/25 issues=0 err=0
+    tuning_test.go:394: chars=32000 members=0  elastic/elasticsearch#160261     groups=  6 calls=  6(solo 3) reviewed=76/76 issues=0 err=0
+    tuning_test.go:394: chars=32000 members=0  vercel/next.js#99189             groups=  7 calls=  7(solo 6) reviewed=9/9 issues=0 err=0
+--- PASS: TestGroupingValidate (4946.41s)
+PASS
+ok  	github.com/amitbet/pr-manager/triage	4947.454s
