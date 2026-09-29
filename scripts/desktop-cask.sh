@@ -29,8 +29,8 @@ cask "pr-manager-desktop" do
   app "PR Manager.app"
 
   # The app is ad-hoc signed but not notarized.
-  postflight do
-    system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/PR Manager.app"]
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/PR Manager.app"]
   end
 
   caveats <<~EOS

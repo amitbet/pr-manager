@@ -311,8 +311,9 @@ func TestShutdownCancelsJobs(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		j.finish(ctx.Err())
+		// Signal completion before finish releases shutdown's wait counter.
 		close(stopped)
+		j.finish(ctx.Err())
 	}()
 	tr.shutdown(5 * time.Second)
 	select {

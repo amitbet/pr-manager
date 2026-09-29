@@ -171,10 +171,10 @@ func TestCheckoutFixBranchAtPRHead(t *testing.T) {
 	if _, err := os.Stat(second); !os.IsNotExist(err) {
 		t.Errorf("worktree still there: %v", err)
 	}
-	if strings.Contains(git("worktree", "list"), second) || git("branch", "--list", branch) != "" {
+	if strings.Contains(git("worktree", "list"), filepath.ToSlash(second)) || git("branch", "--list", branch) != "" {
 		t.Errorf("worktree or branch left: %s / %s", git("worktree", "list"), git("branch", "--list", branch))
 	}
-	if !strings.Contains(git("worktree", "list"), first) || git("branch", "--list", "feature/fix") == "" {
+	if !strings.Contains(git("worktree", "list"), filepath.ToSlash(first)) || git("branch", "--list", "feature/fix") == "" {
 		t.Error("removed the other fix's worktree")
 	}
 }
@@ -241,7 +241,7 @@ func TestApplyFixPatchTouchesWhereItApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); !strings.Contains(string(b), "line 24\nline twenty-five\nline 26") {
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); !strings.Contains(strings.ReplaceAll(string(b), "\r\n", "\n"), "line 24\nline twenty-five\nline 26") {
 		t.Fatalf("a.txt = %q", b)
 	}
 	top := &triage.Unit{File: "a.txt", Hunks: []triage.Hunk{{NewStart: 1, NewLines: 4}}}
