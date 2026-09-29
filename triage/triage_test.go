@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -218,38 +219,23 @@ func toolResp(name string, args map[string]any) *llm.LLMResponse {
 	return &llm.LLMResponse{ToolCalls: []llm.ToolCall{{Name: name, Arguments: args}}}
 }
 
-func TestPipelineEscalatesOnFailureNotUnsupportedVeto(t *testing.T) {
+func TestPipelineReviewFailureIsHuman(t *testing.T) {
 	files, _ := ParseDiff(sampleDiff)
-	classify := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		return toolResp("submit_triage", map[string]any{"bucket": "skim", "change_kind": "behavior", "confidence": 0.9, "reason": "retry count"}), nil
-	}}
-	veto := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		return toolResp("submit_summary", map[string]any{"summary": "raises retries", "safe": false, "escalate_reason": "retry budget"}), nil
-	}}
+	boom := &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) { return nil, errors.New("boom") }}
 	p := &Pipeline{
 		Presorter:   &Presorter{Policy: DefaultPolicy()},
-		Classifier:  &LLMClassifier{LLM: classify, Policy: DefaultPolicy()},
-		Summarizer:  &Summarizer{LLM: veto, Policy: DefaultPolicy()},
+		Summarizer:  &Summarizer{LLM: boom, Critic: boom, Policy: DefaultPolicy()},
 		Concurrency: 4,
 	}
-	units := p.Run(context.Background(), &Source{Files: files})
-	if units[0].Decision.Bucket != BucketHuman {
-		t.Fatalf("first unit should be human, got %+v", units[0])
-	}
-	var retry *Unit
-	for _, u := range units {
-		if u.File == "svc/retry.go" {
-			retry = u
+	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
+		if u.File == "svc/retry.go" && (u.Decision.Bucket != BucketHuman || u.Score.Pin != BucketHuman) {
+			t.Errorf("failed review should pin human: %+v score=%+v", u.Decision, u.Score)
 		}
 	}
-	// safe=false without an issue is a thing to check, not an escalation.
-	if len(retry.Decision.Escalated) > 0 || !strings.Contains(strings.Join(retry.Focus, ""), "summarizer: retry budget") {
-		t.Errorf("unsupported veto should only add focus: %+v focus=%v", retry.Decision, retry.Focus)
-	}
 
-	p.Classifier = &LLMClassifier{LLM: &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) {
-		return nil, errors.New("boom")
-	}}, Policy: DefaultPolicy()}
+	// Without a reviewer the classifier places units, and its errors too
+	// end in human.
+	p.Classifier = &LLMClassifier{LLM: boom, Policy: DefaultPolicy()}
 	p.Summarizer = nil
 	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
 		if u.File == "svc/retry.go" && u.Decision.Bucket != BucketHuman {
@@ -263,7 +249,12 @@ func TestPipelineReviewFilterOnlyReviewsSelectedUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var classified []string
+	var mu sync.Mutex
 	classify := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
+		mu.Lock()
+		classified = append(classified, req.Messages[1].Content)
+		mu.Unlock()
 		return toolResp("submit_triage", map[string]any{"bucket": "human", "change_kind": "behavior", "confidence": 0.9, "reason": "changed"}), nil
 	}}
 	calls := 0
@@ -272,7 +263,8 @@ func TestPipelineReviewFilterOnlyReviewsSelectedUnits(t *testing.T) {
 		if !strings.Contains(req.Messages[1].Content, "File: a.go") {
 			t.Errorf("reviewed another file: %s", req.Messages[1].Content)
 		}
-		return toolResp("submit_review_notes", map[string]any{"summary": "checked", "issues": []any{}}), nil
+		return toolResp("submit_analysis", map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r",
+			"summary": "checked", "issues": []any{}}), nil
 	}}
 	p := &Pipeline{
 		Presorter:    &Presorter{Policy: DefaultPolicy()},
@@ -287,6 +279,10 @@ func TestPipelineReviewFilterOnlyReviewsSelectedUnits(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("review calls = %d", calls)
+	}
+	// The classifier places only what the review left out.
+	if len(classified) != 1 || !strings.Contains(classified[0], "File: b.go") {
+		t.Errorf("classified %d prompts, want b.go only: %v", len(classified), classified)
 	}
 }
 
@@ -353,28 +349,33 @@ func TestHunkHeaderEmptyRange(t *testing.T) {
 	}
 }
 
-func TestHumanUnitsGetReviewNotes(t *testing.T) {
+func TestReviewerPlacesUnitsAndWritesNotes(t *testing.T) {
 	files, _ := ParseDiff(sampleDiff)
-	human := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		return toolResp("submit_triage", map[string]any{"bucket": "human", "change_kind": "behavior", "confidence": 0.95, "headline": "Retry count raised", "reason": "retry budget"}), nil
-	}}
-	notes := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		if req.Tools[0].Name != "submit_review_notes" {
-			t.Errorf("human unit got tool %s", req.Tools[0].Name)
+	review := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
+		if req.Tools[0].Name != "submit_analysis" {
+			t.Errorf("got tool %s", req.Tools[0].Name)
 		}
-		return toolResp("submit_review_notes", map[string]any{"headline": "Retries 3 → 5", "summary": "More retries.", "focus": []any{"callers with tight deadlines", ""}}), nil
+		return toolResp("submit_analysis", map[string]any{"bucket": "human", "change_kind": "behavior", "confidence": 0.95, "reason": "retry budget",
+			"headline": "Retries 3 → 5", "summary": "More retries.", "focus": []any{"callers with tight deadlines", ""}, "issues": []any{}}), nil
+	}}
+	unused := &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) {
+		t.Error("the classifier must not run when the reviewer places units")
+		return nil, errors.New("unused")
 	}}
 	p := &Pipeline{
 		Presorter:  &Presorter{Policy: DefaultPolicy()},
-		Classifier: &LLMClassifier{LLM: human, Policy: DefaultPolicy()},
-		Summarizer: &Summarizer{LLM: notes, Policy: DefaultPolicy()},
+		Classifier: &LLMClassifier{LLM: unused, Policy: DefaultPolicy()},
+		Summarizer: &Summarizer{LLM: review, Policy: DefaultPolicy()},
 	}
 	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
 		if u.File != "svc/retry.go" {
 			continue
 		}
-		if u.Decision.Bucket != BucketHuman || u.Summary != "More retries." || u.Headline != "Retries 3 → 5" || len(u.Focus) != 1 {
-			t.Errorf("review notes not applied: %+v", u)
+		if u.Decision.Bucket != BucketHuman || u.Decision.Source != "fake/fake" || u.Summary != "More retries." || u.Headline != "Retries 3 → 5" || len(u.Focus) != 1 {
+			t.Errorf("analysis not applied: %+v", u)
+		}
+		if u.Score == nil || u.Score.Classified != BucketHuman {
+			t.Errorf("score should start from the reviewer's bucket: %+v", u.Score)
 		}
 		if len(u.Decision.Escalated) != 0 {
 			t.Errorf("notes must not escalate: %v", u.Decision.Escalated)

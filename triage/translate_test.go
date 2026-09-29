@@ -76,7 +76,7 @@ func TestTranslate(t *testing.T) {
 }
 
 func TestTranslateBatches(t *testing.T) {
-	long := strings.Repeat("x", translateBatchChars/2+1)
+	long := strings.Repeat("x", TranslateBatchChars/2+1)
 	texts := map[string]UnitText{}
 	for _, id := range []string{"a", "b", "c", "d"} {
 		texts[id] = UnitText{Summary: id + long}

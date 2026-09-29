@@ -48,7 +48,7 @@
   <form method="dialog">
     <div class="dlg-head"><h3 id="settings-title">Settings</h3><button class="icon" value="close" aria-label="Close">✕</button></div>
     <section>
-      <h4>Models <span class="info" tabindex="0" aria-label="About models">i<span class="tip" role="tooltip">Used by the next triage. A different model gives a different cached result.</span></span> <button type="button" id="providers-refresh" class="linkbtn">refresh list</button></h4>
+      <h4>Models <span class="info" tabindex="0" aria-label="About models">i<span class="tip" role="tooltip">Used by the next triage. A different model gives a different cached result. The summarizer triages, summarizes and reviews each unit in one call; the classifier is only used when the summarizer is off.</span></span> <button type="button" id="providers-refresh" class="linkbtn">refresh list</button></h4>
       <div class="grid">
         <span>Classifier</span>
         <select id="classifier" aria-label="classifier provider"><option value="">default</option></select>
@@ -82,7 +82,7 @@
       <label class="check"><input type="checkbox" id="wz_group"> group each file's changes into one step</label>
     </section>
     <section>
-      <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>
+      <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Only when the summarizer is off (otherwise the review call classifies). Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="classify_batch"> classify several units per call</label>
     </section>
     <section>

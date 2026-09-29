@@ -246,8 +246,14 @@ func settingsHash(o options) string {
 	if o.lintSet {
 		lint = o.lint
 	}
-	parts := []string{triage.PromptVersion, o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.summarizer, o.summaryModel, o.classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
-	if o.classifyBatch > 0 {
+	// With a summarizer the classifier is not used (see buildPipeline), so
+	// its settings must not split the cache.
+	classifier, classifyModel, fallback, fallbackModel, classifyEffort := o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.classifyEffort
+	if o.summarizer != "off" {
+		classifier, classifyModel, fallback, fallbackModel, classifyEffort = "", "", "", "", ""
+	}
+	parts := []string{triage.PromptVersion, classifier, classifyModel, fallback, fallbackModel, o.summarizer, o.summaryModel, classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
+	if o.classifyBatch > 0 && o.summarizer == "off" {
 		// Appended only when set, so existing keys stay valid.
 		parts = append(parts, fmt.Sprintf("batch=%d", o.classifyBatch))
 	}
@@ -348,7 +354,11 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	tiers := pipe.Presorter.Policy.Tiers
 	_, r.ReviewBudget, _ = tiers.Budget("")
 	r.Budgets = tiers.OrderedBudgets()
-	if o.classifier == "openjev" {
+	switch {
+	case o.summarizer != "off":
+		// The review call placed the units.
+		r.Classifier = r.Summarizer
+	case o.classifier == "openjev":
 		r.Classifier += " → " + describe(o.fallback, o.fallbackModel, o.classifyEffort)
 	}
 	if o.reviewTools && (o.summarizer == "codex" || o.summarizer == "claude-code") {

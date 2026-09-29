@@ -16,7 +16,7 @@ review_context_chars: 32000
 # changes in the same file. On by default; -group-review=false also turns it
 # off for a run.
 classify_batch:
-  max_units: 6        # units per classify call (1: one call per unit)
+  max_units: 6        # units per classify call (1: one call per unit); only with -summarizer off
   max_chars: 16000    # cap on one call's combined diff
 grouping:
   enabled: true

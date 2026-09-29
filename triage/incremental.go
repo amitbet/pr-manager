@@ -239,3 +239,19 @@ func applyCarried(u, old *Unit, from string) {
 		u.Issues[i].Dismissed, u.Issues[i].DismissedWhy, u.Issues[i].DismissKey = false, "", ""
 	}
 }
+
+// CarriedDecision is the decision an earlier run gave old, for a unit that
+// keeps it. The stored decision holds the placed bucket (budget, pins,
+// review issues); the classifier's or reviewer's own call is in the score.
+// It is marked Failed so it is never saved as a fresh answer (and a failed
+// one lost its Failed flag in the stored result).
+func CarriedDecision(old *Unit) Decision {
+	d := old.Decision
+	d.Escalated = append([]string(nil), d.Escalated...)
+	d.RiskSignals = append([]string(nil), d.RiskSignals...)
+	if old.Score != nil && old.Score.Classified != "" {
+		d.Bucket = old.Score.Classified
+	}
+	d.Failed = true
+	return d
+}

@@ -11,8 +11,11 @@ import (
 )
 
 type Pipeline struct {
-	Presorter  *Presorter
-	Classifier Classifier // nil: every unit left after presort is "human"
+	Presorter *Presorter
+	// Classifier places units no review call sees: every unit when there
+	// is no Summarizer, else only those ReviewFilter leaves out. With a
+	// Summarizer the review call places the unit it reviews.
+	Classifier Classifier // nil: those units are "human"
 	// Decisions, if set, keeps classifier answers between runs: a unit
 	// whose file, declaration and diff were classified before under the
 	// same ClassifyKey is not sent to the model again.
@@ -20,18 +23,18 @@ type Pipeline struct {
 	// ClassifyKey names what else a decision depends on (the classifier,
 	// its model and effort, the thresholds); it is part of the store key.
 	ClassifyKey string
-	Summarizer  *Summarizer // nil: no summaries, review notes or issues
+	Summarizer  *Summarizer // nil: no analysis, only the classifier's decisions
 	CodeMap     *CodeMap    // nil: no impact scores, no file history and no tier moves
 	// Lint runs the repository's static analysis over the lines the PR
 	// adds, before anything is scored (nil or disabled: no findings).
 	Lint        *Linter
 	Concurrency int
-	// ReviewConcurrency limits the summarize stage; 0 uses Concurrency.
+	// ReviewConcurrency limits the analyze stage; 0 uses Concurrency.
 	// Review calls are slower (bigger model, repo tools), so they get
 	// their own limit.
 	ReviewConcurrency int
-	// ReviewFilter, when set, limits the review stage to selected units.
-	// Classification and scoring still cover the full diff.
+	// ReviewFilter, when set, limits the analyze stage to selected units;
+	// the Classifier places the rest. Scoring still covers the full diff.
 	ReviewFilter func(*Unit) bool
 	// CarryFrom, when set, is asked once the units are built which of
 	// them may keep the review an earlier run of the same change earned
@@ -98,16 +101,39 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		carry = p.CarryFrom(units)
 	}
 
+	// With a reviewer, the review call places the units it reads (see
+	// Analyze), and a carried unit keeps the bucket its review gave. The
+	// classifier only places what no review call sees.
+	toClassify := rest
+	analyzed := map[*Unit]bool{}
+	if sum != nil {
+		toClassify = nil
+		for _, u := range rest {
+			switch old := carry.reuse(u); {
+			case old != nil:
+				u.Decision = CarriedDecision(old)
+			case len(u.Hunks) == 0 || (p.ReviewFilter != nil && !p.ReviewFilter(u)):
+				toClassify = append(toClassify, u)
+			default:
+				analyzed[u] = true
+				u.Decision = Decision{Bucket: BucketHuman, Source: "pending", Reason: "not reviewed yet"}
+			}
+		}
+	}
+
 	// Classification only reads the units' diffs, so it runs while the
 	// repository is checked out, linted and mapped. Whichever finishes
 	// last owns the progress line: lint has no count to show, so it is
 	// only reported once classify is done.
 	var stageMu sync.Mutex
-	classifyDone, linting := false, false
+	classifyDone, linting := len(toClassify) == 0, false
 	classified := make(chan struct{})
 	go func() {
 		defer close(classified)
-		p.classify(ctx, rest)
+		if len(toClassify) == 0 {
+			return
+		}
+		p.classify(ctx, toClassify)
 		stageMu.Lock()
 		classifyDone = true
 		if linting && p.Progress != nil {
@@ -167,9 +193,12 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	tiers := p.Presorter.Policy.Tiers
 	maxChars := p.Presorter.Policy.MaxUnitChars
 
-	// Rule-decided units get a score too, so every unit explains its bucket.
+	// Every unit gets a score, so every unit explains its bucket. Units
+	// the review places are scored once it has.
 	for _, u := range units {
-		tiers.prior(u, maxChars)
+		if !analyzed[u] {
+			tiers.prior(u, maxChars)
+		}
 	}
 
 	if sum != nil {
@@ -178,7 +207,7 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 			// Without a workspace the review still runs, just without tools.
 			sum.workspace = ws
 		}
-		var toSummarize, carried []*Unit
+		var toAnalyze, carried []*Unit
 		prev := map[*Unit]Bucket{}
 		for _, u := range units {
 			// A unit whose diff and surroundings did not move keeps the
@@ -189,10 +218,10 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 				carried = append(carried, u)
 				continue
 			}
-			// Units placed in human before review get review notes, the
-			// rest a summary and a second opinion.
-			if (p.ReviewFilter != nil && p.ReviewFilter(u)) || (p.ReviewFilter == nil && tiers.reviewable(u)) {
-				toSummarize = append(toSummarize, u)
+			// Rule-placed units the reviewer would see are reviewed under
+			// the rule's bucket.
+			if analyzed[u] || (u.Decision.Source == "rule" && reviewable(u) && (p.ReviewFilter == nil || p.ReviewFilter(u))) {
+				toAnalyze = append(toAnalyze, u)
 				prev[u] = u.Decision.Bucket
 			}
 		}
@@ -200,10 +229,14 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		if limit <= 0 {
 			limit = p.Concurrency
 		}
-		groups := reviewGroups(toSummarize, p.Presorter.Policy.Grouping)
+		groups := reviewGroups(toAnalyze, p.Presorter.Policy.Grouping)
 		setGroupContext(groups, units, src.BaseContent, p.Presorter.Policy.ReviewContextChars)
-		runStage(ctx, p, "summarize", limit, groups, (*ReviewGroup).ID, sum.SummarizeGroup)
-		for _, u := range append(toSummarize, carried...) {
+		runStage(ctx, p, "analyze", limit, groups, (*ReviewGroup).ID, sum.AnalyzeGroup)
+		for _, u := range append(toAnalyze, carried...) {
+			if analyzed[u] {
+				tiers.prior(u, maxChars)
+				prev[u] = u.Decision.Bucket
+			}
 			tiers.afterReview(u, prev[u])
 		}
 	}
@@ -334,22 +367,13 @@ func runStage[T any](ctx context.Context, p *Pipeline, stage string, limit int, 
 	_ = g.Wait()
 }
 
-// reviewGroups splits the units to review into review calls. Human units
-// group separately from the rest: the two buckets use different prompts
-// and answer different questions. Grouping off means one call per unit.
+// reviewGroups splits the units to review into review calls. Grouping
+// off means one call per unit.
 func reviewGroups(units []*Unit, policy GroupPolicy) []*ReviewGroup {
 	if !policy.Enabled {
 		return soloGroups(units)
 	}
-	var human, rest []*Unit
-	for _, u := range units {
-		if u.Decision.Bucket == BucketHuman {
-			human = append(human, u)
-		} else {
-			rest = append(rest, u)
-		}
-	}
-	return append(BuildReviewGroups(human, policy), BuildReviewGroups(rest, policy)...)
+	return BuildReviewGroups(units, policy)
 }
 
 // setRelated gives each unit the IDs of the other units, capped so large

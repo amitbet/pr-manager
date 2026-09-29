@@ -119,16 +119,16 @@ type sweepRow struct {
 
 // promptChars is what the review stage would actually send for these
 // groups: the grouped prompt plus system text, or the per-unit prompt for
-// a group of one, exactly as SummarizeGroup picks between them.
+// a group of one, exactly as AnalyzeGroup picks between them.
 func promptChars(s *Summarizer, groups []*ReviewGroup) int {
 	n := 0
 	for _, g := range groups {
 		if len(g.Members) == 1 {
 			u := g.Members[0]
-			n += len(reviewNotesSystem) + len(s.prompt(u, "Triage: human review ("+u.Decision.Reason+")"))
+			n += len(analyzeSystem) + len(s.prompt(u, ruleNote(u)))
 			continue
 		}
-		n += len(reviewNotesSystem) + len(groupSystem) + len(s.groupPrompt(g))
+		n += len(analyzeSystem) + len(groupSystem) + len(s.groupPrompt(g))
 	}
 	return n
 }
@@ -320,7 +320,7 @@ func runArm(t *testing.T, rs reviewSet, arm string, groups []*ReviewGroup, model
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			s.SummarizeGroup(context.Background(), g)
+			s.AnalyzeGroup(context.Background(), g)
 		}(g)
 	}
 	wg.Wait()
@@ -337,7 +337,7 @@ func runArm(t *testing.T, rs reviewSet, arm string, groups []*ReviewGroup, model
 		switch {
 		case strings.HasPrefix(c.Tool, "submit_group_"):
 			out.GroupCalls++
-		case strings.HasPrefix(c.Tool, "submit_review") || strings.HasPrefix(c.Tool, "submit_summary"):
+		case c.Tool == "submit_analysis":
 			out.SoloCalls++
 		default:
 			out.CriticCalls++

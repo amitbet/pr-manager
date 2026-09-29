@@ -107,20 +107,17 @@ func TestReviewPromptShowsTheRestOfThePR(t *testing.T) {
 	_, src := errorCacheCase(t)
 	prompts := map[string]string{}
 	var systems []string
-	classify := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		return toolResp("submit_triage", map[string]any{"bucket": "human", "change_kind": "behavior", "confidence": 0.9, "headline": "h", "reason": "r"}), nil
-	}}
 	review := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
 		prompts[strings.SplitN(req.Messages[1].Content, "\n", 3)[1]] = req.Messages[1].Content
 		systems = append(systems, req.Messages[0].Content)
-		return toolResp(req.Tools[0].Name, map[string]any{"headline": "h", "summary": "s", "focus": []any{}, "issues": []any{
-			map[string]any{"severity": "high", "title": "Pointer errors bypass detection", "failure_scenario": "x",
-				"introduced_by_pr": true, "depends_on_unseen_code": true},
-		}}), nil
+		return toolResp(req.Tools[0].Name, map[string]any{"bucket": "human", "change_kind": "behavior", "confidence": 0.9, "reason": "r",
+			"headline": "h", "summary": "s", "focus": []any{}, "issues": []any{
+				map[string]any{"severity": "high", "title": "Pointer errors bypass detection", "failure_scenario": "x",
+					"introduced_by_pr": true, "depends_on_unseen_code": true},
+			}}), nil
 	}}
 	p := &Pipeline{
-		Presorter:  &Presorter{Policy: DefaultPolicy()},
-		Classifier: &LLMClassifier{LLM: classify, Policy: DefaultPolicy()},
+		Presorter: &Presorter{Policy: DefaultPolicy()},
 		// Tools on, but the fake provider can't use a workspace.
 		Summarizer: &Summarizer{LLM: review, Policy: DefaultPolicy(), Tools: true},
 	}

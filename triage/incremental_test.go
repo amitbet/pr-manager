@@ -261,16 +261,17 @@ diff --git a/docs/notes.md b/docs/notes.md
 +more notes
 `
 
-// countingPipeline builds a pipeline whose classifier and reviewer are
-// fakes, and counts the review calls.
+// countingPipeline builds a pipeline whose reviewer is a fake, and counts
+// the review calls.
 func countingPipeline(t *testing.T, reviews *int) *Pipeline {
 	t.Helper()
-	classify := &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) {
-		return toolResp("submit_triage", map[string]any{"bucket": "skim", "change_kind": "behavior", "confidence": 0.95, "reason": "a change"}), nil
-	}}
+	answer := func(m map[string]any) map[string]any {
+		return with(map[string]any{"bucket": "skim", "change_kind": "behavior", "confidence": 0.95, "reason": "a change",
+			"headline": "h", "summary": "s", "focus": []any{"check it"}, "issues": []any{}}, m)
+	}
 	review := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
 		*reviews++
-		name := "submit_summary"
+		name := "submit_analysis"
 		for _, tool := range req.Tools {
 			name = tool.Name
 		}
@@ -279,18 +280,17 @@ func countingPipeline(t *testing.T, reviews *int) *Pipeline {
 			var units []any
 			for _, line := range strings.Split(req.Messages[len(req.Messages)-1].Content, "\n") {
 				if id, ok := strings.CutPrefix(line, "#### unit id: "); ok {
-					units = append(units, map[string]any{"id": id, "headline": "h", "summary": "s", "safe": true, "focus": []any{"check it"}, "issues": []any{}})
+					units = append(units, answer(map[string]any{"id": id}))
 				}
 			}
 			return toolResp(name, map[string]any{"units": units}), nil
 		}
-		return toolResp(name, map[string]any{"headline": "h", "summary": "s", "safe": true, "focus": []any{"check it"}, "issues": []any{}}), nil
+		return toolResp(name, answer(map[string]any{})), nil
 	}}
 	policy := DefaultPolicy()
 	policy.Lint.Enabled = false
 	return &Pipeline{
 		Presorter:  &Presorter{Policy: policy},
-		Classifier: &LLMClassifier{LLM: classify, Policy: policy},
 		Summarizer: &Summarizer{LLM: review, Critic: review, Policy: policy},
 	}
 }

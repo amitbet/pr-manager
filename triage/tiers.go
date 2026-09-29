@@ -312,22 +312,6 @@ func (tp TierPolicy) prior(u *Unit, maxChars int) {
 	tp.place(u)
 }
 
-// reviewable: units the LLM reviews, picked by the prior alone so the
-// budget never cuts review coverage. Only units that score under every
-// budget's skim cut-off, that the classifier called "none", and that
-// have no floor are left out, along with rule-skipped ones.
-func (tp TierPolicy) reviewable(u *Unit) bool {
-	s := u.Score
-	if len(u.Hunks) == 0 || s == nil || s.Pin == BucketNone {
-		return false
-	}
-	low := s.Prior
-	for _, b := range tp.Budgets {
-		low = min(low, b.Skim)
-	}
-	return s.Classified != BucketNone || s.Floor != "" || s.Pin != "" || s.Prior >= low
-}
-
 // afterReview applies what the reviewer found. prev is the bucket the
 // review saw; a failed review call raised it.
 func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {

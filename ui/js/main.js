@@ -80,6 +80,13 @@ function carriedLine(r) {
     Incremental: <b>${c.reused}</b> of ${total} reviewed unit${total === 1 ? "" : "s"} kept from <code>${esc(c.from.slice(0, 8))}</code>, ${c.reviewed} reviewed again</div>`;
 }
 
+// modelsLine names the models of a run. When the review call placed the
+// units, the classifier is the summarizer (without its "+repo tools").
+function modelsLine(r) {
+  if (r.summarizer && r.summarizer !== "off" && r.summarizer.startsWith(r.classifier)) return `analyze <code>${esc(r.summarizer)}</code>`;
+  return `classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>`;
+}
+
 function prHeadHTML(r) {
   const pr = r.pr;
   const local = !!pr.local_path;
@@ -89,7 +96,7 @@ function prHeadHTML(r) {
       <h2>${local ? esc(pr.title || pr.head_ref) : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`}</h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}@${esc(pr.base_oid.slice(0, 8))}</code> ← <code>${esc(pr.head_ref)}@${esc(pr.head_oid.slice(0, 8))}</code> ·
-        +${pr.additions}/−${pr.deletions} · classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
+        +${pr.additions}/−${pr.deletions} · ${modelsLine(r)}${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">

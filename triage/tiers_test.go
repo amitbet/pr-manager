@@ -83,11 +83,10 @@ func fileDiff(path string) string {
 `
 }
 
-// scripted answers per file for the classifier and the reviewer.
+// scripted answers per file for the reviewer, which also places the unit.
 type script struct {
 	bucket, kind string
 	issues       []any
-	safe         bool
 }
 
 func runScripted(t *testing.T, m *codemap.Map, repo, diff string, answers map[string]script) (map[string]*Unit, map[string]string) {
@@ -106,10 +105,6 @@ func runScripted(t *testing.T, m *codemap.Map, repo, diff string, answers map[st
 		return script{}
 	}
 	tools := map[string]string{}
-	classify := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		s := pick(req)
-		return toolResp("submit_triage", map[string]any{"bucket": s.bucket, "change_kind": s.kind, "confidence": 0.95, "headline": "h", "reason": "r"}), nil
-	}}
 	review := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
 		s := pick(req)
 		for f := range answers {
@@ -120,11 +115,11 @@ func runScripted(t *testing.T, m *codemap.Map, repo, diff string, answers map[st
 				}
 			}
 		}
-		return toolResp(req.Tools[0].Name, map[string]any{"headline": "h", "summary": "s", "safe": s.safe, "focus": []any{"x"}, "issues": s.issues}), nil
+		return toolResp(req.Tools[0].Name, map[string]any{"bucket": s.bucket, "change_kind": s.kind, "confidence": 0.95, "reason": "r",
+			"headline": "h", "summary": "s", "focus": []any{"x"}, "issues": s.issues}), nil
 	}}
 	p := &Pipeline{
 		Presorter:  &Presorter{Policy: DefaultPolicy()},
-		Classifier: &LLMClassifier{LLM: classify, Policy: DefaultPolicy()},
 		Summarizer: &Summarizer{LLM: review, Policy: DefaultPolicy()},
 	}
 	if m != nil {
@@ -155,15 +150,15 @@ func TestTierMoves(t *testing.T) {
 	medium := []any{map[string]any{"severity": "medium", "line": 5, "title": "b is never checked", "failure_scenario": "b=0 divides by zero"}}
 	low := []any{map[string]any{"severity": "low", "title": "log text typo"}}
 	units, _ := runScripted(t, m, "svc", diff, map[string]script{
-		"svc/calm.go":         {bucket: "skim", kind: "refactor", safe: true},
-		"svc/calm2.go":        {bucket: "human", kind: "behavior", safe: true, issues: low},
-		"svc/flaky.go":        {bucket: "skim", kind: "behavior", safe: true},
-		"svc/both.go":         {bucket: "skim", kind: "behavior", safe: true},
-		"svc/calm3.go":        {bucket: "skim", kind: "refactor", safe: true},
-		"svc/hot.go":          {bucket: "skim", kind: "behavior", safe: true},
-		"svc/issue.go":        {bucket: "skim", kind: "behavior", safe: true, issues: medium},
-		"svc/test_like.go":    {bucket: "human", kind: "test", safe: true},
-		"db/migrations/1.sql": {safe: true},
+		"svc/calm.go":         {bucket: "skim", kind: "refactor"},
+		"svc/calm2.go":        {bucket: "human", kind: "behavior", issues: low},
+		"svc/flaky.go":        {bucket: "skim", kind: "behavior"},
+		"svc/both.go":         {bucket: "skim", kind: "behavior"},
+		"svc/calm3.go":        {bucket: "skim", kind: "refactor"},
+		"svc/hot.go":          {bucket: "skim", kind: "behavior"},
+		"svc/issue.go":        {bucket: "skim", kind: "behavior", issues: medium},
+		"svc/test_like.go":    {bucket: "human", kind: "test"},
+		"db/migrations/1.sql": {},
 	})
 	check := func(file string, want Bucket, total int, why string) *Unit {
 		t.Helper()
@@ -255,9 +250,6 @@ func TestBudgetsOnErrorCachePR(t *testing.T) {
 				Decision:   Decision{Bucket: BucketHuman, ChangeKind: "behavior", Confidence: 0.9, Source: "m"},
 			}
 			tp.prior(u, 0)
-			if !tp.reviewable(u) {
-				t.Errorf("%s not reviewable", sym)
-			}
 			tp.afterReview(u, u.Decision.Bucket)
 			if err := Rebucket([]*Unit{u}, tp, budget); err != nil {
 				t.Fatal(err)
@@ -274,7 +266,7 @@ func TestBudgetsOnErrorCachePR(t *testing.T) {
 }
 
 func TestNoMapNoMoves(t *testing.T) {
-	answers := map[string]script{"svc/calm.go": {bucket: "skim", kind: "refactor", safe: true}}
+	answers := map[string]script{"svc/calm.go": {bucket: "skim", kind: "refactor"}}
 	units, _ := runScripted(t, nil, "", fileDiff("svc/calm.go"), answers)
 	if u := units["svc/calm.go"]; u.Decision.Bucket != BucketSkim || u.Impact != nil || !u.Reviewed || u.Likelihood == nil {
 		t.Errorf("without a map: %+v impact=%v likelihood=%v", u.Decision, u.Impact, u.Likelihood)

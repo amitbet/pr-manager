@@ -806,9 +806,7 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 			prior[u.ID] = u.Unit
 		}
 	}
-	if pipe.Classifier != nil {
-		pipe.Classifier = &carryClassifier{pipe.Classifier, prior, changed}
-	}
+	pipe.Classifier = &carryClassifier{pipe.Classifier, prior, changed}
 	reviewed := map[string]bool{}
 	pipe.ReviewFilter = func(u *triage.Unit) bool {
 		if selected[u.ID] || touchesPatch(u, changed) {
@@ -895,7 +893,9 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 }
 
 // carryClassifier keeps the earlier decision for units the fix did not
-// touch, so a fix round only pays to classify the code it changed.
+// touch, so a fix round only pays to classify the code it changed. With a
+// reviewer there is no inner classifier: the review places what the fix
+// touched, and the rest keeps its decision.
 type carryClassifier struct {
 	triage.Classifier
 	prior   map[string]*triage.Unit
@@ -904,19 +904,10 @@ type carryClassifier struct {
 
 func (c *carryClassifier) Classify(ctx context.Context, u *triage.Unit) triage.Decision {
 	if old := c.prior[u.ID]; old != nil && !touchesPatch(u, c.changed) {
-		// The stored decision holds the placed bucket (budget, pins,
-		// review issues); the classifier's own call is in the score.
-		d := old.Decision
-		d.Escalated = append([]string(nil), d.Escalated...)
-		d.RiskSignals = append([]string(nil), d.RiskSignals...)
-		if old.Score != nil && old.Score.Classified != "" {
-			d.Bucket = old.Score.Classified
-		}
-		// A carried decision is not a fresh answer (and a failed one lost
-		// its Failed flag in the stored result), so it must never be saved
-		// to the decision store.
-		d.Failed = true
-		return d
+		return triage.CarriedDecision(old)
+	}
+	if c.Classifier == nil {
+		return triage.Decision{Bucket: triage.BucketHuman, Source: "none", Reason: "no classifier configured"}
 	}
 	return c.Classifier.Classify(ctx, u)
 }

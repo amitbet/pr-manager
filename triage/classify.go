@@ -176,23 +176,30 @@ const (
 	reviewMaxTokens   = 8192
 )
 
-// PromptVersion changes whenever the classify or summarize prompts do, so
+// PromptVersion changes whenever the classify or analyze prompts do, so
 // cached results from older prompts aren't reused.
-const PromptVersion = "11"
+const PromptVersion = "12"
 
-const classifySystem = `You triage pull-request changes for a Go/Kubernetes codebase. For each change unit decide who needs to look at it.
-
-Buckets are defined by consequence, not size:
+// bucketRules defines the buckets. The classifier and the reviewer place
+// units by the same rules.
+const bucketRules = `Buckets are defined by consequence, not size:
 - "human": the change can alter runtime behavior in a way a reviewer must judge. Logic, error handling, retries/timeouts, concurrency, public API or wire formats, security, persistence, resource limits, anything touching money or customer data. A one-line change to a retry count is "human".
 - "skim": behavior changes are low-risk and a short written summary is enough for the reviewer. Logging text, metrics names, test-only changes, internal refactors with an obvious equivalence, new code behind an unused path.
 - "none": the change cannot alter behavior. You MUST name the concrete reason (comment-only, import reordering, pure rename of an unexported identifier with all uses updated, dead code removal with no references). "Looks trivial" is not a reason.
 
-You only see one unit. Never argue that something is unused or unreferenced: its uses may be in the other units of the PR, which are listed after the diff.
 Adding, removing or retagging struct fields is "human": it can change JSON/proto/wire output and what consumers receive.
 
 Test files (*_test.go) cannot affect production behavior. New tests are "skim". Deleted tests, removed assertions, or expectations changed to match new behavior are "human": they can hide a regression. Comment-only or formatting-only edits in tests are "none".
 
 When unsure, pick the higher bucket. Report confidence as the probability that your bucket is correct.`
+
+// classifySystem is used only without a reviewer; with one, the review
+// call places the unit (see analyzeSystem).
+const classifySystem = `You triage pull-request changes for a Go/Kubernetes codebase. For each change unit decide who needs to look at it.
+
+` + bucketRules + `
+
+You only see one unit. Never argue that something is unused or unreferenced: its uses may be in the other units of the PR, which are listed after the diff.`
 
 var triageTool = llm.ToolDefinition{
 	Name:        "submit_triage",

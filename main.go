@@ -102,14 +102,14 @@ func main() {
 	fs.StringVar(&o.policy, "policy", "", "policy file (default <C>/.triage.yaml)")
 	fs.StringVar(&o.out, "out", "md", "output format: md|json")
 	fs.StringVar(&o.outFile, "o", "", "write the report to this file instead of stdout")
-	fs.StringVar(&o.classifier, "classifier", "auto", "auto|codex|claude-code|openjev|openai-api|claude-api|bedrock|vertex|foundry|azure-openai|ollama|off (auto: codex subscription, else claude-code subscription, else a configured cloud (CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY, AZURE_OPENAI_ENDPOINT), else OPENAI_API_KEY, else ANTHROPIC_API_KEY, else ollama; openai and anthropic still work as old names)")
+	fs.StringVar(&o.classifier, "classifier", "auto", "places units when -summarizer is off (with a summarizer, the review call does): auto|codex|claude-code|openjev|openai-api|claude-api|bedrock|vertex|foundry|azure-openai|ollama|off (auto: codex subscription, else claude-code subscription, else a configured cloud (CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY, AZURE_OPENAI_ENDPOINT), else OPENAI_API_KEY, else ANTHROPIC_API_KEY, else ollama; openai and anthropic still work as old names)")
 	fs.StringVar(&o.classifyModel, "classify-model", "", "classifier model (default per provider)")
 	fs.StringVar(&o.fallback, "fallback", "auto", "with -classifier openjev: provider for units OpenJev isn't sure about (off = human)")
 	fs.StringVar(&o.fallbackModel, "fallback-model", "", "fallback model")
 	fs.StringVar(&o.summarizer, "summarizer", "auto", "auto|codex|claude-code|openai-api|claude-api|bedrock|vertex|foundry|azure-openai|ollama|off")
-	fs.StringVar(&o.summaryModel, "summary-model", "", "summary model (default per provider: a stronger model than the classifier)")
+	fs.StringVar(&o.summaryModel, "summary-model", "", "analyze model: triages, summarizes and reviews each unit in one call (default per provider: a stronger model than the classifier)")
 	fs.StringVar(&o.classifyEffort, "classify-effort", "low", "reasoning effort for classify (openai, codex, claude-code): none|minimal|low|medium|high|xhigh ('' = model default)")
-	fs.StringVar(&o.reviewEffort, "review-effort", "medium", "reasoning effort for summarize/review (openai, codex, claude-code; '' = model default)")
+	fs.StringVar(&o.reviewEffort, "review-effort", "medium", "reasoning effort for analyze (openai, codex, claude-code; '' = model default)")
 	fs.BoolVar(&o.reviewTools, "review-tools", true, "let the codex/claude-code reviewer read the repo at the PR head (a git worktree) and the Go module cache; slower, catches claims about code outside the diff (-review-tools=false to turn off)")
 	fs.BoolVar(&o.incremental, "incremental", true, "when a PR is triaged again after a push, keep the review of every unit whose diff, and whose callers, callees, file-mates and moved code, did not change; the rest of the pipeline still runs on the whole diff (-incremental=false, or -force, reviews everything)")
 	fs.BoolVar(&o.groupReview, "group-review", true, "review related change units together in one call instead of one call each: fewer, larger review tasks and much less repeated context (-group-review=false to turn off; grouping in .triage.yaml overrides when this flag is not given)")
@@ -125,7 +125,7 @@ func main() {
 	fs.IntVar(&o.concurrency, "j", 8, "parallel classify calls")
 	fs.IntVar(&o.classifyBatch, "classify-batch", 0, "change units per classify call (0: classify_batch.max_units in .triage.yaml, else 6; 1: one call per unit)")
 	fs.BoolVar(&o.classifyCache, "classify-cache", true, "keep classifier decisions under -cache, so a unit whose diff did not change is not classified again (-classify-cache=false to turn off; eval never uses it)")
-	fs.IntVar(&o.reviewConcurrency, "review-j", 16, "parallel summarize/review calls (0 = same as -j)")
+	fs.IntVar(&o.reviewConcurrency, "review-j", 16, "parallel analyze calls (0 = same as -j)")
 	fs.BoolVar(&o.failOnHuman, "fail-on-human", false, "exit 2 if any unit needs human review")
 	fs.StringVar(&o.fixtures, "fixtures", "testdata/eval", "eval: directory of NAME.json cases")
 	fs.BoolVar(&o.judge, "judge", false, "eval: score summary faithfulness with OpenJev")
@@ -456,8 +456,11 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 		return &triage.LLMClassifier{LLM: l, Policy: policy}, nil
 	}
 	var err error
-	switch o.classifier {
-	case "openjev":
+	// With a reviewer, the review call places every unit it reads, so a
+	// separate classifier would only pay for a second, weaker opinion.
+	switch {
+	case o.summarizer != "off":
+	case o.classifier == "openjev":
 		fb, err := llmClassifier(o.fallback, o.fallbackModel)
 		if err != nil {
 			return nil, err

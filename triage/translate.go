@@ -123,11 +123,12 @@ var translateTool = llm.ToolDefinition{
 	},
 }
 
-const (
-	translateBatchChars  = 6000
-	translateConcurrency = 4
-	translateMaxTokens   = 16384
+var (
+	TranslateBatchChars  = 6000
+	TranslateConcurrency = 4
 )
+
+const translateMaxTokens = 16384
 
 type translateItem struct {
 	ID   int    `json:"id"`
@@ -190,7 +191,7 @@ func translateSlots(ctx context.Context, l llm.LLMTool, lang string, all []*stri
 	var cur []translateItem
 	size := 0
 	for i, s := range slots {
-		if size > 0 && size+len(*s) > translateBatchChars {
+		if size > 0 && size+len(*s) > TranslateBatchChars {
 			batches = append(batches, cur)
 			cur, size = nil, 0
 		}
@@ -201,7 +202,7 @@ func translateSlots(ctx context.Context, l llm.LLMTool, lang string, all []*stri
 
 	results := make([]map[int]string, len(batches))
 	errs := make([]error, len(batches))
-	sem := make(chan struct{}, translateConcurrency)
+	sem := make(chan struct{}, TranslateConcurrency)
 	var wg sync.WaitGroup
 	for b, items := range batches {
 		wg.Add(1)

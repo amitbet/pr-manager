@@ -3,6 +3,7 @@ package triage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -93,15 +94,9 @@ func equal(a, b []string) bool {
 	return true
 }
 
-func TestReviewGroupsSplitsHumanFromRest(t *testing.T) {
+func TestReviewGroupsOffIsOneGroupPerUnit(t *testing.T) {
 	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
 	b := unit("b.go:(*C).Do", "b.go", "(*C).Do", "retryCaps()")
-	a.Decision = Decision{Bucket: BucketHuman}
-	b.Decision = Decision{Bucket: BucketSkim}
-	gs := reviewGroups([]*Unit{a, b}, DefaultGroupPolicy())
-	if len(gs) != 2 {
-		t.Errorf("groups = %v, want human and skim reviewed apart", groupIDs(gs))
-	}
 	off := reviewGroups([]*Unit{a, b}, GroupPolicy{Enabled: false})
 	if len(off) != 2 || off[0].ID() != a.ID {
 		t.Errorf("grouping off = %v, want one group per unit in order", groupIDs(off))
@@ -109,7 +104,8 @@ func TestReviewGroupsSplitsHumanFromRest(t *testing.T) {
 }
 
 // groupReplyLLM answers a grouped review with one entry per id it was given,
-// dropping the ids in omit so the per-unit fallback can be observed.
+// dropping the ids in omit so the per-unit fallback can be observed. Every
+// answer places its unit in skim.
 type groupReplyLLM struct {
 	omit  map[string]bool
 	calls []string
@@ -122,23 +118,33 @@ func (f *groupReplyLLM) Call(_ context.Context, q llm.LLMRequest) (*llm.LLMRespo
 	prompt := q.Messages[len(q.Messages)-1].Content
 	name := q.Tools[0].Name
 	f.calls = append(f.calls, name)
-	if name != "submit_group_review_notes" {
-		return toolResp(name, map[string]any{
+	triage := map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r"}
+	if name != "submit_group_analysis" {
+		return toolResp(name, with(triage, map[string]any{
 			"headline": "solo", "summary": "solo review", "focus": []any{}, "issues": []any{},
-			"safe": true,
-		}), nil
+		})), nil
 	}
 	var units []any
 	for _, id := range idsIn(prompt) {
 		if f.omit[id] {
 			continue
 		}
-		units = append(units, map[string]any{
+		units = append(units, with(triage, map[string]any{
 			"id": id, "headline": "h " + id, "summary": "s " + id,
 			"focus": []any{"check " + id}, "issues": []any{},
-		})
+		}))
 	}
 	return toolResp(name, map[string]any{"units": units}), nil
+}
+
+// with is m with the entries of base it does not set itself.
+func with(base, m map[string]any) map[string]any {
+	for k, v := range base {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+	return m
 }
 
 func idsIn(prompt string) []string {
@@ -151,15 +157,12 @@ func idsIn(prompt string) []string {
 	return out
 }
 
-func TestSummarizeGroupWritesEveryMember(t *testing.T) {
+func TestAnalyzeGroupWritesEveryMember(t *testing.T) {
 	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
 	b := unit("b.go:(*C).Do", "b.go", "(*C).Do", "retryCaps()")
-	for _, u := range []*Unit{a, b} {
-		u.Decision = Decision{Bucket: BucketHuman}
-	}
 	f := &groupReplyLLM{}
 	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
-	s.SummarizeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
+	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
 
 	if len(f.calls) != 1 {
 		t.Errorf("calls = %v, want one call for the group", f.calls)
@@ -174,18 +177,18 @@ func TestSummarizeGroupWritesEveryMember(t *testing.T) {
 		if len(u.Focus) != 1 || u.Focus[0] != "check "+u.ID {
 			t.Errorf("%s: focus = %v", u.ID, u.Focus)
 		}
+		if d := u.Decision; d.Bucket != BucketSkim || d.ChangeKind != "refactor" || d.Source != "fake/fake" {
+			t.Errorf("%s: decision = %+v, want the reviewer's skim", u.ID, d)
+		}
 	}
 }
 
-func TestSummarizeGroupFallsBackForOmittedMember(t *testing.T) {
+func TestAnalyzeGroupFallsBackForOmittedMember(t *testing.T) {
 	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
 	b := unit("b.go:(*C).Do", "b.go", "(*C).Do", "retryCaps()")
-	for _, u := range []*Unit{a, b} {
-		u.Decision = Decision{Bucket: BucketHuman}
-	}
 	f := &groupReplyLLM{omit: map[string]bool{b.ID: true}}
 	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
-	s.SummarizeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
+	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
 
 	if a.Summary != "s "+a.ID {
 		t.Errorf("a summary = %q", a.Summary)
@@ -200,23 +203,22 @@ func TestSummarizeGroupFallsBackForOmittedMember(t *testing.T) {
 	}
 }
 
-func TestSummarizeGroupOfOneIsAnOrdinaryReview(t *testing.T) {
+func TestAnalyzeGroupOfOneIsAnOrdinaryReview(t *testing.T) {
 	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
-	a.Decision = Decision{Bucket: BucketHuman}
 	f := &groupReplyLLM{}
 	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
-	s.SummarizeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a}})
-	if len(f.calls) != 1 || f.calls[0] != "submit_review_notes" {
+	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a}})
+	if len(f.calls) != 1 || f.calls[0] != "submit_analysis" {
 		t.Errorf("calls = %v, want the ungrouped review tool", f.calls)
 	}
 }
 
 func TestGroupToolSchemaRequiresID(t *testing.T) {
-	b, err := json.Marshal(groupReviewNotesTool.InputSchema)
+	b, err := json.Marshal(groupAnalyzeTool.InputSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"units"`, `"id"`, `"headline"`, `"issues"`} {
+	for _, want := range []string{`"units"`, `"id"`, `"headline"`, `"issues"`, `"bucket"`, `"confidence"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("group schema lacks %s: %s", want, b)
 		}
@@ -256,11 +258,6 @@ func TestPipelineGroupingReviewsEveryUnitInFewerCalls(t *testing.T) {
 			Presorter:   &Presorter{Policy: policy},
 			Summarizer:  &Summarizer{LLM: review, Critic: review, Policy: policy},
 			Concurrency: 1,
-			Classifier: &LLMClassifier{LLM: &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) {
-				return toolResp("submit_triage", map[string]any{
-					"bucket": "human", "change_kind": "behavior", "confidence": 0.9, "reason": "changed",
-				}), nil
-			}}, Policy: policy},
 		}
 		for _, u := range p.Run(context.Background(), src) {
 			if u.Reviewed {
@@ -285,22 +282,33 @@ func TestPipelineGroupingReviewsEveryUnitInFewerCalls(t *testing.T) {
 	t.Logf("%d units reviewed in %d calls grouped, %d ungrouped", len(onUnits), onCalls, offCalls)
 }
 
-func TestSummarizeGroupReviewsMixedBucketsSeparately(t *testing.T) {
+func TestAnalyzeGroupKeepsARulesDecision(t *testing.T) {
 	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
 	b := unit("b.go:(*C).Do", "b.go", "(*C).Do", "retryCaps()")
-	a.Decision = Decision{Bucket: BucketHuman}
-	b.Decision = Decision{Bucket: BucketSkim}
+	rule := Decision{Bucket: BucketHuman, Source: "rule", Reason: "migration"}
+	a.Decision = rule
 	f := &groupReplyLLM{}
 	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
-	s.SummarizeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
+	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
 
-	if len(f.calls) != 2 {
-		t.Errorf("calls = %v, want one per unit for a mixed group", f.calls)
+	if len(f.calls) != 1 {
+		t.Errorf("calls = %v, want one call for the group", f.calls)
 	}
-	for _, u := range []*Unit{a, b} {
-		if !u.Reviewed {
-			t.Errorf("%s went unreviewed", u.ID)
-		}
+	if a.Decision.Source != "rule" || a.Decision.Bucket != BucketHuman || !a.Reviewed {
+		t.Errorf("rule unit: decision = %+v, reviewed = %v, want the rule's bucket kept", a.Decision, a.Reviewed)
+	}
+	if b.Decision.Bucket != BucketSkim || !b.Reviewed {
+		t.Errorf("other unit: decision = %+v, want the reviewer's", b.Decision)
+	}
+}
+
+func TestAnalyzeFailureLeavesUnitHuman(t *testing.T) {
+	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
+	f := &fakeLLM{fn: func(llm.LLMRequest) (*llm.LLMResponse, error) { return nil, errors.New("boom") }}
+	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
+	s.Analyze(context.Background(), a)
+	if d := a.Decision; d.Bucket != BucketHuman || d.Confidence != 0 || !d.Failed || a.Reviewed {
+		t.Errorf("decision = %+v, reviewed = %v, want a failed human", d, a.Reviewed)
 	}
 }
 
