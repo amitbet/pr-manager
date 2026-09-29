@@ -11,11 +11,12 @@ import (
 	"github.com/amitbet/pr-manager/triage"
 )
 
-// refreshThreads loads the PR's open review threads onto units and checks
-// the new ones. Threads whose comments have not changed keep their
-// verdict, so a refresh only costs the gh call. A failed fetch keeps the
-// threads units already have. Local changes have no threads (nil).
-func (t *triager) refreshThreads(ctx context.Context, info *triage.PRInfo, units []*triage.Unit, o options, progress func(string, int, int)) *triage.ThreadStats {
+// refreshThreads loads the PR's open review threads onto units, checks
+// the new ones, and re-places the units under tp with the confirmed ones
+// counted. Threads whose comments have not changed keep their verdict, so
+// a refresh only costs the gh call. A failed fetch keeps the threads units
+// already have. Local changes have no threads (nil).
+func (t *triager) refreshThreads(ctx context.Context, info *triage.PRInfo, units []*triage.Unit, o options, tp triage.TierPolicy, progress func(string, int, int)) *triage.ThreadStats {
 	if info.LocalPath != "" || info.Number == 0 {
 		return nil
 	}
@@ -52,6 +53,7 @@ func (t *triager) refreshThreads(ctx context.Context, info *triage.PRInfo, units
 			}
 		}
 		triage.SortThreads(u.Threads)
+		tp.ApplyThreads(u)
 	}
 	return &st
 }
@@ -59,11 +61,15 @@ func (t *triager) refreshThreads(ctx context.Context, info *triage.PRInfo, units
 // withThreads refreshes a saved result's threads and saves it: comments
 // come and go while the PR head, and so the cached triage, stays.
 func (t *triager) withThreads(ctx context.Context, r *PRResult, o options, progress func(string, int, int)) *PRResult {
-	st := t.refreshThreads(ctx, r.PR, resultUnits(r), o, progress)
+	units := resultUnits(r)
+	st := t.refreshThreads(ctx, r.PR, units, o, r.tierPolicy(), progress)
 	if st == nil {
 		return r
 	}
 	r.Threads = st
+	rep := &triage.Report{Units: units}
+	r.Counts = rep.Counts()
+	r.Impact, r.Likelihood, r.Attention = rep.Scores()
 	if err := t.saveResult(r); err != nil {
 		log.Printf("save review threads %s: %v", r.Key, err)
 	}

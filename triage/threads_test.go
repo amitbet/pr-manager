@@ -126,3 +126,52 @@ func TestJudgeThreads(t *testing.T) {
 		t.Errorf("skipped threads changed: %+v %+v", th[4], th[5])
 	}
 }
+
+func TestApplyThreadsRaisesAndReleases(t *testing.T) {
+	tp := DefaultTierPolicy()
+	// A clean, reviewed skim unit: prior 30, lowered by the clean review.
+	u := &Unit{Reviewed: true, Decision: Decision{Bucket: BucketSkim}, Score: &Score{Base: 30, Kind: 1, Prior: 30, Clean: 1}}
+	tp.place(u)
+	if u.Decision.Bucket != BucketSkim || u.Attention != 0 {
+		t.Fatalf("before: %s attention %d (%s)", u.Decision.Bucket, u.Attention, u.Score.Why)
+	}
+	dup := 0
+	u.Threads = []Thread{
+		{ID: "high", Author: "alice", Trusted: true, Status: ThreadValid, Issue: &Issue{Severity: "high", Title: "Conn leaked"}},
+		{ID: "no", Trusted: true, Status: ThreadRejected},
+		{ID: "dup", Trusted: true, Status: ThreadValid, Issue: &Issue{Severity: "critical", Title: "Same as ours"}, DuplicateOf: &dup},
+	}
+	tp.ApplyThreads(u)
+	if u.Decision.Bucket != BucketHuman || u.Attention != severityWeight["high"] || u.Score.Clean != 0 || !strings.Contains(u.Score.Why, "@alice") {
+		t.Errorf("confirmed high comment: %s attention %d clean %v (%s)", u.Decision.Bucket, u.Attention, u.Score.Clean, u.Score.Why)
+	}
+	// Under the most lenient budget too: it is a pin.
+	if b, _, _ := u.Score.Place(tp.Budgets["least"], "least", u.Attention); b != BucketHuman {
+		t.Errorf("least budget: %s", b)
+	}
+
+	u.Threads[0].Fixed = true
+	tp.ApplyThreads(u)
+	if u.Decision.Bucket != BucketSkim || u.Attention != 0 || u.Score.Clean != 1 || u.Score.CommentPin != "" {
+		t.Errorf("after the fix: %s attention %d clean %v pin %q", u.Decision.Bucket, u.Attention, u.Score.Clean, u.Score.CommentPin)
+	}
+
+	// A low comment raises attention but doesn't pin, and a review pin to
+	// human outlasts it.
+	u.Threads = []Thread{{ID: "low", Trusted: true, Status: ThreadValid, Issue: &Issue{Severity: "low", Title: "minor"}}}
+	u.Score.Pin, u.Score.PinWhy = BucketHuman, "review found a medium issue"
+	tp.ApplyThreads(u)
+	if u.Attention != severityWeight["low"] || u.Score.Clean != 0.5 || u.Score.CommentPin != "" || u.Decision.Bucket != BucketHuman || !strings.Contains(u.Score.Why, "medium issue") {
+		t.Errorf("low comment: attention %d clean %v pin %q (%s)", u.Attention, u.Score.Clean, u.Score.CommentPin, u.Score.Why)
+	}
+}
+
+func TestCommentPinOverridesRuleSkip(t *testing.T) {
+	tp := DefaultTierPolicy()
+	u := &Unit{Decision: Decision{Bucket: BucketNone, Source: "rule"}, Score: &Score{Pin: BucketNone, PinWhy: "generated file"}}
+	u.Threads = []Thread{{ID: "t", Author: "bob", Trusted: true, Status: ThreadValid, Issue: &Issue{Severity: "medium", Title: "Wrong enum value"}}}
+	tp.ApplyThreads(u)
+	if u.Decision.Bucket != BucketHuman || u.Attention != severityWeight["medium"] {
+		t.Errorf("rule-skipped unit with a confirmed comment: %s attention %d", u.Decision.Bucket, u.Attention)
+	}
+}

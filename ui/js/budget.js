@@ -23,7 +23,9 @@ export function place(u, b) {
   const f = b.trust * (s.clean || 0);
   const lowered = Math.round(s.prior * (1 - f));
   const total = Math.max(att, lowered);
-  if (s.pin) return { bucket: s.pin, total, why: `${s.pin}: ${s.pin_why} (any budget)` };
+  // A comment pin wins over any other pin but human (Score.pin in Go).
+  const [pin, pinWhy] = s.comment_pin && s.pin !== "human" ? [s.comment_pin, s.comment_pin_why] : [s.pin, s.pin_why];
+  if (pin) return { bucket: pin, total, why: `${pin}: ${pinWhy} (any budget)` };
   let bucket = "none", cut = `< ${b.skim}`;
   if (total >= b.human) [bucket, cut] = ["human", `≥ ${b.human}`];
   else if (total >= b.skim) [bucket, cut] = ["skim", `≥ ${b.skim}`];

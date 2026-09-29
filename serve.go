@@ -271,7 +271,7 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 		return nil, err
 	}
 	// Before the overview, so confirmed comments are in it.
-	threads := t.refreshThreads(ctx, info, units, o, pipe.Progress)
+	threads := t.refreshThreads(ctx, info, units, o, pipe.Presorter.Policy.Tiers, pipe.Progress)
 
 	r := &PRResult{
 		Key: key, PR: info, CreatedAt: time.Now(), DurationMS: time.Since(start).Milliseconds(),

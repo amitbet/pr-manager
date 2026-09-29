@@ -164,6 +164,12 @@ type Score struct {
 	PinWhy   string `json:"pin_why,omitempty"`
 	Floor    Bucket `json:"floor,omitempty"`
 	FloorWhy string `json:"floor_why,omitempty"`
+	// CommentPin is the pin an open, confirmed review comment of medium
+	// or worse sets (see ApplyThreads). It is kept apart from Pin so it
+	// goes away when the comment is resolved or fixed, and it overrides
+	// any Pin but human.
+	CommentPin    Bucket `json:"comment_pin,omitempty"`
+	CommentPinWhy string `json:"comment_pin_why,omitempty"`
 	// Total, Budget and Why are for the policy's budget.
 	Total  int    `json:"total"`
 	Budget string `json:"budget"`
@@ -179,8 +185,8 @@ func (s *Score) TotalAt(b Budget, attention int) int {
 // Place picks the bucket under b and says why.
 func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string) {
 	t := s.TotalAt(b, attention)
-	if s.Pin != "" {
-		return s.Pin, t, fmt.Sprintf("%s: %s (any budget)", s.Pin, s.PinWhy)
+	if pin, why := s.pin(); pin != "" {
+		return pin, t, fmt.Sprintf("%s: %s (any budget)", pin, why)
 	}
 	bk, cut := BucketNone, fmt.Sprintf("< %d", b.Skim)
 	switch {
@@ -198,6 +204,14 @@ func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string
 		why += fmt.Sprintf("; raised to %s: %s", bk, s.FloorWhy)
 	}
 	return bk, t, why
+}
+
+// pin is the pin that applies: a comment pin wins over any other but human.
+func (s *Score) pin() (Bucket, string) {
+	if s.CommentPin != "" && s.Pin != BucketHuman {
+		return s.CommentPin, s.CommentPinWhy
+	}
+	return s.Pin, s.PinWhy
 }
 
 func (s *Score) arithmetic(b Budget, attention int) string {
@@ -312,6 +326,51 @@ func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {
 		s.Clean = 1
 	case worst.Severity == "low":
 		s.Clean = 0.5
+	}
+	tp.place(u)
+}
+
+// ApplyThreads counts u's open, confirmed review comments as if the
+// review had found them: they raise its attention, cost a clean review its
+// discount, and one of medium or worse pins it to human. Comments that
+// repeat one of u's issues count once. It recomputes from scratch, so a
+// comment that is resolved or fixed stops counting. Unscored units are
+// left alone.
+func (tp TierPolicy) ApplyThreads(u *Unit) {
+	s := u.Score
+	if s == nil {
+		return
+	}
+	var from []Issue
+	var worst *Thread
+	for i := range u.Threads {
+		t := &u.Threads[i]
+		if t.Status != ThreadValid || t.Fixed || t.Issue == nil || t.DuplicateOf != nil {
+			continue
+		}
+		from = append(from, *t.Issue)
+		if worst == nil || severityWeight[t.Issue.Severity] > severityWeight[worst.Issue.Severity] {
+			worst = t
+		}
+	}
+	all := append(append([]Issue(nil), u.Issues...), from...)
+	if u.Reviewed || len(from) > 0 {
+		u.Attention = attentionScore(all)
+	}
+	s.CommentPin, s.CommentPinWhy = "", ""
+	if worst != nil && severityWeight[worst.Issue.Severity] >= severityWeight["medium"] {
+		s.CommentPin = BucketHuman
+		s.CommentPinWhy = fmt.Sprintf("confirmed %s review comment by @%s: %s", worst.Issue.Severity, worst.Author, worst.Issue.Title)
+	}
+	if u.Reviewed {
+		switch w := worstIssue(all); {
+		case len(all) == 0:
+			s.Clean = 1
+		case w.Severity == "low":
+			s.Clean = 0.5
+		default:
+			s.Clean = 0
+		}
 	}
 	tp.place(u)
 }

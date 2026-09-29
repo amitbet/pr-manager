@@ -604,6 +604,11 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 			}
 		}
 	}
+	// Re-found issues and fixed comments change what the comments add.
+	tp := previous.tierPolicy()
+	for _, u := range units {
+		tp.ApplyThreads(u)
+	}
 	next := *previous
 	next.Files = nil
 	next.CreatedAt = time.Now()

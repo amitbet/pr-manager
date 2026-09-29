@@ -34,17 +34,23 @@ export function likelihoodPill(l, prefix = "likelihood") {
   return `<span class="dz ${esc(l.level)}" title="${esc(title)}">${prefix} ${l.score}</span>`;
 }
 
+// confirmedComments are u's open review comments counted in its attention
+// (TierPolicy.ApplyThreads in Go).
+const confirmedComments = (u) => (u.threads || []).filter((t) => t.status === "valid" && !t.fixed && t.issue && t.duplicate_of == null);
+
 export function attentionPill(u) {
-  if (!u.reviewed) return "";
+  const cs = confirmedComments(u);
+  if (!u.reviewed && !cs.length) return "";
   const n = u.issues?.length || 0;
-  const title = n ? u.issues.map((i) => `${i.severity}: ${i.title}`).join("\n") : "review found no issues";
-  return `<span class="dz ${attLevel(u.attention)}" title="${esc(title)}">attention ${u.attention}${n ? ` · ${n} issue${n > 1 ? "s" : ""}` : ""}</span>`;
+  const lines = [...(u.issues || []).map((i) => `${i.severity}: ${i.title}`), ...cs.map((t) => `${t.issue.severity}: ${t.issue.title} (@${t.author})`)];
+  const what = [n ? `${n} issue${n > 1 ? "s" : ""}` : "", cs.length ? `${cs.length} comment${cs.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" + ");
+  return `<span class="dz ${attLevel(u.attention)}" title="${esc(lines.join("\n") || "review found no issues")}">attention ${u.attention}${what ? ` · ${what}` : ""}</span>`;
 }
 
 // decisionChips are the score and "escalated" markers for a unit.
 export function decisionChips(u) {
   const d = u.decision, s = u.score;
-  return (s ? `<span class="chip" title="${esc(s.why)}">score ${s.total}${s.pin ? " · pinned" : ""}</span>` : "") +
+  return (s ? `<span class="chip" title="${esc(s.why)}">score ${s.total}${s.pin || s.comment_pin ? " · pinned" : ""}</span>` : "") +
     (d.escalated?.length ? `<span class="esc-chip" title="${esc(d.escalated.join("\n"))}">↑ escalated</span>` : "");
 }
 
