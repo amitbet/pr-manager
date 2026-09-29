@@ -41,7 +41,11 @@ type options struct {
 	reviewTools                            bool
 	// groupReview is only consulted when the flag was given; otherwise
 	// grouping follows the policy file.
-	groupReview, groupReviewSet    bool
+	groupReview, groupReviewSet bool
+	// lint is the -lint spec: auto, off or a tool list. lintSet marks the
+	// flag as given, so otherwise the policy file decides.
+	lint, lintSpecDefault          string
+	lintSet                        bool
 	summaryLang                    string
 	reviewBudget                   string
 	concurrency, reviewConcurrency int
@@ -101,6 +105,7 @@ func main() {
 	fs.StringVar(&o.reviewEffort, "review-effort", "medium", "reasoning effort for summarize/review (openai, codex, claude-code; '' = model default)")
 	fs.BoolVar(&o.reviewTools, "review-tools", true, "let the codex/claude-code reviewer read the repo at the PR head (a git worktree) and the Go module cache; slower, catches claims about code outside the diff (-review-tools=false to turn off)")
 	fs.BoolVar(&o.groupReview, "group-review", true, "review related change units together in one call instead of one call each: fewer, larger review tasks and much less repeated context (-group-review=false to turn off; grouping in .triage.yaml overrides when this flag is not given)")
+	fs.StringVar(&o.lint, "lint", "auto", "static analysis over the lines the PR adds, fed to the review prompt, the likelihood score and the Issues tab: auto (the linters the repository is configured for and that are installed, plus the built-in secret scan), off, or a comma-separated list of "+strings.Join(triage.KnownLinters(), ",")+" (lint in .triage.yaml decides when this flag is not given)")
 	fs.StringVar(&o.summaryLang, "summary-lang", "", "language to translate summaries, review notes and issue text into, e.g. Hebrew or Japanese (default English: no translation)")
 	fs.StringVar(&o.reviewBudget, "review-budget", "", "how much goes to human review: "+strings.Join(triage.BudgetNames, "|")+" (default: tiers.review_budget in the policy, else "+triage.DefaultBudget+")")
 	fs.StringVar(&o.openjevURL, "openjev-url", "", "OpenJev server (default $OPENJEV_BASE_URL or http://127.0.0.1:8771)")
@@ -137,6 +142,9 @@ func main() {
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "group-review" {
 			o.groupReviewSet = true
+		}
+		if f.Name == "lint" {
+			o.lintSet = true
 		}
 	})
 
@@ -407,8 +415,14 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 	if o.groupReviewSet {
 		policy.Grouping.Enabled = o.groupReview
 	}
+	if o.lintSet {
+		if err := policy.Lint.Set(o.lint); err != nil {
+			return nil, err
+		}
+	}
 	pipe := &triage.Pipeline{
 		Presorter:         &triage.Presorter{Policy: policy, GitattributesGenerated: gitattrs},
+		Lint:              &triage.Linter{Policy: policy.Lint},
 		Concurrency:       o.concurrency,
 		ReviewConcurrency: o.reviewConcurrency,
 	}

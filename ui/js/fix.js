@@ -111,7 +111,7 @@ const fixableComments = () => allUnits().flatMap(({ u }) => (u.threads || []).fi
 // fixAllHTML is the Fix all button, split with a menu to include the
 // confirmed review comments when there are any.
 export function fixAllHTML() {
-  const issues = allUnits().reduce((n, { u }) => n + (u.issues?.length || 0), 0);
+  const issues = allUnits().reduce((n, { u }) => n + (u.issues || []).filter((i) => !i.dismissed).length, 0);
   const comments = fixableComments().length;
   if (!issues && !comments) return "";
   const dis = fixDisabled();

@@ -130,6 +130,9 @@ func withHeadline(u *Unit, detail string) string {
 
 func writeIssues(w io.Writer, u *Unit) {
 	for _, is := range u.Issues {
+		if is.Dismissed {
+			continue
+		}
 		loc := ""
 		if is.Line > 0 {
 			loc = fmt.Sprintf(" (line %d)", is.Line)
@@ -145,6 +148,19 @@ func writeIssues(w io.Writer, u *Unit) {
 			fmt.Fprintf(w, " _(claimed %s; %s)_", is.Claimed, is.Capped)
 		}
 		fmt.Fprintln(w)
+	}
+	writeLint(w, u)
+}
+
+// writeLint lists the static-analysis findings on the unit's added lines,
+// kept apart from the review's issues: they are facts from a tool, not a
+// judgement anyone made.
+func writeLint(w io.Writer, u *Unit) {
+	for _, f := range u.Lint {
+		if f.Dismissed {
+			continue
+		}
+		fmt.Fprintf(w, "  - **lint %s** (line %d): [%s] %s\n", f.Severity, f.Line, f.Label(), f.Message)
 	}
 }
 

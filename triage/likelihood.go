@@ -220,6 +220,11 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 	if n := len(m.MissingPartners); n > 0 {
 		t.Add("cochange", lc.w.CoChange.Of(float64(n)), "usually changes with %s, which this PR does not touch", strings.Join(m.MissingPartners, ", "))
 	}
+	// What a linter already knows. The reviewer is told not to repeat
+	// these, so this is where they move the unit.
+	if n := len(u.Lint); n > 0 {
+		t.Add("lint", lc.w.Lint.Of(float64(n)), "static analysis reports %d problem%s on the added lines (%s)", n, plural(n), lintFactorDetail(u.Lint))
+	}
 	if lc.testGap(u, f) {
 		m.TestGap = true
 		t.Add("test_gap", lc.w.TestGap.Of(1), "code changed and no test in %s/ did", path.Dir(f.Path))
@@ -232,6 +237,23 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 	lk.Score, lk.Factors = t.Score(), t.Factors
 	lk.Level = scoreLevel(lc.cm, lk.Score)
 	return lk
+}
+
+// lintFactorDetail names the tools and rules behind the lint factor,
+// shortest useful form: "golangci-lint errcheck, secrets aws-access-key".
+func lintFactorDetail(fs []LintFinding) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range fs {
+		if l := f.Label(); !seen[l] {
+			seen[l] = true
+			out = append(out, l)
+		}
+		if len(out) == 3 && len(fs) > 3 {
+			return strings.Join(out, ", ") + ", …"
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 type unitCx struct {

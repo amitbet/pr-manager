@@ -73,6 +73,77 @@ type Policy struct {
 	Tiers TierPolicy `yaml:"tiers"`
 	// Grouping reviews related units in one call instead of one each.
 	Grouping GroupPolicy `yaml:"grouping"`
+	// Lint runs static analysis over the lines the PR adds.
+	Lint LintPolicy `yaml:"lint"`
+}
+
+// LintPolicy configures the static analysis run over a PR's added lines.
+type LintPolicy struct {
+	Enabled bool `yaml:"enabled"`
+	// Tools names the external linters to run. Empty is auto: every known
+	// tool the repository is configured for and that is installed. Naming
+	// one runs it whether or not the repository has a config for it.
+	Tools []string `yaml:"tools"`
+	// Skip names tools never to run, so auto can be narrowed without
+	// listing everything else.
+	Skip []string `yaml:"skip"`
+	// Secrets is the built-in credential scan over added lines. It needs
+	// nothing installed, so it is on whenever linting is.
+	Secrets bool `yaml:"secrets"`
+	// TimeoutSec caps each tool; MaxPerUnit caps what one unit carries
+	// into its prompt and its row on the Issues tab (0: no cap).
+	TimeoutSec int `yaml:"timeout_sec"`
+	MaxPerUnit int `yaml:"max_per_unit"`
+}
+
+const (
+	DefaultLintTimeoutSec = 120
+	DefaultLintPerUnit    = 10
+)
+
+func DefaultLintPolicy() LintPolicy {
+	return LintPolicy{Enabled: true, Secrets: true, TimeoutSec: DefaultLintTimeoutSec, MaxPerUnit: DefaultLintPerUnit}
+}
+
+// KnownLinters names the external tools Set accepts.
+func KnownLinters() []string {
+	out := make([]string, len(knownLinters))
+	for i, l := range knownLinters {
+		out[i] = l.name
+	}
+	return out
+}
+
+// Set applies the -lint flag: "off", "auto", or a comma-separated list of
+// tool names. The built-in secret scan stays on for auto and for a list;
+// only "off" turns everything off.
+func (p *LintPolicy) Set(spec string) error {
+	spec = strings.TrimSpace(spec)
+	switch strings.ToLower(spec) {
+	case "", "auto", "on", "true":
+		p.Enabled, p.Tools = true, nil
+		return nil
+	case "off", "none", "false":
+		p.Enabled = false
+		return nil
+	}
+	known := map[string]bool{}
+	for _, n := range KnownLinters() {
+		known[n] = true
+	}
+	var tools []string
+	for _, n := range strings.Split(spec, ",") {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if !known[n] {
+			return fmt.Errorf("unknown linter %q (want one of %s, or auto/off)", n, strings.Join(KnownLinters(), ", "))
+		}
+		tools = append(tools, n)
+	}
+	p.Enabled, p.Tools = true, tools
+	return nil
 }
 
 func DefaultPolicy() Policy {
@@ -95,6 +166,7 @@ func DefaultPolicy() Policy {
 			"go.mod",
 		},
 		Thresholds:         Thresholds{None: 0.9, Skim: 0.7},
+		Lint:               DefaultLintPolicy(),
 		MaxUnitChars:       24000,
 		ReviewContextChars: DefaultReviewContextChars,
 		Tiers:              DefaultTierPolicy(),
@@ -161,6 +233,50 @@ func ParsePolicy(b []byte) (Policy, error) {
 			return p, fmt.Errorf("grouping.max_members: want >= 0 (0: no cap), got %d", *n)
 		}
 		p.Grouping.MaxMembers = *n
+	}
+
+	// Lint.Enabled and Lint.Secrets default to true, so an absent key and
+	// an explicit false must be told apart here too.
+	var lint struct {
+		Lint struct {
+			Enabled    *bool    `yaml:"enabled"`
+			Tools      []string `yaml:"tools"`
+			Skip       []string `yaml:"skip"`
+			Secrets    *bool    `yaml:"secrets"`
+			TimeoutSec *int     `yaml:"timeout_sec"`
+			MaxPerUnit *int     `yaml:"max_per_unit"`
+		} `yaml:"lint"`
+	}
+	if err := yaml.Unmarshal(b, &lint); err != nil {
+		return p, err
+	}
+	known := map[string]bool{}
+	for _, n := range KnownLinters() {
+		known[n] = true
+	}
+	for _, n := range append(append([]string{}, lint.Lint.Tools...), lint.Lint.Skip...) {
+		if !known[n] {
+			return p, fmt.Errorf("lint: unknown linter %q (want one of %s)", n, strings.Join(KnownLinters(), ", "))
+		}
+	}
+	if lint.Lint.Enabled != nil {
+		p.Lint.Enabled = *lint.Lint.Enabled
+	}
+	if lint.Lint.Secrets != nil {
+		p.Lint.Secrets = *lint.Lint.Secrets
+	}
+	p.Lint.Tools, p.Lint.Skip = lint.Lint.Tools, lint.Lint.Skip
+	if n := lint.Lint.TimeoutSec; n != nil {
+		if *n <= 0 {
+			return p, fmt.Errorf("lint.timeout_sec: want > 0, got %d", *n)
+		}
+		p.Lint.TimeoutSec = *n
+	}
+	if n := lint.Lint.MaxPerUnit; n != nil {
+		if *n < 0 {
+			return p, fmt.Errorf("lint.max_per_unit: want >= 0 (0: no cap), got %d", *n)
+		}
+		p.Lint.MaxPerUnit = *n
 	}
 
 	// Tiers: fields the file sets override the defaults, the rest stay,

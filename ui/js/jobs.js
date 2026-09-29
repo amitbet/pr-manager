@@ -48,6 +48,7 @@ export function stageText(j) {
     fetch: "fetching PR and diffing",
     inspect: "reading the local changes",
     comments: j.total ? `checking review comments ${j.done}/${j.total}` : "loading review comments",
+    lint: "running static analysis over the changed lines",
     list: "listing the org's repos",
     clone: j.kind === "index" ? `cloning ${j.done + 1}/${j.total}` : `${repo} is not in the code map: cloning it into the workspace…`,
     codemap: j.kind === "index" ? "building the code map" : `${repo} is not in the code map: building it before triage (a few minutes the first time)…`,

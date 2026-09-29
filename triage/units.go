@@ -48,6 +48,10 @@ type Unit struct {
 	// Threads are the open review threads on GitHub that fall in this
 	// unit (see Thread). They don't change its bucket.
 	Threads []Thread `json:"threads,omitempty"`
+	// Lint is what static analysis reported on the lines this unit adds
+	// (see Linter). Deterministic, so it is shown whether or not the
+	// review agrees with it.
+	Lint []LintFinding `json:"lint,omitempty"`
 	// Score is how the bucket was picked (nil for units never classified).
 	Score *Score `json:"score,omitempty"`
 }

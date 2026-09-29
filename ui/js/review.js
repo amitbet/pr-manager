@@ -6,6 +6,7 @@ import { unitRows, diffTable, expandAllButton } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
 import { fixAllHTML, issueFixButton } from "./fix.js";
 import { threadsHTML, threadsChip, raisedBy, raisedChip } from "./threads.js";
+import { lintHTML, lintChip } from "./lint.js";
 import { trText, trShown, trToggle, trDir } from "./entext.js";
 import { showStep } from "./walkthrough.js";
 import { overviewHTML } from "./overview.js";
@@ -15,6 +16,7 @@ const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
 function issuesHTML(f, u) {
   if (!u.issues?.length) return u.reviewed ? `<p><span class="lbl">Review</span>No issues found.</p>` : "";
   const items = u.issues.map((is, i) => {
+    if (is.dismissed) return `<li class="dismissed"><span class="dz unknown">dismissed</span><b>${esc(is.title)}</b>${is.dismissed_why ? `<span class="idetail">${esc(is.dismissed_why)}</span>` : ""}</li>`;
     const dup = raisedBy(u, i);
     const draft = dup ? raisedChip(dup) : issueDraftButton(f, u, i);
     const fix = issueFixButton(u, i);
@@ -33,6 +35,7 @@ function detailsHTML(f, u) {
   const main = [];
   if (u.summary) main.push(`<p><span class="lbl">Summary</span><span class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</span></p>`);
   main.push(issuesHTML(f, u));
+  main.push(lintHTML(u));
   main.push(threadsHTML(u));
   if (u.focus?.length) main.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul>`);
   const rest = [movesHTML(u), d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" ${trDir(u, "reason", d.reason)}>${trText(u, "reason", d.reason)}</span></p>` : "", scoresHTML(u), classificationHTML(d)];
@@ -56,7 +59,7 @@ function unitHTML(f, u) {
         <span class="sym">${esc(u.symbol || "(file)")}</span>
         ${impactPill(u.impact)}${likelihoodPill(u.likelihood)}
         ${attentionPill(u)}
-        ${decisionChips(u)}${threadsChip(u)}
+        ${decisionChips(u)}${lintChip(u)}${threadsChip(u)}
         <span class="src">${esc(d.source)}${d.confidence ? ` · ${(d.confidence * 100).toFixed(0)}%` : ""}</span>
       </div>
       <div class="headline"><span class="text tr" ${trDir(u, "headline", headline(u))} title="${esc(headline(u))}">${trShown(u, "headline", headline(u))}</span>${trToggle(u, "headline", headline(u))}${S.result.translating ? `<span class="tr-chip">translating…</span>` : ""}

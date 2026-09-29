@@ -22,6 +22,8 @@ import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
 import { actions as enActions } from "./entext.js";
 import { loadOverview, actions as overviewActions } from "./overview.js";
+import { issuesHTML, actions as issueActions } from "./issues.js";
+import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeydown } from "./sequence.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -29,12 +31,29 @@ import * as budget from "./budget.js";
 // The Review tab is the walkthrough or the classic list of every unit.
 const TABS = [
   { id: "review", label: "Review", html: () => S.mode === "classic" ? reviewHTML() : walkHTML() },
+  { id: "issues", label: "Issues", html: issuesHTML, count: openClaims },
+  { id: "sequence", label: "Sequence", html: sequenceHTML, mount: loadSequence },
   { id: "map", label: "Code map", html: treemapHTML, mount: renderTreemap },
 ];
+
+// openClaims is the badge on the Issues tab: what is still standing
+// against this PR, review issues, lint findings and confirmed comments
+// alike, with what has been dismissed or fixed left out.
+function openClaims() {
+  let n = 0;
+  for (const f of S.result.files) {
+    for (const u of f.units || []) {
+      n += (u.issues || []).filter((i) => !i.dismissed).length;
+      n += (u.lint || []).filter((x) => !x.dismissed).length;
+      n += (u.threads || []).filter((t) => !t.fixed && t.status === "valid" && t.duplicate_of == null).length;
+    }
+  }
+  return n;
+}
 const MODES = [["walk", "Walkthrough"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...seqActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
   "create-pr": async (el) => {
@@ -76,8 +95,10 @@ const translateBanner = (r) => r.translating
   ? `<div class="tr-banner" role="status"><span class="spinner"></span>Translating to ${esc(r.translating)}… the English below is replaced when it's ready.</div>`
   : r.translate_error ? `<div class="tr-banner error" role="status">${esc(r.translate_error)}</div>` : "";
 
-const tabsHTML = () => `<div class="tabs">${TABS.map((t) =>
-  `<button class="${S.tab === t.id ? "on" : ""}" data-act="tab" data-tab="${t.id}">${t.label}</button>`).join("")}
+const tabsHTML = () => `<div class="tabs">${TABS.map((t) => {
+    const n = t.count?.() || 0;
+    return `<button class="${S.tab === t.id ? "on" : ""}" data-act="tab" data-tab="${t.id}">${t.label}${n ? `<span class="tab-count">${n}</span>` : ""}</button>`;
+  }).join("")}
   <span class="spacer"></span>${S.tab === "review" ? `<span class="seg mode" title="How to review">${MODES.map(([m, l]) =>
     `<button class="${S.mode === m ? "on" : ""}" data-act="mode" data-mode="${m}">${l}</button>`).join("")}</span>` : ""}</div>`;
 
@@ -98,7 +119,7 @@ async function showKey(key) {
   budget.apply(r, S.cfg);
   r.overview_loading = !r.overview; // loadOverview below writes it
   S.result = r;
-  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null });
+  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false });
   S.tm.zoom = [];
   loadProgress();
   S.drafts = await api(`${prBase()}/drafts`).catch(() => []);
@@ -121,6 +142,13 @@ async function openResult(key, src) {
   else await showKey(key);
 }
 
+$("#main").addEventListener("submit", async (e) => {
+  const el = e.target.closest("[data-act]");
+  const handler = el && actions[el.dataset.act];
+  if (!handler) return;
+  e.preventDefault();
+  if ((await handler(el, e)) !== false) render();
+});
 $("#main").addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
   const handler = el && actions[el.dataset.act];
@@ -130,6 +158,7 @@ $("#main").addEventListener("click", async (e) => {
 });
 $("#main").addEventListener("keydown", composerKeydown);
 document.addEventListener("keydown", walkKeydown);
+document.addEventListener("keydown", seqKeydown);
 
 (async () => {
   S.cfg = await api("/api/config").catch(() => null);

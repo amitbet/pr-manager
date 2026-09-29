@@ -11,10 +11,13 @@ import (
 )
 
 type Pipeline struct {
-	Presorter   *Presorter
-	Classifier  Classifier  // nil: every unit left after presort is "human"
-	Summarizer  *Summarizer // nil: no summaries, review notes or issues
-	CodeMap     *CodeMap    // nil: no impact scores, no file history and no tier moves
+	Presorter  *Presorter
+	Classifier Classifier  // nil: every unit left after presort is "human"
+	Summarizer *Summarizer // nil: no summaries, review notes or issues
+	CodeMap    *CodeMap    // nil: no impact scores, no file history and no tier moves
+	// Lint runs the repository's static analysis over the lines the PR
+	// adds, before anything is scored (nil or disabled: no findings).
+	Lint        *Linter
 	Concurrency int
 	// ReviewConcurrency limits the summarize stage; 0 uses Concurrency.
 	// Review calls are slower (bigger model, repo tools), so they get
@@ -72,6 +75,35 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	units := BuildUnits(src.Files, src.Content, p.Presorter.Policy.MaxUnitChars)
 	rest := p.Presorter.Presort(units, src)
 	setRelated(units)
+
+	// The repository at the PR head is checked out once and shared: the
+	// linters read it, and a reviewer whose provider supports tools reads
+	// it too. It is removed when the run ends.
+	sum := p.summarizer()
+	wantTools := sum != nil && sum.Tools && llm.SupportsWorkspace(sum.LLM)
+	var ws *llm.Workspace
+	if p.Lint.on() || wantTools {
+		w, cleanup, err := reviewWorkspace(src)
+		defer cleanup()
+		if err != nil && p.Warn != nil {
+			p.Warn("repository at the PR head unavailable: " + err.Error())
+		}
+		ws = w
+	}
+	if p.Lint.on() {
+		if p.Lint.Warn == nil {
+			p.Lint.Warn = p.Warn
+		}
+		dir := ""
+		if ws != nil {
+			dir = ws.Dir
+		}
+		if p.Progress != nil {
+			p.Progress("lint", 0, 0)
+		}
+		p.Lint.Run(ctx, dir, src, units)
+	}
+
 	if p.CodeMap != nil {
 		files := map[string]FileDiff{}
 		for _, f := range src.Files {
@@ -100,16 +132,10 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		tiers.prior(u, maxChars)
 	}
 
-	if p.Summarizer != nil {
+	if sum != nil {
 		setReviewContext(units, src.BaseContent, p.Presorter.Policy.ReviewContextChars)
-		sum := *p.Summarizer
-		if sum.Tools && llm.SupportsWorkspace(sum.LLM) {
+		if wantTools {
 			// Without a workspace the review still runs, just without tools.
-			ws, cleanup, err := reviewWorkspace(src)
-			if err != nil && p.Warn != nil {
-				p.Warn("review tools off: " + err.Error())
-			}
-			defer cleanup()
 			sum.workspace = ws
 		}
 		var toSummarize []*Unit
@@ -136,6 +162,16 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 
 	SortByBucket(units)
 	return units
+}
+
+// summarizer is a copy of p.Summarizer the run can give a workspace to,
+// so the pipeline never mutates the caller's.
+func (p *Pipeline) summarizer() *Summarizer {
+	if p.Summarizer == nil {
+		return nil
+	}
+	s := *p.Summarizer
+	return &s
 }
 
 // SortByBucket orders units human → skim → none, and by score inside

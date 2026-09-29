@@ -48,6 +48,9 @@ type PRResult struct {
 	// Overview is nil for results from before overviews, and when it
 	// could not be written; see overview.
 	Overview *triage.Overview `json:"overview,omitempty"`
+	// Sequence is the changed call flow, written the first time the
+	// Sequence tab is opened; see sequence.
+	Sequence *triage.Sequence `json:"sequence,omitempty"`
 	// Threads is when the PR's review threads were last loaded onto the
 	// units and what was left out; nil for local changes and results
 	// from before threads.
@@ -113,6 +116,10 @@ type triager struct {
 	fetcher *triage.PRFetcher
 	results string
 
+	// dismissed holds the issues people rejected, applied to every result
+	// as it loads (nil in tests that build a triager directly).
+	dismissed *dismissals
+
 	mu    sync.Mutex
 	jobs  map[string]*job
 	fixMu sync.Mutex
@@ -148,6 +155,11 @@ func newTriager(o options) (*triager, error) {
 		jobs:    map[string]*job{},
 		trLocks: map[string]*sync.Mutex{},
 	}
+	d, err := newDismissals(o)
+	if err != nil {
+		return nil, err
+	}
+	t.dismissed = d
 	return t, os.MkdirAll(t.results, 0o755)
 }
 
@@ -158,6 +170,7 @@ type jobOptions struct {
 	Summarizer    string  `json:"summarizer"`
 	SummaryModel  string  `json:"summary_model"`
 	ReviewTools   *bool   `json:"review_tools"`
+	Lint          *string `json:"lint"`
 	SummaryLang   *string `json:"summary_lang"`
 	CodeRoot      *string `json:"code_root"`
 	Org           *string `json:"org"`
@@ -183,6 +196,9 @@ func (t *triager) options(jo jobOptions) options {
 	if jo.ReviewTools != nil {
 		o.reviewTools = *jo.ReviewTools
 	}
+	if jo.Lint != nil {
+		o.lint, o.lintSet = strings.TrimSpace(*jo.Lint), true
+	}
 	if jo.SummaryLang != nil {
 		o.summaryLang = strings.TrimSpace(*jo.SummaryLang)
 	}
@@ -199,7 +215,11 @@ func (t *triager) options(jo jobOptions) options {
 }
 
 func cacheKey(ref triage.PRRef, head string, o options) string {
-	parts := []string{triage.PromptVersion, o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.summarizer, o.summaryModel, o.classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), codeMapVersion(loadCodeMap(o.codemapDir))}
+	lint := ""
+	if o.lintSet {
+		lint = o.lint
+	}
+	parts := []string{triage.PromptVersion, o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.summarizer, o.summaryModel, o.classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return fmt.Sprintf("%s__%.10s__%x", ref.FileKey(), head, h[:4])
 }
@@ -364,6 +384,10 @@ func (t *triager) Load(key string) (*PRResult, error) {
 			r.Budgets[i].LiftFloors = d.LiftFloors
 		}
 	}
+	// What a person has rejected is applied on the way out, never saved
+	// into the result: the review's claim stays on the record, and
+	// restoring one puts its unit back where the review put it.
+	t.dismissed.apply(&r)
 	return &r, nil
 }
 
@@ -520,6 +544,7 @@ func newServeHandler(o options) (http.Handler, error) {
 	static, _ := fs.Sub(uiFS, "ui")
 	mux := http.NewServeMux()
 	rv.routes(mux, t)
+	t.dismissed.routes(mux, t)
 	newUISettings(o.cache).routes(mux)
 	treemapRoute(mux, o)
 	mux.Handle("GET /", http.FileServerFS(static))
@@ -531,6 +556,8 @@ func newServeHandler(o options) (http.Handler, error) {
 			"classify_effort": d.classifyEffort, "review_effort": d.reviewEffort,
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
+			"lint":           !o.lintSet || strings.ToLower(o.lint) != "off",
+			"linters":        triage.KnownLinters(),
 			"summary_lang":   o.summaryLang,
 			"review_budget":  orDefault(o.reviewBudget, triage.DefaultBudget),
 			"recursive_fix":  true,
@@ -601,6 +628,19 @@ func newServeHandler(o options) (http.Handler, error) {
 			return
 		}
 		writeJSON(w, 200, ov)
+	})
+	mux.HandleFunc("POST /api/results/{key}/sequence", func(w http.ResponseWriter, r *http.Request) {
+		var jo jobOptions
+		if err := json.NewDecoder(r.Body).Decode(&jo); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		sq, err := t.sequence(r.Context(), r.PathValue("key"), jo)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, sq)
 	})
 	mux.HandleFunc("POST /api/triage", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

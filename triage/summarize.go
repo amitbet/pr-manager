@@ -112,7 +112,7 @@ type Summarizer struct {
 // code-map context, and what triage decided.
 func (s *Summarizer) prompt(u *Unit, triage string) string {
 	p, _ := unitDiff(u, s.Policy.MaxUnitChars)
-	return p + u.ReviewContext + reviewContext(u) + "\n" + triage
+	return p + u.ReviewContext + reviewContext(u) + lintContext(u) + "\n" + triage
 }
 
 // system adds the tools instructions. The review is always in English;
@@ -254,8 +254,8 @@ func (s *Summarizer) groupPrompt(g *ReviewGroup) string {
 	fmt.Fprintf(&sb, "Review these %d related change units.\n", len(g.Members))
 	for _, u := range g.Members {
 		p, _ := unitDiff(u, s.Policy.MaxUnitChars)
-		fmt.Fprintf(&sb, "\n#### unit id: %s\n%s%sTriage said: %s (%s)\n",
-			u.ID, p, reviewContext(u), u.Decision.Bucket, u.Decision.Reason)
+		fmt.Fprintf(&sb, "\n#### unit id: %s\n%s%s%sTriage said: %s (%s)\n",
+			u.ID, p, reviewContext(u), lintContext(u), u.Decision.Bucket, u.Decision.Reason)
 	}
 	sb.WriteString(g.Context)
 	return sb.String()

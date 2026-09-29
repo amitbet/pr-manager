@@ -18,7 +18,12 @@ export const S = {
   files: {},              // "head:path" -> lines
   drafts: [],
   composer: null,         // {path, side, line, id?, body}
-  tab: "review",          // review | map
+  tab: "review",          // review | issues | sequence | map
+  issueKinds: new Set(),  // claim kinds hidden on the Issues tab
+  dismissing: null,       // {key, reason, busy?, error?} while the dismiss form is open
+  showDismissed: false,
+  seqCopied: false,
+  seqText: false,         // show the Mermaid text (no clipboard access)
   mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | classic
   wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified" },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both

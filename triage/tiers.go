@@ -22,6 +22,29 @@ type Issue struct {
 	// Capped is why the severity was lowered from Claimed, the reviewer's own.
 	Claimed string `json:"claimed_severity,omitempty"`
 	Capped  string `json:"capped,omitempty"`
+	// Dismissed is set when a person rejected the issue. A dismissed issue
+	// is kept and shown, but it stops counting: not in the unit's
+	// attention, not in what a clean review is worth, and not in the pin a
+	// medium-or-worse issue puts on the unit.
+	Dismissed    bool   `json:"dismissed,omitempty"`
+	DismissedWhy string `json:"dismissed_why,omitempty"`
+	// DismissKey is the stored record to delete to restore it; set only
+	// while the issue is dismissed.
+	DismissKey string `json:"dismiss_key,omitempty"`
+}
+
+// Live reports whether the issue still counts toward a unit's bucket.
+func (is Issue) Live() bool { return !is.Dismissed }
+
+// liveIssues drops the ones a person dismissed.
+func liveIssues(issues []Issue) []Issue {
+	out := issues[:0:0]
+	for _, is := range issues {
+		if is.Live() {
+			out = append(out, is)
+		}
+	}
+	return out
 }
 
 // capTo lowers the severity to sev, keeping the first claim and reason.
@@ -41,6 +64,7 @@ var severityWeight = map[string]int{"low": 15, "medium": 45, "high": 75, "critic
 // attentionScore turns review findings into 0-100: the worst issue, plus 5
 // for each further issue. No issues is 0.
 func attentionScore(issues []Issue) int {
+	issues = liveIssues(issues)
 	worst := 0
 	for _, is := range issues {
 		worst = max(worst, severityWeight[is.Severity])
@@ -160,8 +184,12 @@ type Score struct {
 	// Classified is the classifier's bucket (after its confidence thresholds).
 	Classified Bucket `json:"classified,omitempty"`
 	// Pin fixes the bucket whatever the budget; Floor is the lowest it can go.
-	Pin      Bucket `json:"pin,omitempty"`
-	PinWhy   string `json:"pin_why,omitempty"`
+	Pin    Bucket `json:"pin,omitempty"`
+	PinWhy string `json:"pin_why,omitempty"`
+	// PinIssue: Pin came from an issue the review found, so dismissing
+	// that issue can lift it (see ApplyDismissals). A pin from a failed
+	// review is not one of these and never lifts.
+	PinIssue bool   `json:"pin_issue,omitempty"`
 	Floor    Bucket `json:"floor,omitempty"`
 	FloorWhy string `json:"floor_why,omitempty"`
 	// CommentPin is the pin an open, confirmed review comment of medium
@@ -307,6 +335,7 @@ func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {
 	u.Attention = attentionScore(u.Issues)
 	worst := worstIssue(u.Issues)
 	why := ""
+	fromIssue := false
 	raised := u.Decision.Bucket != prev && len(u.Decision.Escalated) > 0
 	switch {
 	case raised: // the review call failed
@@ -315,19 +344,52 @@ func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {
 		why = "review failed or gave no answer"
 	case severityWeight[worst.Severity] >= severityWeight["medium"]:
 		why = fmt.Sprintf("review found a %s issue: %s", worst.Severity, worst.Title)
+		fromIssue = true
 	}
 	if why != "" && s.Pin != BucketHuman {
-		s.Pin, s.PinWhy = BucketHuman, why
+		s.Pin, s.PinWhy, s.PinIssue = BucketHuman, why, fromIssue
 	}
-	switch {
-	case !u.Reviewed:
-		s.Clean = 0
-	case len(u.Issues) == 0:
-		s.Clean = 1
-	case worst.Severity == "low":
-		s.Clean = 0.5
-	}
+	s.Clean = cleanShare(u)
 	tp.place(u)
+}
+
+// cleanShare is how much of the budget's trust the review earned: all of
+// it when nothing was found, half when only low issues were, none when a
+// real issue stands or the review never answered. Dismissed issues do not
+// count, so dismissing the last one earns the unit its discount back.
+func cleanShare(u *Unit, extra ...Issue) float64 {
+	if !u.Reviewed {
+		return 0
+	}
+	all := append(liveIssues(u.Issues), extra...)
+	switch {
+	case len(all) == 0:
+		return 1
+	case worstIssue(all).Severity == "low":
+		return 0.5
+	}
+	return 0
+}
+
+// ApplyDismissals re-places u after its issues were dismissed or restored.
+// It redoes what the review decided from the issues that still count: the
+// unit's attention, the discount a clean review earns, and the pin a
+// medium-or-worse issue put on it. A pin from a failed review stays, and
+// so does the likelihood score, which was measured when the PR was
+// triaged and is not a judgement anyone dismissed.
+func (tp TierPolicy) ApplyDismissals(u *Unit) {
+	s := u.Score
+	if s == nil {
+		return
+	}
+	if s.PinIssue {
+		if w := worstIssue(u.Issues); severityWeight[w.Severity] >= severityWeight["medium"] {
+			s.Pin, s.PinWhy = BucketHuman, fmt.Sprintf("review found a %s issue: %s", w.Severity, w.Title)
+		} else {
+			s.Pin, s.PinWhy = "", ""
+		}
+	}
+	tp.ApplyThreads(u) // attention, clean and the comment pin, from what is left
 }
 
 // ApplyThreads counts u's open, confirmed review comments as if the
@@ -353,7 +415,7 @@ func (tp TierPolicy) ApplyThreads(u *Unit) {
 			worst = t
 		}
 	}
-	all := append(append([]Issue(nil), u.Issues...), from...)
+	all := append(liveIssues(u.Issues), from...)
 	if u.Reviewed || len(from) > 0 {
 		u.Attention = attentionScore(all)
 	}
@@ -362,16 +424,7 @@ func (tp TierPolicy) ApplyThreads(u *Unit) {
 		s.CommentPin = BucketHuman
 		s.CommentPinWhy = fmt.Sprintf("confirmed %s review comment by @%s: %s", worst.Issue.Severity, worst.Author, worst.Issue.Title)
 	}
-	if u.Reviewed {
-		switch w := worstIssue(all); {
-		case len(all) == 0:
-			s.Clean = 1
-		case w.Severity == "low":
-			s.Clean = 0.5
-		default:
-			s.Clean = 0
-		}
-	}
+	s.Clean = cleanShare(u, from...)
 	tp.place(u)
 }
 
@@ -425,10 +478,12 @@ func Rebucket(units []*Unit, tp TierPolicy, budget string) error {
 	return nil
 }
 
+// worstIssue is the most severe issue that still counts; a dismissed one
+// never places a unit.
 func worstIssue(issues []Issue) Issue {
 	var w Issue
 	for _, is := range issues {
-		if severityWeight[is.Severity] > severityWeight[w.Severity] {
+		if is.Live() && severityWeight[is.Severity] > severityWeight[w.Severity] {
 			w = is
 		}
 	}

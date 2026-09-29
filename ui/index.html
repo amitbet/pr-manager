@@ -9,6 +9,8 @@
 <link rel="stylesheet" href="css/diff.css">
 <link rel="stylesheet" href="css/walkthrough.css">
 <link rel="stylesheet" href="css/overview.css">
+<link rel="stylesheet" href="css/issues.css">
+<link rel="stylesheet" href="css/sequence.css">
 <link rel="stylesheet" href="css/treemap.css">
 <link rel="stylesheet" href="css/panel.css">
 <link rel="stylesheet" href="css/activity.css">
@@ -83,6 +85,11 @@
       <h4>Review tools</h4>
       <label class="check"><input type="checkbox" id="review_tools"> let the reviewer read the repo at the PR head and the Go module cache</label>
       <p class="hint">codex and claude-code summarizers only. Slower, but catches claims about code outside the diff. Applies to the next triage.</p>
+    </section>
+    <section>
+      <h4>Static analysis</h4>
+      <label class="check"><input type="checkbox" id="lint"> run the repository's linters over the lines the PR adds</label>
+      <p class="hint">A tool runs only when the repository has a config for it (<code>.golangci.yml</code>, <code>eslint.config.js</code>, <code>ruff.toml</code>) and it is installed; shellcheck runs on changed shell scripts. The built-in credential scan needs nothing installed and runs whenever this is on. Findings go to the reviewer as facts, raise the unit's likelihood, and show up on the Issues tab, where you can dismiss one. Applies to the next triage.</p>
     </section>
     <section>
       <h4>Fix issues</h4>

@@ -1,0 +1,31 @@
+/* The Sequence tab. Drawn here rather than by a diagram library, so a
+   changed step can be a button that opens the change behind it. */
+.seq { margin-top: 10px; }
+.seq-head { display: flex; align-items: center; gap: 8px; }
+.seq-head h3 { margin: 0; font-size: 15px; }
+.seq-head .spacer { flex: 1; }
+.seq-note-line { margin: 6px 0; }
+.seq-scroll { overflow-x: auto; padding: 4px 0 10px; }
+.seq-svg { display: block; font: 12px system-ui, sans-serif; }
+
+.seq-life { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 4; }
+.seq-actor rect { fill: var(--panel, rgba(127, 127, 127, .10)); stroke: var(--border); }
+.seq-actor text { fill: var(--fg); font-weight: 600; }
+
+.seq-step text { fill: var(--muted); }
+.seq-arrow { stroke: var(--muted); stroke-width: 1.3; fill: none; }
+.seq-step .seq-arrow { marker-end: url(#seq-head); }
+.seq-svg marker path { fill: var(--muted); }
+.seq-step.return .seq-arrow { stroke-dasharray: 4 3; }
+.seq-note { fill: var(--panel, rgba(127, 127, 127, .10)); stroke: var(--border); }
+
+.seq-band { fill: rgba(255, 196, 0, .14); }
+.seq-step.changed text { fill: var(--fg); font-weight: 600; }
+.seq-step.changed .seq-arrow { stroke: var(--fg); stroke-width: 1.8; }
+.seq-step.linked { cursor: pointer; }
+.seq-step.linked:hover .seq-band, .seq-step.linked:focus .seq-band { fill: rgba(255, 196, 0, .28); }
+.seq-step.linked:hover text { text-decoration: underline; }
+.seq-step.linked:focus { outline: none; }
+.seq-step.linked:focus .seq-arrow { stroke: var(--accent, #58a); }
+
+.seq-mermaid { width: 100%; margin-top: 10px; font-family: ui-monospace, monospace; font-size: 12px; }

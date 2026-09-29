@@ -8,6 +8,7 @@ import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions 
 import { issueDraftButton } from "./comments.js";
 import { issueFixButton } from "./fix.js";
 import { threadsHTML, raisedBy, raisedChip } from "./threads.js";
+import { lintHTML } from "./lint.js";
 import { openPanel } from "./panel.js";
 import { overviewHTML, hasOverview } from "./overview.js";
 
@@ -120,12 +121,15 @@ function markAndNext() {
   window.scrollTo({ top: 0 });
 }
 
-const worstFirst = (issues) => [...issues].sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
+// Dismissed issues are left out here: the walkthrough is the reading
+// order, and a claim a person rejected is not part of it. It stays on the
+// Issues tab, where it can be restored.
+const worstFirst = (issues) => issues.filter((i) => !i.dismissed).sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
 
 function rankWhy(u) {
   const p = [LABEL[u.decision.bucket]];
-  const n = u.issues?.length || 0;
-  if (n) p.push(`${n} issue${n > 1 ? "s" : ""}, worst ${worstFirst(u.issues)[0].severity}`);
+  const live = worstFirst(u.issues || []);
+  if (live.length) p.push(`${live.length} issue${live.length > 1 ? "s" : ""}, worst ${live[0].severity}`);
   if (u.reviewed) p.push(`attention ${u.attention}`);
   if (u.impact && u.impact.level !== "unknown") p.push(`impact ${u.impact.score}`);
   if (u.likelihood) p.push(`likelihood ${u.likelihood.score}${u.likelihood.factors?.length ? ` (${u.likelihood.factors[0].detail})` : ""}`);
@@ -149,11 +153,13 @@ function issueCard(f, u, is, shown) {
 
 function explainHTML(f, u, shown) {
   const d = u.decision, parts = [];
-  if (u.issues?.length) {
-    parts.push(`<div class="wz-sec"><h4>Issues found in review</h4>${worstFirst(u.issues).map((is) => issueCard(f, u, is, shown)).join("")}</div>`);
+  const live = worstFirst(u.issues || []);
+  if (live.length) {
+    parts.push(`<div class="wz-sec"><h4>Issues found in review</h4>${live.map((is) => issueCard(f, u, is, shown)).join("")}</div>`);
   } else if (u.reviewed) {
     parts.push(`<div class="wz-sec"><h4>Review</h4><span class="wz-clean">✓ No issues found</span></div>`);
   }
+  parts.push(lintHTML(u, "wz"));
   parts.push(threadsHTML(u, "wz"));
   if (u.summary) parts.push(`<div class="wz-sec"><h4>${d.bucket === "human" ? "Review notes" : "Summary"}</h4><p class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</p></div>`);
   if (u.focus?.length) parts.push(`<div class="wz-sec"><h4>What to check</h4><ul class="wz-check">${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul></div>`);

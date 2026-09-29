@@ -22,6 +22,18 @@ grouping:
                       # picked by experiments/grouping-tuning; without the
                       # member cap a chain of links can pull 20+ units into
                       # one review, and those reviews report less.
+# Static analysis over the lines the PR adds (triage/lint.go). Findings go
+# to the reviewer as facts it is told not to repeat, raise the unit's
+# likelihood, and appear on the Issues tab where they can be dismissed.
+lint:
+  enabled: true
+  # Empty: run every known linter the repo is configured for and that is
+  # installed. Naming tools runs exactly those, config or not.
+  # tools: [golangci-lint, eslint, ruff, shellcheck]
+  # skip: [eslint]
+  secrets: true       # built-in credential scan; needs nothing installed
+  timeout_sec: 120    # per tool
+  max_per_unit: 10    # findings carried into one unit's prompt (0: no cap)
 # Buckets come from one score per unit (see README, Tiers):
 #   prior = sqrt(impact x likelihood) x change-kind weight
 #   score = max(review attention, prior x (1 - trust)) after a clean review

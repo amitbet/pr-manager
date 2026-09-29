@@ -39,6 +39,7 @@ type LikelihoodWeights struct {
 	Newcomer   Points `json:"newcomer" yaml:"newcomer"`       // 1 when the author has few commits in the repo
 	CoChange   Points `json:"cochange" yaml:"cochange"`       // per usual partner file the PR leaves alone
 	TestGap    Points `json:"test_gap" yaml:"test_gap"`       // 1 when code changed and no test next to it did
+	Lint       Points `json:"lint" yaml:"lint"`               // per static-analysis finding on a line the change adds
 	Diffusion  Points `json:"diffusion" yaml:"diffusion"`     // per directory the PR touches
 	FixPR      Points `json:"fix_pr" yaml:"fix_pr"`           // 1 when the PR is itself a bug fix
 
@@ -62,6 +63,7 @@ func DefaultLikelihoodWeights() LikelihoodWeights {
 		Newcomer:   Points{Per: 6, Max: 6},
 		CoChange:   Points{Per: 5, Max: 10},
 		TestGap:    Points{Per: 6, Max: 6},
+		Lint:       Points{Per: 4, Max: 12},
 		Diffusion:  Points{Per: 1, From: 3, Max: 6},
 		FixPR:      Points{Per: 4, Max: 4},
 
