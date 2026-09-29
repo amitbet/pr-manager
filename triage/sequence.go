@@ -277,7 +277,7 @@ func (sq *Sequence) Mermaid() string {
 		fmt.Fprintf(&b, "    autonumber\n    %%%% %s\n", mermaidSafe(sq.Title))
 	}
 	for _, a := range sq.Participants {
-		fmt.Fprintf(&b, "    participant %s as %s\n", a.ID, mermaidSafe(a.Label))
+		fmt.Fprintf(&b, "    participant %s as %s\n", mermaidID(a.ID), mermaidSafe(a.Label))
 	}
 	open := false
 	for _, s := range sq.Steps {
@@ -295,17 +295,34 @@ func (sq *Sequence) Mermaid() string {
 		}
 		switch s.Kind {
 		case "note":
-			fmt.Fprintf(&b, "%sNote over %s: %s\n", indent, s.From, mermaidSafe(s.Text))
+			fmt.Fprintf(&b, "%sNote over %s: %s\n", indent, mermaidID(s.From), mermaidSafe(s.Text))
 		case "return":
-			fmt.Fprintf(&b, "%s%s-->>%s: %s\n", indent, s.From, s.To, mermaidSafe(s.Text))
+			fmt.Fprintf(&b, "%s%s-->>%s: %s\n", indent, mermaidID(s.From), mermaidID(s.To), mermaidSafe(s.Text))
 		default:
-			fmt.Fprintf(&b, "%s%s->>%s: %s\n", indent, s.From, s.To, mermaidSafe(s.Text))
+			fmt.Fprintf(&b, "%s%s->>%s: %s\n", indent, mermaidID(s.From), mermaidID(s.To), mermaidSafe(s.Text))
 		}
 	}
 	if open {
 		b.WriteString("    end\n")
 	}
 	return b.String()
+}
+
+// mermaidKeywords are the words Mermaid's sequence grammar reads as its
+// own, so a participant id that is one breaks the copied text.
+var mermaidKeywords = map[string]bool{
+	"end": true, "loop": true, "alt": true, "else": true, "opt": true, "par": true, "and": true,
+	"critical": true, "break": true, "rect": true, "note": true, "over": true, "box": true,
+	"participant": true, "actor": true, "activate": true, "deactivate": true, "autonumber": true,
+	"create": true, "destroy": true, "title": true, "left": true, "right": true, "of": true, "links": true, "link": true,
+}
+
+// mermaidID is a participant id Mermaid reads as a name.
+func mermaidID(id string) string {
+	if mermaidKeywords[strings.ToLower(id)] {
+		return "p_" + id
+	}
+	return id
 }
 
 // mermaidSafe removes the characters that end a Mermaid statement early.

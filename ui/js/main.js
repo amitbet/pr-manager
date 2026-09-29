@@ -176,7 +176,8 @@ $("#main").addEventListener("submit", async (e) => {
 $("#main").addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
   const handler = el && actions[el.dataset.act];
-  if (!handler) return;
+  // A form's action runs on submit (above), not on a click inside it.
+  if (!handler || el.tagName === "FORM") return;
   syncComposer();
   if ((await handler(el, e)) !== false) render();
 });

@@ -164,8 +164,8 @@ function merge(fresh) {
     const n = by.get(u.id);
     if (!n) continue;
     Object.assign(u, { decision: n.decision, score: n.score, attention: n.attention });
-    (u.issues || []).forEach((is, i) => Object.assign(is, { dismissed: n.issues?.[i]?.dismissed, dismissed_why: n.issues?.[i]?.dismissed_why }));
-    (u.lint || []).forEach((x, i) => Object.assign(x, { dismissed: n.lint?.[i]?.dismissed, dismissed_why: n.lint?.[i]?.dismissed_why }));
+    (u.issues || []).forEach((is, i) => Object.assign(is, { dismissed: n.issues?.[i]?.dismissed, dismissed_why: n.issues?.[i]?.dismissed_why, dismiss_key: n.issues?.[i]?.dismiss_key }));
+    (u.lint || []).forEach((x, i) => Object.assign(x, { dismissed: n.lint?.[i]?.dismissed, dismissed_why: n.lint?.[i]?.dismissed_why, dismiss_key: n.lint?.[i]?.dismiss_key }));
   }
 }
 

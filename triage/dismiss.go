@@ -30,6 +30,9 @@ func IssueKey(unit string, is Issue) string {
 	if anchor == "" {
 		anchor = normalizeWords(is.Title)
 	}
+	// The severity is left out on purpose: the critic re-rates it on every
+	// run, and a dismissal must survive the same claim coming back at a
+	// different severity. It also keeps keys saved by earlier versions valid.
 	return digest("issue", unit, anchor)
 }
 

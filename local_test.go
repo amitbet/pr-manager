@@ -229,4 +229,36 @@ func TestInspectLocalRev(t *testing.T) {
 	if name, err := checkoutRev(o.info); err != nil || name != "remote-only" || gitTest(t, repo, "rev-parse", "--abbrev-ref", "remote-only@{upstream}") != "origin/remote-only" {
 		t.Fatalf("checkout origin branch: %q, %v", name, err)
 	}
+
+	// Other remotes, tags, relative revs, full ref names, and a tag named
+	// like a branch.
+	gitTest(t, repo, "remote", "add", "upstream", remote)
+	gitTest(t, repo, "fetch", "upstream")
+	up, err := inspectLocal(context.Background(), repo+"#upstream/remote-only")
+	if err != nil || up.info.SingleCommit || up.info.HeadRef != "upstream/remote-only" {
+		t.Fatalf("upstream branch: %+v, %v", up, err)
+	}
+	gitTest(t, repo, "switch", "main")
+	gitTest(t, repo, "branch", "-D", "remote-only")
+	if name, err := checkoutRev(up.info); err != nil || name != "remote-only" || gitTest(t, repo, "rev-parse", "--abbrev-ref", "remote-only@{upstream}") != "upstream/remote-only" {
+		t.Fatalf("checkout upstream branch: %q, %v", name, err)
+	}
+	gitTest(t, repo, "tag", "-a", "v1", "-m", "v1", first)
+	if tg, err := inspectLocal(context.Background(), repo+"#v1"); err != nil || !tg.info.SingleCommit || tg.info.HeadOid != first {
+		t.Fatalf("annotated tag: %+v, %v", tg, err)
+	}
+	if rel, err := inspectLocal(context.Background(), repo+"#feature~1"); err != nil || !rel.info.SingleCommit || rel.info.HeadOid != first {
+		t.Fatalf("feature~1: %+v, %v", rel, err)
+	}
+	if full, err := inspectLocal(context.Background(), repo+"#refs/heads/feature"); err != nil || full.info.SingleCommit || full.info.HeadRef != "feature" {
+		t.Fatalf("refs/heads/feature: %+v, %v", full, err)
+	}
+	gitTest(t, repo, "tag", "feature", rootCommit)
+	if br, err := inspectLocal(context.Background(), repo+"#feature"); err != nil || br.info.SingleCommit || br.info.HeadOid == rootCommit {
+		t.Fatalf("branch shadowed by a tag: %+v, %v", br, err)
+	}
+	blob := gitTest(t, repo, "rev-parse", "HEAD:file.txt")
+	if _, err := inspectLocal(context.Background(), repo+"#"+blob); err == nil {
+		t.Fatal("a blob reviewed as a commit")
+	}
 }

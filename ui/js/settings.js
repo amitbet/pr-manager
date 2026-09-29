@@ -234,7 +234,10 @@ export function jobSettings() {
   for (const k of ["classifier", "classify_model", "summarizer", "summary_model", "translator", "translate_model"]) body[k] = $("#" + k).value.trim();
   body.review_tools = $("#review_tools").checked;
   body.classify_batch = $("#classify_batch").checked;
-  body.lint = $("#lint").checked ? "auto" : "off";
+  // Only sent when it differs from the server's, so the operator's -lint
+  // tool list and the repository's lint: policy stay in force otherwise.
+  const lint = $("#lint").checked;
+  if (lint !== (S.cfg?.lint !== false)) body.lint = lint ? "auto" : "off";
   body.incremental = $("#incremental").checked;
   // Only sent when picked, so the server's -summary-lang stays the default.
   const lang = $("#summary_lang").value;

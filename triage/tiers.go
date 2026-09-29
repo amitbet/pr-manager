@@ -189,9 +189,14 @@ type Score struct {
 	// PinIssue: Pin came from an issue the review found, so dismissing
 	// that issue can lift it (see ApplyDismissals). A pin from a failed
 	// review is not one of these and never lifts.
-	PinIssue bool   `json:"pin_issue,omitempty"`
-	Floor    Bucket `json:"floor,omitempty"`
-	FloorWhy string `json:"floor_why,omitempty"`
+	PinIssue bool `json:"pin_issue,omitempty"`
+	// PinBefore is the pin the unit had before an issue pinned it to
+	// human (a rule's or the classifier's bucket), put back when the
+	// issue is dismissed.
+	PinBefore    Bucket `json:"pin_before,omitempty"`
+	PinBeforeWhy string `json:"pin_before_why,omitempty"`
+	Floor        Bucket `json:"floor,omitempty"`
+	FloorWhy     string `json:"floor_why,omitempty"`
 	// CommentPin is the pin an open, confirmed review comment of medium
 	// or worse sets (see ApplyThreads). It is kept apart from Pin so it
 	// goes away when the comment is resolved or fixed, and it overrides
@@ -331,6 +336,9 @@ func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {
 		fromIssue = true
 	}
 	if why != "" && s.Pin != BucketHuman {
+		if fromIssue {
+			s.PinBefore, s.PinBeforeWhy = s.Pin, s.PinWhy
+		}
 		s.Pin, s.PinWhy, s.PinIssue = BucketHuman, why, fromIssue
 	}
 	s.Clean = cleanShare(u)
@@ -366,11 +374,15 @@ func (tp TierPolicy) ApplyDismissals(u *Unit) {
 	if s == nil {
 		return
 	}
+	// Results scored before PinIssue existed only say so in the reason.
+	if !s.PinIssue && s.Pin == BucketHuman && strings.HasPrefix(s.PinWhy, "review found a ") {
+		s.PinIssue = true
+	}
 	if s.PinIssue {
 		if w := worstIssue(u.Issues); severityWeight[w.Severity] >= severityWeight["medium"] {
 			s.Pin, s.PinWhy = BucketHuman, fmt.Sprintf("review found a %s issue: %s", w.Severity, w.Title)
 		} else {
-			s.Pin, s.PinWhy = "", ""
+			s.Pin, s.PinWhy = s.PinBefore, s.PinBeforeWhy
 		}
 	}
 	tp.ApplyThreads(u) // attention, clean and the comment pin, from what is left

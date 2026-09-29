@@ -1,6 +1,8 @@
 package codemap
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -45,6 +47,24 @@ type LikelihoodWeights struct {
 
 	// NewcomerCommits: fewer commits than this in the repo makes a newcomer.
 	NewcomerCommits int `json:"newcomer_commits" yaml:"newcomer_commits"`
+}
+
+// UnmarshalJSON fills in rules that a map written before they existed has
+// no key for, while keeping a rule that was explicitly set to zero.
+func (w *LikelihoodWeights) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return nil
+	}
+	type plain LikelihoodWeights
+	p := plain(*w)
+	// Maps scored before the lint rule existed have no "lint" key; a
+	// present key, even an all-zero one, overwrites this.
+	p.Lint = DefaultLikelihoodWeights().Lint
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*w = LikelihoodWeights(p)
+	return nil
 }
 
 func DefaultLikelihoodWeights() LikelihoodWeights {

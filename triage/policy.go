@@ -96,6 +96,11 @@ type LintPolicy struct {
 	// into its prompt and its row on the Issues tab (0: no cap).
 	TimeoutSec int `yaml:"timeout_sec"`
 	MaxPerUnit int `yaml:"max_per_unit"`
+	// AllowRepoCode lets the tools whose config can run code (eslint,
+	// golangci-lint) run. Only naming tools in the -lint flag sets it:
+	// .triage.yaml is read from the PR head, so a PR could otherwise turn
+	// it on for itself.
+	AllowRepoCode bool `yaml:"-"`
 }
 
 const (
@@ -123,7 +128,7 @@ func (p *LintPolicy) Set(spec string) error {
 	spec = strings.TrimSpace(spec)
 	switch strings.ToLower(spec) {
 	case "", "auto", "on", "true":
-		p.Enabled, p.Tools = true, nil
+		p.Enabled, p.Tools, p.AllowRepoCode = true, nil, false
 		return nil
 	case "off", "none", "false":
 		p.Enabled = false
@@ -144,7 +149,7 @@ func (p *LintPolicy) Set(spec string) error {
 		}
 		tools = append(tools, n)
 	}
-	p.Enabled, p.Tools = true, tools
+	p.Enabled, p.Tools, p.AllowRepoCode = true, tools, true
 	return nil
 }
 

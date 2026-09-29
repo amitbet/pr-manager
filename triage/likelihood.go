@@ -249,9 +249,9 @@ func lintFactorDetail(fs []LintFinding) string {
 			seen[l] = true
 			out = append(out, l)
 		}
-		if len(out) == 3 && len(fs) > 3 {
-			return strings.Join(out, ", ") + ", …"
-		}
+	}
+	if len(out) > 3 {
+		return strings.Join(out[:3], ", ") + ", …"
 	}
 	return strings.Join(out, ", ")
 }

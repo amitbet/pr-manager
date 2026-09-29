@@ -243,7 +243,7 @@ func fixTargets(r *PRResult, req fixRequest) []targetedIssue {
 				continue
 			}
 			for i, issue := range u.Issues {
-				if req.All || (u.ID == req.UnitID && i == req.Issue) {
+				if (req.All && !issue.Dismissed) || (u.ID == req.UnitID && i == req.Issue) {
 					out = append(out, targetedIssue{u.ID, f.Path, issue, nil})
 				}
 			}
@@ -554,29 +554,31 @@ func remaining(r *PRResult, reviewed, threads map[string]bool) []targetedIssue {
 // head. Use the PR's branch name when it is free in the cached clone; forks
 // and repeat jobs can have name collisions, so those get a local alias.
 // checkoutRev switches pr's checkout to the commit or branch it reviewed
-// and returns the branch: the branch itself, a local branch tracking an
-// origin one, or a new pr-manager/<sha> branch at a commit.
+// and returns the branch: the branch itself, a local branch tracking a
+// remote one, or a new pr-manager/<sha> branch at any other commit (a
+// tag, HEAD~2, a stash).
 func checkoutRev(pr *triage.PRInfo) (string, error) {
 	dir := pr.LocalPath
-	name := ""
-	switch {
-	case pr.SingleCommit:
+	name, remote := pr.HeadRef, ""
+	if pr.SingleCommit {
 		name = "pr-manager/" + pr.HeadOid[:10]
-	case strings.HasPrefix(pr.HeadRef, "origin/"):
-		name = strings.TrimPrefix(pr.HeadRef, "origin/")
-	default:
-		name = pr.HeadRef
+	} else if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", "refs/remotes/"+pr.HeadRef); err == nil {
+		remote = pr.HeadRef
+		_, name, _ = strings.Cut(pr.HeadRef, "/")
 	}
 	if tip, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name); err == nil {
 		if strings.TrimSpace(tip) != pr.HeadOid {
-			return "", fmt.Errorf("branch %s is at a different commit than the reviewed %s", name, pr.HeadOid[:10])
+			return "", fmt.Errorf("branch %s is at %.10s, not the reviewed %.10s; triage it again", name, strings.TrimSpace(tip), pr.HeadOid)
 		}
 		_, err = triage.Git(dir, "switch", name)
 		return name, err
 	}
 	args := []string{"switch", "-c", name, pr.HeadOid}
-	if strings.HasPrefix(pr.HeadRef, "origin/") {
-		args = []string{"switch", "-c", name, "--track", pr.HeadRef}
+	if remote != "" {
+		if tip, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "refs/remotes/"+remote); err != nil || strings.TrimSpace(tip) != pr.HeadOid {
+			return "", fmt.Errorf("%s moved since it was reviewed; triage it again", remote)
+		}
+		args = []string{"switch", "-c", name, "--track", remote}
 	}
 	_, err := triage.Git(dir, args...)
 	return name, err

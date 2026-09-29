@@ -109,7 +109,27 @@ func (d *dismissals) save(ref triage.PRRef, ds []Dismissal) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(f, b, 0o644)
+	// Written to a temporary file and renamed over the old one, so a
+	// crash mid-write never leaves a truncated file behind that blocks
+	// every later dismissal.
+	tmp, err := os.CreateTemp(filepath.Dir(f), filepath.Base(f)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(b)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), f)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // lookup is the set of dismissed keys for a repository, in the form
@@ -140,9 +160,11 @@ func (d *dismissals) apply(r *PRResult) {
 		return
 	}
 	units := resultUnits(r)
-	if triage.ApplyDismissed(units, r.tierPolicy(), d.lookup(r.PR.PRRef)) == 0 {
-		return
-	}
+	// Recounted every time, dismissals or not: ApplyDismissed re-places
+	// every unit, and a result saved after an earlier load (the overview,
+	// the sequence, a thread refresh) can carry counts from dismissals
+	// that have since been restored.
+	triage.ApplyDismissed(units, r.tierPolicy(), d.lookup(r.PR.PRRef))
 	rep := &triage.Report{Units: units}
 	r.Counts = rep.Counts()
 	r.Impact, r.Likelihood, r.Attention = rep.Scores()

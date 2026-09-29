@@ -153,6 +153,11 @@ func (l *Linter) pick(dir string, paths []string) []linter {
 			continue
 		case len(matching(paths, t.exts)) == 0:
 			continue
+		case t.repoCode && !l.Policy.AllowRepoCode:
+			if want[t.name] {
+				l.warn("%s not run: its config can run code from the PR, so only -lint %s runs it", t.name, t.name)
+			}
+			continue
 		case len(want) == 0 && len(t.config) > 0 && !configured(dir, t.config):
 			continue
 		}
@@ -226,6 +231,10 @@ type linter struct {
 	// between major versions, tried when the first writes nothing usable.
 	alt   func(paths []string) []string
 	parse func(out []byte, dir string) ([]LintFinding, error)
+	// repoCode: the tool's config can run code from the repository (a JS
+	// config, a plugin it loads). The config is the PR's, so the tool runs
+	// only when the operator named it (LintPolicy.AllowRepoCode).
+	repoCode bool
 }
 
 var knownLinters = []linter{
@@ -241,7 +250,8 @@ var knownLinters = []linter{
 		alt: func(p []string) []string {
 			return append([]string{"run", "--issues-exit-code=0", "--out-format=json"}, goPackages(p)...)
 		},
-		parse: parseGolangCI,
+		parse:    parseGolangCI,
+		repoCode: true,
 	},
 	{
 		name:   "eslint",
@@ -250,7 +260,8 @@ var knownLinters = []linter{
 		args: func(p []string) []string {
 			return append([]string{"--format", "json", "--no-error-on-unmatched-pattern"}, p...)
 		},
-		parse: parseESLint,
+		parse:    parseESLint,
+		repoCode: true,
 	},
 	{
 		name:   "ruff",

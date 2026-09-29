@@ -247,14 +247,19 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 	if strings.HasPrefix(rev, "-") {
 		return nil, fmt.Errorf("bad revision %q", rev)
 	}
-	branch := ""
-	for _, r := range []string{"refs/heads/" + rev, "refs/remotes/origin/" + rev, "refs/remotes/" + rev} {
+	// A branch is read from its own ref: git resolves a bare name to a
+	// tag before a branch, which would review the tag under the branch's
+	// name.
+	branch, ref := "", rev
+	name := strings.TrimPrefix(strings.TrimPrefix(rev, "refs/heads/"), "refs/remotes/")
+	for _, r := range []string{"refs/heads/" + name, "refs/remotes/origin/" + name, "refs/remotes/" + name} {
 		if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", r); err == nil {
 			branch = strings.TrimPrefix(strings.TrimPrefix(r, "refs/heads/"), "refs/remotes/")
+			ref = r
 			break
 		}
 	}
-	head, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	head, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	if err != nil {
 		return nil, fmt.Errorf("%s is not a commit or branch in %s", rev, dir)
 	}

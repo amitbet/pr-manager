@@ -470,9 +470,12 @@ func (t *triager) Load(key string) (*PRResult, error) {
 			r.Budgets[i].LiftFloors = d.LiftFloors
 		}
 	}
-	// What a person has rejected is applied on the way out, never saved
-	// into the result: the review's claim stays on the record, and
-	// restoring one puts its unit back where the review put it.
+	// What a person has rejected is applied every time a result loads,
+	// from the repository's record. A result saved after a load (the
+	// overview, the sequence, a thread refresh) can carry those marks,
+	// but all of it is worked out again here, pins, attention and counts
+	// included, so restoring one still puts its unit back where the
+	// review put it.
 	t.dismissed.apply(&r)
 	return &r, nil
 }
@@ -654,7 +657,7 @@ func newServeHandler(o options) (http.Handler, error) {
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
 			"classify_batch": o.classifyBatch != 1,
-			"lint":           !o.lintSet || strings.ToLower(o.lint) != "off",
+			"lint":           lintOn(o),
 			"incremental":    o.incremental,
 			"linters":        triage.KnownLinters(),
 			"summary_lang":   o.summaryLang,
@@ -1007,4 +1010,14 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// lintOn is whether a triage lints under the server's -lint flag, read the
+// way the pipeline reads it, so "none" and "false" show as off too.
+func lintOn(o options) bool {
+	p := triage.DefaultLintPolicy()
+	if o.lintSet && p.Set(o.lint) != nil {
+		return true
+	}
+	return p.Enabled
 }
