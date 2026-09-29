@@ -6,7 +6,7 @@
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
 import { $, esc, api, postJSON } from "./util.js";
-import { S, onRender, render, syncURL, prBase, repoName } from "./state.js";
+import { S, onRender, render, syncURL, prBase, repoName, localSrc } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
 import { syncComposer, focusComposer, actions as commentActions, onKeydown as composerKeydown } from "./comments.js";
@@ -16,6 +16,7 @@ import { treemapHTML, renderTreemap, actions as treemapActions } from "./treemap
 import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } from "./panel.js";
 import { initSidebar, loadList } from "./sidebar.js";
 import { initTriage, triageURL } from "./triage.js";
+import { initRevPicker } from "./revpicker.js";
 import { initSettings, refreshSettings } from "./settings.js";
 import { fixBanner, initFix, actions as fixActions } from "./fix.js";
 import { initJobs, triageJobFor, watchJob } from "./jobs.js";
@@ -98,14 +99,16 @@ function prHeadHTML(r) {
         <code>${esc(pr.base_ref)}@${esc(pr.base_oid.slice(0, 8))}</code> ← <code>${esc(pr.head_ref)}@${esc(pr.head_oid.slice(0, 8))}</code> ·
         +${pr.additions}/−${pr.deletions} · ${modelsLine(r)}${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
-      ${local ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
+      ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>, from its parent</div>` : ""}
+      ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}</div>` : ""}
+      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${impactPill(r.impact, "max impact")}${r.impact?.basis ? `<code>${esc(r.impact.basis)}</code>` : ""}
         ${likelihoodPill(r.likelihood, "max likelihood")}
         <span class="dz ${attLevel(r.attention)}" title="highest review attention">max attention ${r.attention}</span>
         ${r.codemap ? `<span title="code map build">map ${esc(r.codemap)}</span>` : ""}</div>` : ""}
       ${carriedLine(r)}
-      ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : r.local_fix_location === "branch" ? "current checkout" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}</div>` : ""}
+      ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : r.local_fix_location === "branch" ? "current checkout" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}${r.fix_from_rev ? ` · fixes issues found in <code>${esc(r.fix_from_rev)}</code>` : ""}</div>` : ""}
       ${r.fix_warning ? `<div class="tr-banner warn" role="status">${esc(r.fix_warning)}</div>` : ""}
     </div>`;
 }
@@ -145,7 +148,7 @@ async function showKey(key) {
   S.drafts = await api(`${prBase()}/drafts`).catch(() => []);
   prepare(r);
   syncURL();
-  $("#url").value = r.pr.local_path || r.pr.url;
+  $("#url").value = localSrc(r.pr) || r.pr.url;
   closePanel();
   render();
   refreshSettings();
@@ -186,6 +189,7 @@ document.addEventListener("keydown", seqKeydown);
   initSidebar(openResult);
   initPanel(showDraft);
   initTriage();
+  initRevPicker();
   initJobs(showKey, loadList);
   initFix(showKey);
   initSettings(() => { if (S.result) { budget.apply(S.result, S.cfg); render(); } }, translate);

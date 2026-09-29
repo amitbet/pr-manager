@@ -1,6 +1,6 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
 import { $, esc, api, pills } from "./util.js";
-import { S, repoName } from "./state.js";
+import { S, repoName, localSrc } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
 
@@ -35,7 +35,7 @@ export async function loadList() {
   const repos = new Map();
   for (const r of list) {
     const repo = repoName(r.pr);
-    const identity = r.local_path ? `${r.local_path}#${r.head_ref}` : `${repo}#${r.pr.number}`;
+    const identity = r.local_path ? `${r.local_path}#${r.rev ? `rev:${r.rev}` : r.head_ref}` : `${repo}#${r.pr.number}`;
     if (seen.has(identity)) continue;
     seen.add(identity);
     if (!repos.has(repo)) repos.set(repo, []);
@@ -54,7 +54,7 @@ export async function loadList() {
         <span class="rc" title="${prs.length} results, ${human} units need human review">${prs.length}</span>
       </button>
       <div class="repo-prs">${prs.map((r) => `
-        <a class="pr-item ${S.result?.key === r.key ? "active" : ""}" data-key="${esc(r.key)}" data-src="${esc(r.local_path || `https://${r.pr.host || "github.com"}/${r.pr.owner}/${r.pr.repo}/pull/${r.pr.number}`)}">
+        <a class="pr-item ${S.result?.key === r.key ? "active" : ""}" data-key="${esc(r.key)}" data-src="${esc(localSrc(r) || `https://${r.pr.host || "github.com"}/${r.pr.owner}/${r.pr.repo}/pull/${r.pr.number}`)}">
           <span class="t">${r.local_path ? esc(r.head_ref) : `#${r.pr.number}`} ${esc(r.title)}</span>
           <span class="m">${pills(r.counts)} ${r.impact ? impactPill(r.impact, "imp") : ""}${r.likelihood ? likelihoodPill(r.likelihood, "lik") : ""} <span>${esc(r.state.toLowerCase())}</span> <span title="${esc(r.classifier)}">· ${esc(r.classifier.split("/").pop())}</span></span>
         </a>`).join("")}</div>

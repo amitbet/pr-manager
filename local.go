@@ -71,39 +71,35 @@ type localSnapshot struct {
 	raw  string
 }
 
+// splitRev splits "path#rev" into the checkout and the commit or branch
+// to review in it. A path that exists as typed has no rev, so a directory
+// with # in its name still opens.
+func splitRev(path string) (string, string) {
+	i := strings.LastIndex(path, "#")
+	if i < 0 {
+		return path, ""
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path, ""
+	}
+	return path[:i], strings.TrimSpace(path[i+1:])
+}
+
+// inspectLocal reads a checkout's change for triage. A bare path is the
+// checked-out branch from its merge base, working tree included;
+// path#rev is a commit on its own (from its first parent) or a branch
+// from its merge base, as committed.
 func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("enter a repository path")
 	}
-	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(os.PathSeparator)) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		if path == "~" {
-			path = home
-		} else {
-			path = filepath.Join(home, path[2:])
-		}
-	}
-	path, err := filepath.Abs(path)
+	path, rev := splitRev(path)
+	dir, err := checkoutRoot(path)
 	if err != nil {
 		return nil, err
 	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return nil, err
-	}
-	root, err := triage.Git(path, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, fmt.Errorf("%s is not a Git checkout: %w", path, err)
-	}
-	dir, err := filepath.EvalSymlinks(filepath.FromSlash(strings.TrimSpace(root)))
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(dir, path) {
-		return nil, fmt.Errorf("choose the repository root: %s", dir)
+	if rev != "" {
+		return inspectRev(ctx, dir, rev)
 	}
 	head, err := triage.Git(dir, "rev-parse", "HEAD")
 	if err != nil {
@@ -115,6 +111,46 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 		return nil, errors.New("checkout is detached; switch to a branch before triaging")
 	}
 	branch = strings.TrimSpace(branch)
+	return inspectBranch(ctx, dir, head, branch)
+}
+
+// checkoutRoot resolves path, ~ included, to the root of the Git checkout
+// it names, and fails when it names a directory inside one.
+func checkoutRoot(path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(os.PathSeparator)) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	root, err := triage.Git(path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("%s is not a Git checkout: %w", path, err)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.FromSlash(strings.TrimSpace(root)))
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(dir, path) {
+		return "", fmt.Errorf("choose the repository root: %s", dir)
+	}
+	return dir, nil
+}
+
+func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapshot, error) {
 	baseRef, baseBranch, err := localBase(dir)
 	if err != nil {
 		return nil, err
@@ -189,6 +225,116 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 	author, _ := triage.Git(dir, "log", "-1", "--format=%an", "HEAD")
 	info := &triage.PRInfo{PRRef: ref, LocalPath: dir, Title: strings.TrimSpace(title), Author: strings.TrimSpace(author), State: "LOCAL", BaseRef: baseBranch, HeadRef: branch, BaseOid: base, HeadOid: head, Ahead: ahead, Behind: behind, Uncommitted: strings.TrimSpace(status) != ""}
 	info.Commits = triage.CommitMessages(ctx, dir, base, head)
+	return finishSnapshot(info, src, raw), nil
+}
+
+// emptyTree writes git's empty tree in dir and returns it, the base of a
+// root commit. A repository doesn't always store it.
+func emptyTree(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "mktree") // stdin is empty
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git mktree: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// inspectRev reads rev in the checkout at dir, as committed: a local or
+// origin branch from its merge base with origin's default branch, or any
+// other commit from its first parent. The working tree is not read.
+func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
+	if strings.HasPrefix(rev, "-") {
+		return nil, fmt.Errorf("bad revision %q", rev)
+	}
+	branch := ""
+	for _, r := range []string{"refs/heads/" + rev, "refs/remotes/origin/" + rev, "refs/remotes/" + rev} {
+		if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", r); err == nil {
+			branch = strings.TrimPrefix(strings.TrimPrefix(r, "refs/heads/"), "refs/remotes/")
+			break
+		}
+	}
+	head, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	if err != nil {
+		return nil, fmt.Errorf("%s is not a commit or branch in %s", rev, dir)
+	}
+	head = strings.TrimSpace(head)
+	info := &triage.PRInfo{PRRef: localRepoRef(dir), LocalPath: dir, State: "LOCAL", Rev: rev, HeadOid: head}
+	var base, empty string
+	if branch != "" {
+		baseRef, baseBranch, err := localBase(dir)
+		if err != nil {
+			return nil, err
+		}
+		if base, err = triage.Git(dir, "merge-base", baseRef, head); err != nil {
+			return nil, err
+		}
+		base = strings.TrimSpace(base)
+		if counts, err := triage.Git(dir, "rev-list", "--left-right", "--count", baseRef+"..."+head); err == nil {
+			if parts := strings.Fields(counts); len(parts) == 2 {
+				info.Behind, _ = strconv.Atoi(parts[0])
+				info.Ahead, _ = strconv.Atoi(parts[1])
+			}
+		}
+		info.BaseRef, info.HeadRef = baseBranch, branch
+	} else {
+		info.SingleCommit = true
+		if p, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", head+"^"); err == nil {
+			base = strings.TrimSpace(p)
+			info.BaseRef = base[:10]
+		} else {
+			if empty, err = emptyTree(ctx, dir); err != nil {
+				return nil, err
+			}
+			base, info.BaseRef = empty, "empty tree"
+		}
+		info.HeadRef, info.Ahead = head[:10], 1
+	}
+	info.BaseOid = base
+	raw, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", base, head)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("%s has no changes from %s", rev, info.BaseRef)
+	}
+	files, err := triage.ParseDiff(raw)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", "-w", "--ignore-blank-lines", base, head)
+	if err != nil {
+		return nil, err
+	}
+	wsFiles, err := triage.ParseDiff(ws)
+	if err != nil {
+		return nil, err
+	}
+	real := map[string]bool{}
+	for _, f := range wsFiles {
+		if len(f.Hunks) > 0 || f.Binary {
+			real[f.Path] = true
+		}
+	}
+	src := &triage.Source{Files: files, RealChanges: real, Dir: dir, Base: base, Head: head}
+	src.Content = func(p string) ([]byte, error) { s, e := triage.Git(dir, "show", head+":"+p); return []byte(s), e }
+	src.BaseContent = func(p string) ([]byte, error) { s, e := triage.Git(dir, "show", base+":"+p); return []byte(s), e }
+	title, _ := triage.Git(dir, "log", "-1", "--format=%s", head)
+	author, _ := triage.Git(dir, "log", "-1", "--format=%an", head)
+	info.Title, info.Author = strings.TrimSpace(title), strings.TrimSpace(author)
+	if info.SingleCommit {
+		body, _ := triage.Git(dir, "log", "-1", "--format=%b", head)
+		info.Body = strings.TrimSpace(body)
+	}
+	if empty == "" {
+		info.Commits = triage.CommitMessages(ctx, dir, base, head)
+	}
+	return finishSnapshot(info, src, raw), nil
+}
+
+// finishSnapshot counts the diff's lines and hashes it into info.
+func finishSnapshot(info *triage.PRInfo, src *triage.Source, raw string) *localSnapshot {
+	files := src.Files
 	digest := sha256.Sum256([]byte(raw))
 	info.SnapshotHash = hex.EncodeToString(digest[:])
 	for _, f := range files {
@@ -204,7 +350,7 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 		}
 	}
 	src.Title = info.Title
-	return &localSnapshot{info: info, src: src, raw: raw}, nil
+	return &localSnapshot{info: info, src: src, raw: raw}
 }
 
 // localCacheKey names a run of a local checkout: which checkout, what the
@@ -213,7 +359,7 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 // the settings part used to be hashed from a string holding the head
 // commit, which made every commit look like different settings.
 func localCacheKey(s *localSnapshot, o options) string {
-	pathHash := sha256.Sum256([]byte(s.info.LocalPath))
+	pathHash := sha256.Sum256([]byte(localSource(s.info)))
 	diffHash := sha256.Sum256([]byte(s.info.BaseOid + "|" + s.info.HeadOid + "|" + s.raw))
 	return fmt.Sprintf("local__%x__%x__%s", pathHash[:5], diffHash[:6], settingsHash(o))
 }
@@ -321,6 +467,9 @@ func publishLocal(r *PRResult) (string, error) {
 	if r.PR.URL != "" {
 		return r.PR.URL, nil
 	}
+	if r.PR.Rev != "" {
+		return "", errors.New("create PRs from the checked-out branch")
+	}
 	if _, err := triage.Git(r.PR.LocalPath, "fetch", "--quiet", "--no-tags", "origin", fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", r.PR.BaseRef, r.PR.BaseRef)); err != nil {
 		return "", err
 	}
@@ -371,6 +520,15 @@ func publishLocal(r *PRResult) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// localSource is what a local result was triaged from: the checkout's
+// path, with #rev when it was a commit or branch in it.
+func localSource(p *triage.PRInfo) string {
+	if p.Rev != "" {
+		return p.LocalPath + "#" + p.Rev
+	}
+	return p.LocalPath
 }
 
 func localPathID(path string) string {

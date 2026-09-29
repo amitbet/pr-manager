@@ -73,7 +73,7 @@ async function loadProviders(refresh) {
   for (const r of ROLES) {
     fillProviders(r);
     fillModels(r);
-    $(`#${r.role}`).onchange = (e) => { save(r.role, e.target.value); fillModels(r); showLine(); };
+    $(`#${r.role}`).onchange = (e) => { save(r.role, e.target.value); fillModels(r); if (r.role === "translator") fillEffort(); showLine(); };
     $(`#${r.model}`).onchange = (e) => {
       const prov = $(`#${r.role}`).value || P[r.role];
       if (e.target.value === "__custom") {
@@ -84,6 +84,7 @@ async function loadProviders(refresh) {
       showLine();
     };
   }
+  fillEffort();
   showLine();
 }
 
@@ -153,11 +154,12 @@ function classifying() {
   return ($("#summarizer").value || P?.summarizer) === "off";
 }
 
-// Translation effort: "" is the server's choice for the translator.
+// Translation effort: "" is the server's choice for the chosen translator.
 const EFFORTS = ["none", "minimal", "low", "medium"];
 function fillEffort() {
   const sel = $("#translate_effort");
-  const def = S.cfg?.translate_effort || "model default";
+  const p = P?.providers.find((x) => x.id === $("#translator").value);
+  const def = (p ? p.translate_effort : S.cfg?.translate_effort) || "model default";
   sel.innerHTML = `<option value="">default (${esc(def)})</option>` + EFFORTS.map((e) => `<option value="${e}">${e}</option>`).join("");
   sel.value = EFFORTS.includes(saved("translate_effort")) ? saved("translate_effort") : "";
   sel.onchange = () => save("translate_effort", sel.value);

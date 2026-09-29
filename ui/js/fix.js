@@ -19,11 +19,12 @@ const running = () => run && run.job.status === "running";
 // startFix takes one of: all (with comments to add the confirmed review
 // threads), unit_id and issue, or unit_id and thread. uncommitted is what
 // to do with a local checkout's uncommitted changes (commit or branch);
-// without it, the server asks and the reviewer picks.
-async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "") {
+// rev is how a reviewed commit or branch is fixed (checkout or current).
+// Without them, the server asks and the reviewer picks.
+async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "") {
   if (running() || !S.result) return false;
   menuOpen = false;
-  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted };
+  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
   if (S.result.pr.local_path) body.location = "worktree";
   run = { id: "", key: S.result.key, job: { status: "running", stage: "" } };
   render();
@@ -33,6 +34,13 @@ async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) 
     refreshJobs();
     follow(job.id);
   } catch (e) {
+    if (e.code === "rev" && !rev) {
+      run = null;
+      render();
+      const choice = await askRev(S.result.pr);
+      if (choice) startFix(target, uncommitted, choice);
+      return;
+    }
     if (e.code !== "uncommitted" || uncommitted) {
       run.job = { status: "error", error: e.message };
       paint();
@@ -41,8 +49,25 @@ async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) 
     run = null;
     render();
     const choice = await askUncommitted();
-    if (choice) startFix(target, choice);
+    if (choice) startFix(target, choice, rev);
   }
+}
+
+// askRev asks how to fix a review of a commit or branch that isn't checked
+// out: check it out and fix it, or fix the checkout's current code.
+function askRev(pr) {
+  const dlg = $("#fix-rev");
+  const what = pr.single_commit ? `commit <code>${esc(pr.rev)}</code>` : `branch <code>${esc(pr.rev)}</code>`;
+  const branch = pr.single_commit ? `a new branch <code>pr-manager/${esc(pr.head_oid.slice(0, 10))}</code> at the commit` : pr.rev.startsWith("origin/") ? `a local <code>${esc(pr.rev.slice(7))}</code> branch tracking it` : `<code>${esc(pr.rev)}</code>`;
+  dlg.querySelector(".fix-rev-what").innerHTML = `This is a review of ${what}, which isn't checked out in <code>${esc(pr.local_path)}</code>.`;
+  dlg.querySelector(".fix-rev-checkout").innerHTML = `<b>Check out and fix</b> switches the checkout to ${branch} and fixes it there. The working tree has to be clean.`;
+  dlg.querySelector("button[value=checkout]").textContent = `Check out ${pr.single_commit ? pr.rev : pr.rev.replace(/^origin\//, "")} and fix`;
+  dlg.returnValue = "";
+  dlg.showModal();
+  return new Promise((res) => dlg.addEventListener("close", () => {
+    const v = dlg.returnValue;
+    res(v === "checkout" || v === "current" ? v : "");
+  }, { once: true }));
 }
 
 // What to do with uncommitted local changes when a fix starts: commit

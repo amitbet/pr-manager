@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -333,27 +334,53 @@ func runEval(ctx context.Context, o options) error {
 	return nil
 }
 
-// Default models per provider: a small fast model classifies, a stronger
-// one summarizes and reviews.
+// Default models per provider, best first: a small fast model classifies,
+// a stronger one summarizes and reviews. A provider that lists its models
+// gets the first one it has, else the newest of the same family (see
+// llm.PickModel), so a gateway or an older account without the newest
+// model still gets a default that runs.
 var (
-	classifyDefaults = map[string]string{
-		"codex": llm.CodexSmall, "claude-code": llm.ClaudeCodeSmall,
-		llm.ClaudeAPI: llm.AnthropicClaudeHaiku45, llm.OpenAIAPI: llm.OpenAIGPT54Mini, "ollama": llm.OllamaQwen35_9B,
-		llm.Bedrock: llm.BedrockHaiku45, llm.Vertex: llm.VertexHaiku45, llm.Foundry: llm.FoundryHaiku45,
-		llm.AzureOpenAI: orDefault(os.Getenv("AZURE_OPENAI_CLASSIFY_DEPLOYMENT"), llm.OpenAIGPT54Mini),
+	classifyDefaults = map[string][]string{
+		"codex": {llm.CodexSmall, "gpt-5.6-luna"}, "claude-code": {llm.ClaudeCodeSmall},
+		llm.ClaudeAPI: {llm.AnthropicClaudeHaiku45}, llm.OpenAIAPI: {llm.OpenAIGPT54Mini, llm.OpenAIGPT54Nano}, "ollama": {llm.OllamaQwen35_9B},
+		llm.Bedrock: {llm.BedrockHaiku45}, llm.Vertex: {llm.VertexHaiku45}, llm.Foundry: {llm.FoundryHaiku45},
+		llm.AzureOpenAI: {orDefault(os.Getenv("AZURE_OPENAI_CLASSIFY_DEPLOYMENT"), llm.OpenAIGPT54Mini)},
 	}
-	summaryDefaults = map[string]string{
-		"codex": llm.CodexLarge, "claude-code": llm.ClaudeCodeLarge,
-		llm.ClaudeAPI: llm.AnthropicClaudeSonnet5, llm.OpenAIAPI: llm.OpenAIGPT6Sol, "ollama": llm.OllamaQwen35_9B,
-		llm.Bedrock: llm.BedrockSonnet5, llm.Vertex: llm.VertexSonnet5, llm.Foundry: llm.FoundrySonnet5,
-		llm.AzureOpenAI: orDefault(os.Getenv("AZURE_OPENAI_REVIEW_DEPLOYMENT"), llm.OpenAIGPT6Sol),
+	summaryDefaults = map[string][]string{
+		"codex": {llm.CodexLarge, llm.OpenAIGPT56Sol}, "claude-code": {llm.ClaudeCodeLarge},
+		llm.ClaudeAPI: {llm.AnthropicClaudeSonnet5}, llm.OpenAIAPI: {llm.OpenAIGPT6Sol, llm.OpenAIGPT56Sol, llm.OpenAIGPT54}, "ollama": {llm.OllamaQwen35_9B},
+		llm.Bedrock: {llm.BedrockSonnet5}, llm.Vertex: {llm.VertexSonnet5}, llm.Foundry: {llm.FoundrySonnet5},
+		llm.AzureOpenAI: {orDefault(os.Getenv("AZURE_OPENAI_REVIEW_DEPLOYMENT"), llm.OpenAIGPT6Sol)},
 	}
-	// Translation: on the CLIs, the fastest of their models in a benchmark
-	// on cached PRs (claude-code's Haiku was the slowest); elsewhere the
-	// classifier's small model.
-	translateDefaults = map[string]string{"codex": llm.CodexTranslate, "claude-code": llm.ClaudeCodeTranslate}
-	translateEfforts  = map[string]string{"codex": "minimal", "claude-code": "low", llm.OpenAIAPI: "minimal", llm.AzureOpenAI: "minimal"}
+	// Translation: the fastest that translates well in a benchmark on
+	// cached PRs, Sonnet over Haiku on Claude (Haiku was the slowest through
+	// the CLI); elsewhere the classifier's small model.
+	translateDefaults = map[string][]string{
+		"codex": {llm.CodexTranslate, llm.CodexSmall}, "claude-code": {llm.ClaudeCodeTranslate, "claude-sonnet-5"},
+		llm.ClaudeAPI: {llm.ClaudeCodeTranslate, llm.AnthropicClaudeSonnet5},
+		llm.Bedrock:   {llm.BedrockSonnet5}, llm.Vertex: {llm.VertexSonnet5}, llm.Foundry: {llm.FoundrySonnet5},
+	}
+	translateEfforts = map[string]string{"codex": "minimal", "claude-code": "low", llm.OpenAIAPI: "minimal", llm.AzureOpenAI: "minimal"}
 )
+
+// modelCatalog is what a provider can run, for picking its default model.
+var modelCatalog = func(provider string) llm.Catalog { // tests replace it
+	return llm.ProviderCatalog(context.Background(), provider)
+}
+
+// defaultModel is provider's default for a role: the first of prefs, its
+// defaults for the role, that it can run.
+func defaultModel(provider string, prefs []string) string {
+	if len(prefs) == 0 {
+		return ""
+	}
+	return llm.PickModel(modelCatalog(provider), prefs...)
+}
+
+// translatePrefs is provider's translation defaults, then its classifier's.
+func translatePrefs(provider string) []string {
+	return append(slices.Clone(translateDefaults[provider]), classifyDefaults[provider]...)
+}
 
 // resolveProviders replaces "auto" with the best provider that has
 // credentials and fills per-provider default models. A coding-agent
@@ -383,13 +410,13 @@ func resolveProviders(o options) options {
 	}
 	o.classifier, o.fallback, o.summarizer = pick(o.classifier), pick(o.fallback), pick(o.summarizer)
 	if o.classifyModel == "" {
-		o.classifyModel = classifyDefaults[o.classifier]
+		o.classifyModel = defaultModel(o.classifier, classifyDefaults[o.classifier])
 	}
 	if o.fallbackModel == "" {
-		o.fallbackModel = classifyDefaults[o.fallback]
+		o.fallbackModel = defaultModel(o.fallback, classifyDefaults[o.fallback])
 	}
 	if o.summaryModel == "" {
-		o.summaryModel = summaryDefaults[o.summarizer]
+		o.summaryModel = defaultModel(o.summarizer, summaryDefaults[o.summarizer])
 	}
 	// Translation follows the reviewer, else the classifier: whichever
 	// provider the run already uses. OpenJev can't translate.
@@ -405,7 +432,7 @@ func resolveProviders(o options) options {
 		o.translator = llm.ProviderID(o.translator)
 	}
 	if o.translateModel == "" {
-		o.translateModel = orDefault(translateDefaults[o.translator], classifyDefaults[o.translator])
+		o.translateModel = defaultModel(o.translator, translatePrefs(o.translator))
 	}
 	if o.translateEffort == "auto" {
 		o.translateEffort = orDefault(translateEfforts[o.translator], "low")

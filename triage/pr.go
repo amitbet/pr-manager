@@ -108,7 +108,12 @@ func ParseRepo(s string) (host, owner, repo string, err error) {
 
 type PRInfo struct {
 	PRRef
-	LocalPath    string `json:"local_path,omitempty"`
+	LocalPath string `json:"local_path,omitempty"`
+	// Rev is the commit or branch reviewed in LocalPath, as typed after
+	// its #; empty for the checked-out branch and its working tree.
+	Rev string `json:"rev,omitempty"`
+	// SingleCommit is set when Rev is one commit, diffed from its parent.
+	SingleCommit bool   `json:"single_commit,omitempty"`
 	Ahead        int    `json:"ahead,omitempty"`
 	Behind       int    `json:"behind,omitempty"`
 	Uncommitted  bool   `json:"uncommitted,omitempty"`

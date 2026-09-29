@@ -9,7 +9,7 @@ import { watchJob, refreshJobs } from "./jobs.js";
 async function triage(ask, force = false) {
   const url = $("#url").value.trim();
   if (!url) return;
-  const isPath = !/^https?:\/\//.test(url) && !/^[^\s]+\/[^\s]+#\d+$/.test(url);
+  const isPath = isLocalPath(url);
   const body = { [isPath ? "path" : "url"]: url, force, ...jobSettings() };
   $("#go").disabled = true;
   $("#main").innerHTML = `<div class="progress">starting…</div>`;
@@ -28,6 +28,11 @@ async function triage(ask, force = false) {
     $("#go").disabled = false;
   }
 }
+
+// isLocalPath says whether the form's text is a local path rather than a
+// PR. A path may end in #rev (a commit or branch), so owner/repo#N only
+// counts when it doesn't start like a path.
+export const isLocalPath = (s) => /^([/~.\\]|[A-Za-z]:)/.test(s) || (!/^https?:\/\//.test(s) && !/^[^\s]+\/[^\s]+#\d+$/.test(s));
 
 // initTriage wires the form.
 export function initTriage() {

@@ -118,7 +118,7 @@ func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 		if res.PR.LocalPath == "" {
 			return nil, triage.PRRef{}, errors.New("not a local result")
 		}
-		return res, triage.PRRef{Owner: "local", Repo: localPathID(res.PR.LocalPath)}, nil
+		return res, triage.PRRef{Owner: "local", Repo: localPathID(localSource(res.PR))}, nil
 	}
 	mux.HandleFunc("GET "+local+"/file", func(w http.ResponseWriter, req *http.Request) {
 		res, _, err := localResult(req)
@@ -146,6 +146,12 @@ func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 		if req.URL.Query().Get("side") == "base" {
 			var s string
 			s, err = triage.Git(res.PR.LocalPath, "show", res.PR.BaseOid+":"+path)
+			b = []byte(s)
+		} else if res.LocalFixDir != "" {
+			b, err = readLocalFile(res.LocalFixDir, path)
+		} else if res.PR.Rev != "" {
+			var s string
+			s, err = triage.Git(res.PR.LocalPath, "show", res.PR.HeadOid+":"+path)
 			b = []byte(s)
 		} else {
 			b, err = readLocalFile(res.PR.LocalPath, path)

@@ -146,3 +146,17 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 /* Incremental review: what this run kept from the previous push. */
 .carried-line { margin-top: 6px; }
 .chip.carried { opacity: .85; }
+.rev-dlg { width: min(760px, calc(100vw - 32px)); }
+.rev-dlg .rev-dir { font-family: var(--mono); font-size: 12px; margin: 4px 0 0; }
+.rev-dlg .rev-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 8px; }
+.rev-dlg .rev-filter { flex: 1; font-size: 13px; }
+.rev-dlg .rev-list { max-height: min(60vh, 560px); overflow-y: auto; margin: 0 -18px 10px; border-top: 1px solid var(--border); }
+.rev-item { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 2px 12px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: none; padding: 7px 18px; font-size: 13px; cursor: pointer; }
+.rev-item:hover:not([disabled]), .rev-item:focus-visible { background: var(--bg3); outline: none; }
+.rev-item[disabled] { opacity: .5; cursor: default; }
+.rev-item .rev-name { grid-row: span 2; white-space: nowrap; }
+.rev-item .rev-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rev-item .rev-meta { color: var(--muted); font-size: 12px; }
+.rev-item .rev-add { color: #1a7f37; } .rev-item .rev-del { color: #cf222e; }
+.rev-dlg .rev-list > .hint, .rev-dlg .rev-list > .error { padding: 0 18px; }
+#fix-rev code { overflow-wrap: anywhere; }

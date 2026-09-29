@@ -73,6 +73,9 @@ type PRResult struct {
 	LocalFixBranch   string               `json:"local_fix_branch,omitempty"`
 	LocalFixLocation string               `json:"local_fix_location,omitempty"`
 	FixRounds        int                  `json:"fix_rounds,omitempty"`
+	// FixFromRev is the commit or branch whose review issues were fixed
+	// in the checkout's current code instead.
+	FixFromRev string `json:"fix_from_rev,omitempty"`
 	// FixWarning says how a local checkout had changed since its triage
 	// when the fix started.
 	FixWarning string `json:"fix_warning,omitempty"`
@@ -114,6 +117,7 @@ type prSummary struct {
 	Likelihood *triage.Likelihood    `json:"likelihood,omitempty"`
 	Attention  int                   `json:"attention"`
 	LocalPath  string                `json:"local_path,omitempty"`
+	Rev        string                `json:"rev,omitempty"`
 	HeadRef    string                `json:"head_ref,omitempty"`
 }
 
@@ -484,7 +488,7 @@ func (t *triager) List() ([]prSummary, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, prSummary{Key: r.Key, PR: r.PR.PRRef, Title: r.PR.Title, State: r.PR.State, LocalPath: r.PR.LocalPath, HeadRef: r.PR.HeadRef,
+		out = append(out, prSummary{Key: r.Key, PR: r.PR.PRRef, Title: r.PR.Title, State: r.PR.State, LocalPath: r.PR.LocalPath, Rev: r.PR.Rev, HeadRef: r.PR.HeadRef,
 			Classifier: r.Classifier, CreatedAt: r.CreatedAt, Counts: r.Counts, Impact: r.Impact, Likelihood: r.Likelihood, Attention: r.Attention})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -759,6 +763,14 @@ func newServeHandler(o options) (http.Handler, error) {
 		}
 		writeJSON(w, 202, j)
 	})
+	mux.HandleFunc("GET /api/revs", func(w http.ResponseWriter, r *http.Request) {
+		revs, err := listRevs(r.URL.Query().Get("path"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, revs)
+	})
 	mux.HandleFunc("POST /api/local/{key}/publish", func(w http.ResponseWriter, r *http.Request) {
 		res, err := t.Load(r.PathValue("key"))
 		if err != nil {
@@ -796,6 +808,10 @@ func newServeHandler(o options) (http.Handler, error) {
 		j, err := t.startFix(req)
 		if errors.Is(err, errUncommitted) {
 			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "uncommitted"})
+			return
+		}
+		if errors.Is(err, errRev) {
+			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "rev"})
 			return
 		}
 		if err != nil {
@@ -924,14 +940,15 @@ func portOf(addr string) string {
 // providerChoice is one provider the UI can offer, with its models and the
 // defaults for each role.
 type providerChoice struct {
-	ID             string      `json:"id"`
-	Reason         string      `json:"reason"`
-	Live           bool        `json:"live"`
-	Models         []llm.Model `json:"models"`
-	ClassifyModel  string      `json:"classify_model,omitempty"`
-	TranslateModel string      `json:"translate_model,omitempty"`
-	SummaryModel   string      `json:"summary_model,omitempty"`
-	Summarize      bool        `json:"summarize"` // openjev only classifies
+	ID              string      `json:"id"`
+	Reason          string      `json:"reason"`
+	Live            bool        `json:"live"`
+	Models          []llm.Model `json:"models"`
+	ClassifyModel   string      `json:"classify_model,omitempty"`
+	TranslateModel  string      `json:"translate_model,omitempty"`
+	TranslateEffort string      `json:"translate_effort,omitempty"`
+	SummaryModel    string      `json:"summary_model,omitempty"`
+	Summarize       bool        `json:"summarize"` // openjev only classifies
 }
 
 // providerList is GET /api/providers: the providers this machine can run
@@ -947,17 +964,17 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 			continue
 		}
 		pc := providerChoice{ID: c.Provider, Reason: c.Reason, Live: c.Live, Models: c.Models,
-			ClassifyModel: classifyDefaults[c.Provider], SummaryModel: summaryDefaults[c.Provider], Summarize: c.Provider != "openjev",
-			TranslateModel: orDefault(translateDefaults[c.Provider], classifyDefaults[c.Provider])}
-		// A default the list doesn't show (hidden or older) is still offered.
+			ClassifyModel: llm.PickModel(c, classifyDefaults[c.Provider]...), SummaryModel: llm.PickModel(c, summaryDefaults[c.Provider]...),
+			TranslateModel: llm.PickModel(c, translatePrefs(c.Provider)...), Summarize: c.Provider != "openjev", TranslateEffort: o.translateEffort}
+		if pc.TranslateEffort == "auto" { // a -translate-effort flag applies to every provider
+			pc.TranslateEffort = orDefault(translateEfforts[c.Provider], "low")
+		}
+		// A default the list doesn't show (hidden, or a built-in list) is
+		// still offered.
 		for _, m := range []string{pc.SummaryModel, pc.ClassifyModel, pc.TranslateModel} {
 			if m != "" && !hasModel(pc.Models, m) {
 				pc.Models = append([]llm.Model{{ID: m}}, pc.Models...)
 			}
-		}
-		// Ollama's defaults are whatever is pulled if the preset isn't.
-		if c.Provider == "ollama" && len(c.Models) > 0 && !hasModel(c.Models, llm.OllamaQwen35_9B) {
-			pc.Models, pc.ClassifyModel, pc.SummaryModel, pc.TranslateModel = c.Models, c.Models[0].ID, c.Models[0].ID, c.Models[0].ID
 		}
 		avail = append(avail, pc)
 	}

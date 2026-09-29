@@ -24,8 +24,12 @@ type fixRequest struct {
 	// Uncommitted says what to do with a local checkout's uncommitted
 	// changes: commit them first, or fix in the checkout's own branch.
 	Uncommitted string `json:"uncommitted,omitempty"` // commit | branch
-	UnitID      string `json:"unit_id,omitempty"`
-	Issue       int    `json:"issue,omitempty"`
+	// Rev says how a commit or branch reviewed as path#rev is fixed:
+	// check it out in the checkout and fix it there, or fix the checkout's
+	// current code instead.
+	Rev    string `json:"rev,omitempty"` // checkout | current
+	UnitID string `json:"unit_id,omitempty"`
+	Issue  int    `json:"issue,omitempty"`
 	// Thread, with UnitID, fixes one review thread instead of an issue.
 	Thread string `json:"thread,omitempty"`
 	All    bool   `json:"all"`
@@ -58,6 +62,9 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if req.Uncommitted != "" && req.Uncommitted != "commit" && req.Uncommitted != "branch" {
 		return nil, errors.New("uncommitted changes must be committed or fixed in the current branch")
 	}
+	if req.Rev != "" && req.Rev != "checkout" && req.Rev != "current" {
+		return nil, errors.New("a reviewed revision is fixed by checking it out or in the current code")
+	}
 	if !req.All && req.UnitID == "" {
 		return nil, errors.New("fix needs a unit and issue")
 	}
@@ -68,7 +75,22 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if err := fixable(r, req.Location); err != nil {
 		return nil, err
 	}
-	if r.PR.LocalPath != "" && r.LocalFixDir == "" && req.Uncommitted == "" {
+	freshRev := r.PR.Rev != "" && r.LocalFixDir == ""
+	if freshRev && req.Rev == "" {
+		return nil, errRev
+	}
+	if freshRev && req.Rev == "checkout" {
+		dirty, err := hasUncommitted(r.PR.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		if dirty {
+			return nil, fmt.Errorf("the checkout has uncommitted changes; commit or stash them before checking out %s", r.PR.Rev)
+		}
+	}
+	// Fixing the current code happens in the checkout, next to anything
+	// uncommitted there.
+	if r.PR.LocalPath != "" && r.LocalFixDir == "" && req.Uncommitted == "" && !freshRev {
 		dirty, err := hasUncommitted(r.PR.LocalPath)
 		if err != nil {
 			return nil, err
@@ -102,6 +124,10 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 // errUncommitted asks the UI whether to commit a local checkout's changes
 // or fix in its current branch.
 var errUncommitted = errors.New("the checkout has uncommitted changes; commit them or fix in the current branch")
+
+// errRev asks the UI whether to check out a reviewed commit or branch and
+// fix it, or fix the checkout's current code.
+var errRev = errors.New("this is a review of a commit or branch that isn't checked out; check it out and fix it, or fix the current code")
 
 // fixable says why a result can't be fixed: a GitHub PR has to be open
 // (as of its triage), and a local checkout isn't fixed in the app's clone.
@@ -244,7 +270,33 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	}
 	inBranch := false // fix in the local checkout itself
 	warning := ""
-	if old.PR.LocalPath != "" && old.LocalFixDir == "" {
+	if old.PR.Rev != "" && old.LocalFixDir == "" {
+		// A commit or branch reviewed as path#rev: the checkout either
+		// switches to it, or keeps its branch and has the issues fixed in
+		// its code as it is now.
+		cp := *old
+		switch req.Rev {
+		case "checkout":
+			progress("checkout", 0, 0)
+			branch, err := checkoutRev(old.PR)
+			if err != nil {
+				return nil, err
+			}
+			pr := *old.PR
+			pr.HeadRef = branch
+			cp.PR = &pr
+		case "current":
+			s, err := inspectLocal(ctx, old.PR.LocalPath)
+			if err != nil {
+				return nil, err
+			}
+			cp.PR, cp.FixFromRev = s.info, old.PR.Rev
+			t.warn(ctx, jobID, fmt.Sprintf("fixing issues found in %s in the current code of %s", old.PR.Rev, s.info.HeadRef))
+		default:
+			return nil, errRev
+		}
+		old, inBranch = &cp, true
+	} else if old.PR.LocalPath != "" && old.LocalFixDir == "" {
 		s, err := inspectLocal(ctx, old.PR.LocalPath)
 		if err != nil {
 			return nil, err
@@ -414,7 +466,13 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		return nil, fmt.Errorf("re-triage: %w (worktree: %s)", err, fixDir)
 	}
 	next.LocalFixDir = fixDir
-	if old.PR.LocalPath != "" {
+	if old.PR.SingleCommit {
+		// The commit's review stays one: its units are diffed from its
+		// parent, not from where the new branch left the default branch.
+		pr := *old.PR
+		pr.HeadRef, pr.Uncommitted = fixBranch, true
+		next.PR = &pr
+	} else if old.PR.LocalPath != "" {
 		snapshot, err := inspectLocal(ctx, fixDir)
 		if err != nil {
 			return nil, err
@@ -495,6 +553,35 @@ func remaining(r *PRResult, reviewed, threads map[string]bool) []targetedIssue {
 // checkoutFixBranch gives a fix worktree a branch at the exact reviewed PR
 // head. Use the PR's branch name when it is free in the cached clone; forks
 // and repeat jobs can have name collisions, so those get a local alias.
+// checkoutRev switches pr's checkout to the commit or branch it reviewed
+// and returns the branch: the branch itself, a local branch tracking an
+// origin one, or a new pr-manager/<sha> branch at a commit.
+func checkoutRev(pr *triage.PRInfo) (string, error) {
+	dir := pr.LocalPath
+	name := ""
+	switch {
+	case pr.SingleCommit:
+		name = "pr-manager/" + pr.HeadOid[:10]
+	case strings.HasPrefix(pr.HeadRef, "origin/"):
+		name = strings.TrimPrefix(pr.HeadRef, "origin/")
+	default:
+		name = pr.HeadRef
+	}
+	if tip, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name); err == nil {
+		if strings.TrimSpace(tip) != pr.HeadOid {
+			return "", fmt.Errorf("branch %s is at a different commit than the reviewed %s", name, pr.HeadOid[:10])
+		}
+		_, err = triage.Git(dir, "switch", name)
+		return name, err
+	}
+	args := []string{"switch", "-c", name, pr.HeadOid}
+	if strings.HasPrefix(pr.HeadRef, "origin/") {
+		args = []string{"switch", "-c", name, "--track", pr.HeadRef}
+	}
+	_, err := triage.Git(dir, args...)
+	return name, err
+}
+
 func checkoutFixBranch(repoDir, fixDir string, pr *triage.PRInfo, jobID string) (string, error) {
 	name := strings.TrimSpace(pr.HeadRef)
 	if name != "" {
@@ -599,6 +686,9 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 	data, _ := json.MarshalIndent(issues, "", "  ")
 	var prompt strings.Builder
 	fmt.Fprintf(&prompt, "Fix these issues in the checkout.\n%s\n", data)
+	if r.FixFromRev != "" {
+		fmt.Fprintf(&prompt, "\nThese issues were found reviewing %s, and the checkout is at other code. The reported units below show the code as it was reviewed: find that code in the checkout as it is now, and leave out an issue that no longer applies to it.\n", r.FixFromRev)
+	}
 	for _, f := range r.Files {
 		for _, u := range f.Units {
 			for _, issue := range issues {

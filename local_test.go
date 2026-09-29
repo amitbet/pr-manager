@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,5 +98,135 @@ func TestLocalRepoRef(t *testing.T) {
 		if got.Host != tc.host || got.Owner != tc.owner || got.Repo != tc.repo {
 			t.Errorf("%s: %+v", tc.remote, got)
 		}
+	}
+}
+
+func TestInspectLocalRev(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitTest(t, root, "init", "--bare", remote)
+	repo := filepath.Join(root, "repo")
+	gitTest(t, root, "init", "-b", "main", repo)
+	gitTest(t, repo, "config", "user.name", "Test")
+	gitTest(t, repo, "config", "user.email", "test@example.com")
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("file.txt", "one\n")
+	gitTest(t, repo, "add", "-A")
+	gitTest(t, repo, "commit", "-m", "initial")
+	rootCommit := gitTest(t, repo, "rev-parse", "HEAD")
+	gitTest(t, repo, "remote", "add", "origin", remote)
+	gitTest(t, repo, "push", "-u", "origin", "main")
+	gitTest(t, repo, "switch", "-c", "feature")
+	write("file.txt", "one\ntwo\n")
+	gitTest(t, repo, "commit", "-am", "add two", "-m", "because")
+	first := gitTest(t, repo, "rev-parse", "HEAD")
+	write("file.txt", "one\ntwo\nthree\n")
+	gitTest(t, repo, "commit", "-am", "add three")
+	gitTest(t, repo, "switch", "main")
+	write("file.txt", "dirty\n") // the working tree is not read
+
+	c, err := inspectLocal(context.Background(), repo+"#"+first[:7])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.info.SingleCommit || c.info.HeadOid != first || c.info.Title != "add two" || c.info.Body != "because" || c.info.Uncommitted {
+		t.Fatalf("commit: %+v", c.info)
+	}
+	if !strings.Contains(c.raw, "+two") || strings.Contains(c.raw, "three") || strings.Contains(c.raw, "dirty") {
+		t.Fatalf("commit diff: %s", c.raw)
+	}
+	if b, err := c.src.Content("file.txt"); err != nil || string(b) != "one\ntwo\n" {
+		t.Fatalf("commit content: %q, %v", b, err)
+	}
+
+	b, err := inspectLocal(context.Background(), repo+"#feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.info.SingleCommit || b.info.HeadRef != "feature" || b.info.BaseRef != "main" || b.info.Ahead != 2 || b.info.BaseOid != rootCommit {
+		t.Fatalf("branch: %+v", b.info)
+	}
+	if !strings.Contains(b.raw, "+two") || !strings.Contains(b.raw, "+three") || strings.Contains(b.raw, "dirty") {
+		t.Fatalf("branch diff: %s", b.raw)
+	}
+
+	r, err := inspectLocal(context.Background(), repo+"#"+rootCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.info.BaseRef != "empty tree" || !strings.Contains(r.raw, "+one") {
+		t.Fatalf("root commit: %+v %s", r.info, r.raw)
+	}
+
+	if _, err := inspectLocal(context.Background(), repo+"#nope"); err == nil {
+		t.Fatal("unknown rev: no error")
+	}
+	if localCacheKey(c, options{}) == localCacheKey(b, options{}) {
+		t.Fatal("commit and branch share a cache key")
+	}
+	revs, err := listRevs(repo + "#" + first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revs.Current != "main" || revs.BaseRef != "main" || len(revs.Commits) != 3 {
+		t.Fatalf("revs: %+v", revs)
+	}
+	if c := revs.Commits[1]; c.Oid != first || c.Files != 1 || c.Adds != 1 || c.Dels != 0 || c.Title != "add two" {
+		t.Fatalf("commit entry: %+v", c)
+	}
+	ahead := map[string]int{}
+	for _, b := range revs.Branches {
+		ahead[b.Name] = b.Ahead
+	}
+	if ahead["feature"] != 2 || ahead["main"] != 0 || ahead["origin/main"] != 0 {
+		t.Fatalf("branches: %+v", revs.Branches)
+	}
+
+	// Fixing asks how, and checking out needs a clean tree.
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &triage.Unit{ID: "file.txt", File: "file.txt", Issues: []triage.Issue{{Severity: "medium", Title: "x"}}}
+	res := &PRResult{Key: "local__rev", PR: c.info, Files: []resultFile{{FileDiff: c.src.Files[0], Units: []resultUnit{{Unit: u}}}}}
+	raw, _ := json.Marshal(res)
+	if err := os.WriteFile(filepath.Join(tr.results, res.Key+".json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := fixRequest{Key: res.Key, All: true, MaxRounds: 1}
+	if _, err := tr.startFix(req); !errors.Is(err, errRev) {
+		t.Fatalf("fix without a choice: %v", err)
+	}
+	req.Rev = "checkout"
+	if _, err := tr.startFix(req); err == nil || !strings.Contains(err.Error(), "stash") {
+		t.Fatalf("checkout with a dirty tree: %v", err)
+	}
+	gitTest(t, repo, "checkout", "--", "file.txt")
+
+	if name, err := checkoutRev(c.info); err != nil || name != "pr-manager/"+first[:10] || gitTest(t, repo, "rev-parse", "HEAD") != first {
+		t.Fatalf("checkout commit: %q, %v", name, err)
+	}
+	if name, err := checkoutRev(c.info); err != nil || name != "pr-manager/"+first[:10] {
+		t.Fatalf("checkout commit again: %q, %v", name, err)
+	}
+	if name, err := checkoutRev(b.info); err != nil || name != "feature" || gitTest(t, repo, "symbolic-ref", "--short", "HEAD") != "feature" {
+		t.Fatalf("checkout branch: %q, %v", name, err)
+	}
+	gitTest(t, repo, "push", "origin", "feature:remote-only")
+	gitTest(t, repo, "fetch", "origin")
+	o, err := inspectLocal(context.Background(), repo+"#origin/remote-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.info.HeadRef != "origin/remote-only" {
+		t.Fatalf("origin branch: %+v", o.info)
+	}
+	if name, err := checkoutRev(o.info); err != nil || name != "remote-only" || gitTest(t, repo, "rev-parse", "--abbrev-ref", "remote-only@{upstream}") != "origin/remote-only" {
+		t.Fatalf("checkout origin branch: %q, %v", name, err)
 	}
 }
