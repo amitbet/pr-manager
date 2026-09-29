@@ -7,6 +7,7 @@ import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill,
 import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions as diffActions } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
 import { issueFixButton } from "./fix.js";
+import { threadsHTML, raisedBy, raisedChip } from "./threads.js";
 import { openPanel } from "./panel.js";
 import { overviewHTML, hasOverview } from "./overview.js";
 
@@ -138,7 +139,8 @@ function issueCard(f, u, is, shown) {
   const acts = [];
   if (is.line && shown.has(is.line)) acts.push(`<button class="linkbtn" data-act="wz-line" data-line="${is.line}">show line ${is.line}</button>`);
   else if (is.line) acts.push(`<span class="chip">line ${is.line}</span>`);
-  acts.push(issueDraftButton(f, u, i));
+  const dup = raisedBy(u, i);
+  acts.push(dup ? raisedChip(dup) : issueDraftButton(f, u, i));
   acts.push(issueFixButton(u, i, "linkbtn"));
   const a = acts.join("");
   return `<div class="wz-issue ${sev}"><div class="it"><span class="dz ${sev}">${esc(is.severity)}</span><span class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}${issueCapChip(is)}</span></div>
@@ -152,6 +154,7 @@ function explainHTML(f, u, shown) {
   } else if (u.reviewed) {
     parts.push(`<div class="wz-sec"><h4>Review</h4><span class="wz-clean">✓ No issues found</span></div>`);
   }
+  parts.push(threadsHTML(u, "wz"));
   if (u.summary) parts.push(`<div class="wz-sec"><h4>${d.bucket === "human" ? "Review notes" : "Summary"}</h4><p class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</p></div>`);
   if (u.focus?.length) parts.push(`<div class="wz-sec"><h4>What to check</h4><ul class="wz-check">${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul></div>`);
   parts.push(`<div class="wz-sec"><h4>Why it's here</h4><p><b>${esc(rankWhy(u))}</b></p>${movesHTML(u)}${d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" ${trDir(u, "reason", d.reason)}>${trText(u, "reason", d.reason)}</span></p>` : ""}</div>`);

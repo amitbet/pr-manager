@@ -45,6 +45,9 @@ type Unit struct {
 	Reviewed  bool    `json:"reviewed,omitempty"`
 	Issues    []Issue `json:"issues,omitempty"`
 	Attention int     `json:"attention"`
+	// Threads are the open review threads on GitHub that fall in this
+	// unit (see Thread). They don't change its bucket.
+	Threads []Thread `json:"threads,omitempty"`
 	// Score is how the bucket was picked (nil for units never classified).
 	Score *Score `json:"score,omitempty"`
 }

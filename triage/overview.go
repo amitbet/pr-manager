@@ -135,6 +135,11 @@ func unitNote(u *Unit) string {
 	for _, is := range u.Issues {
 		fmt.Fprintf(&b, "  issue (%s): %s. %s\n", is.Severity, is.Title, is.Detail)
 	}
+	for _, t := range u.Threads {
+		if t.Status == ThreadValid && !t.Fixed {
+			fmt.Fprintf(&b, "  reviewer comment by @%s, confirmed (%s): %s. %s\n", t.Author, t.Issue.Severity, t.Issue.Title, t.Issue.Detail)
+		}
+	}
 	for _, f := range u.Focus {
 		fmt.Fprintf(&b, "  check: %s\n", f)
 	}

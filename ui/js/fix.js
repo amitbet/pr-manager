@@ -2,7 +2,7 @@
 // shows the job's stage and opens its log. A completed job opens its
 // reviewed result and worktree path.
 import { $, esc, api, postJSON } from "./util.js";
-import { S, render } from "./state.js";
+import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
 import { refreshJobs, showLog, stageText } from "./jobs.js";
 
@@ -16,9 +16,12 @@ export function initFix(done) {
 
 const running = () => run && run.job.status === "running";
 
-async function startFix(all, unitID = "", issue = 0) {
+// startFix takes one of: all (with comments to add the confirmed review
+// threads), unit_id and issue, or unit_id and thread.
+async function startFix(target) {
   if (running() || !S.result) return false;
-  const body = { key: S.result.key, all, unit_id: unitID, issue, ...fixSettings() };
+  menuOpen = false;
+  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings() };
   if (S.result.pr.local_path) body.location = "worktree";
   run = { id: "", key: S.result.key, job: { status: "running", stage: "" } };
   render();
@@ -87,9 +90,52 @@ export function issueFixButton(u, i, cls = "details-btn") {
   return `<button class="${cls}" data-act="fix-issue" data-unit="${esc(u.id)}" data-issue="${i}" ${fixDisabled()}>Fix issue</button>`;
 }
 
+// threadFixButton fixes one review thread. One the check didn't confirm,
+// or from someone without write access, can still be fixed on request.
+export function threadFixButton(u, t, cls = "details-btn") {
+  if (t.fixed) return "";
+  const sure = t.status === "valid";
+  const why = !t.trusted ? "Left by someone without write access. Read it first: its text goes to the fixer." : "The check did not confirm this comment";
+  return `<button class="${cls}" data-act="fix-thread" data-unit="${esc(u.id)}" data-thread="${esc(t.id)}" ${fixDisabled() || (sure ? "" : `title="${why}"`)}>${sure ? "Fix comment" : "Fix anyway"}</button>`;
+}
+
+// The Fix all dropdown: whether confirmed review comments go along.
+const INCLUDE = "pr-manager.fix_comments";
+const includeComments = () => localStorage.getItem(INCLUDE) !== "0";
+let menuOpen = false;
+
+// fixableComments are the confirmed threads Fix all can include: not
+// fixed, and not already a review issue of their unit.
+const fixableComments = () => allUnits().flatMap(({ u }) => (u.threads || []).filter((t) => t.status === "valid" && t.trusted && !t.fixed && t.duplicate_of == null));
+
+// fixAllHTML is the Fix all button, split with a menu to include the
+// confirmed review comments when there are any.
+export function fixAllHTML() {
+  const issues = allUnits().reduce((n, { u }) => n + (u.issues?.length || 0), 0);
+  const comments = fixableComments().length;
+  if (!issues && !comments) return "";
+  const dis = fixDisabled();
+  const s = comments === 1 ? "" : "s";
+  if (!comments) return `<button class="details-btn" data-act="fix-all" ${dis}>Fix all issues</button>`;
+  if (!issues) return `<button class="details-btn" data-act="fix-all" data-only-comments="1" ${dis}>Fix ${comments} review comment${s}</button>`;
+  const inc = includeComments();
+  return `<span class="split-btn">` +
+    `<button class="details-btn" data-act="fix-all" ${dis}>${inc ? `Fix all issues + ${comments} comment${s}` : "Fix all issues"}</button>` +
+    `<button class="details-btn caret ${menuOpen ? "on" : ""}" data-act="fix-all-menu" aria-haspopup="true" aria-expanded="${menuOpen}" title="Fix all options" ${dis}>▾</button>` +
+    (menuOpen ? `<div class="split-menu" role="menu"><label><input type="checkbox" data-act="fix-all-comments" ${inc ? "checked" : ""}> Include existing review comments <span class="muted">(${comments} confirmed)</span></label></div>` : "") +
+    `</span>`;
+}
+
+document.addEventListener("click", (e) => {
+  if (menuOpen && !e.target.closest(".split-btn")) { menuOpen = false; render(); }
+});
+
 export const actions = {
-  "fix-issue": (el) => startFix(false, el.dataset.unit, Number(el.dataset.issue)),
-  "fix-all": () => startFix(true),
+  "fix-issue": (el) => startFix({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }),
+  "fix-thread": (el) => startFix({ unit_id: el.dataset.unit, thread: el.dataset.thread }),
+  "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }),
+  "fix-all-menu": () => { menuOpen = !menuOpen; },
+  "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
   "fix-log": () => { showLog(run.id); return false; },
   "fix-dismiss": () => { run = null; },
 };

@@ -162,3 +162,38 @@ func TestCheckoutCachedClonePreservesExistingChanges(t *testing.T) {
 		t.Errorf("local content = %q, %v", content, err)
 	}
 }
+
+func TestFixTargetsThreads(t *testing.T) {
+	dup := 0
+	u := &triage.Unit{ID: "a.go:f", Issues: []triage.Issue{{Title: "one"}}, Threads: []triage.Thread{
+		{ID: "ok", Trusted: true, Status: triage.ThreadValid, Issue: &triage.Issue{Title: "confirmed"}, Comments: []triage.ThreadComment{{Author: "a", Body: "leak", Trusted: true}}},
+		{ID: "dup", Trusted: true, Status: triage.ThreadValid, Issue: &triage.Issue{Title: "same as one"}, DuplicateOf: &dup},
+		{ID: "no", Trusted: true, Status: triage.ThreadRejected, Comments: []triage.ThreadComment{{Author: "a", Body: "maybe nil?\nmore", Trusted: true}}},
+		{ID: "fixed", Trusted: true, Status: triage.ThreadValid, Issue: &triage.Issue{Title: "done"}, Fixed: true},
+		{ID: "evil", Trusted: false, Status: triage.ThreadUntrusted},
+	}}
+	r := &PRResult{Files: []resultFile{{FileDiff: triage.FileDiff{Path: "a.go"}, Units: []resultUnit{{Unit: u}}}}}
+	titles := func(ts []targetedIssue) string {
+		var s []string
+		for _, x := range ts {
+			s = append(s, x.Issue.Title)
+		}
+		return strings.Join(s, ",")
+	}
+	if got := titles(fixTargets(r, fixRequest{All: true})); got != "one" {
+		t.Errorf("all without comments = %s", got)
+	}
+	if got := titles(fixTargets(r, fixRequest{All: true, Comments: true})); got != "one,confirmed" {
+		t.Errorf("all with comments = %s", got)
+	}
+	anyway := fixTargets(r, fixRequest{UnitID: "a.go:f", Thread: "no"})
+	if titles(anyway) != "maybe nil?" || anyway[0].Comment == nil || !strings.Contains(anyway[0].Comment.Text, "> maybe nil?") {
+		t.Errorf("fix anyway = %+v", anyway)
+	}
+	if got := fixTargets(r, fixRequest{UnitID: "a.go:f", Thread: "fixed"}); len(got) != 0 {
+		t.Errorf("fixed thread targeted: %+v", got)
+	}
+	if got := fixTargets(r, fixRequest{UnitID: "a.go:f", Thread: "evil"}); len(got) != 1 {
+		t.Errorf("untrusted thread not fixable on request: %+v", got)
+	}
+}

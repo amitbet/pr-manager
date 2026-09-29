@@ -4,7 +4,8 @@ import { S, render, syncURL, fileOfUnit } from "./state.js";
 import { SEV_CLASS, issueCapChip, issueScenarioHTML, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
 import { unitRows, diffTable, expandAllButton } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
-import { fixDisabled, issueFixButton } from "./fix.js";
+import { fixAllHTML, issueFixButton } from "./fix.js";
+import { threadsHTML, threadsChip, raisedBy, raisedChip } from "./threads.js";
 import { trText, trShown, trToggle, trDir } from "./entext.js";
 import { showStep } from "./walkthrough.js";
 import { overviewHTML } from "./overview.js";
@@ -14,7 +15,8 @@ const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
 function issuesHTML(f, u) {
   if (!u.issues?.length) return u.reviewed ? `<p><span class="lbl">Review</span>No issues found.</p>` : "";
   const items = u.issues.map((is, i) => {
-    const draft = issueDraftButton(f, u, i);
+    const dup = raisedBy(u, i);
+    const draft = dup ? raisedChip(dup) : issueDraftButton(f, u, i);
     const fix = issueFixButton(u, i);
     return `<li><span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>` +
       `${is.line ? `<span class="ln">line ${is.line}</span>` : ""}<b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}` +
@@ -31,6 +33,7 @@ function detailsHTML(f, u) {
   const main = [];
   if (u.summary) main.push(`<p><span class="lbl">Summary</span><span class="tr" ${trDir(u, "summary", u.summary)}>${trText(u, "summary", u.summary)}</span></p>`);
   main.push(issuesHTML(f, u));
+  main.push(threadsHTML(u));
   if (u.focus?.length) main.push(`<p><span class="lbl">What to check</span></p><ul>${u.focus.map((x, j) => `<li class="tr" ${trDir(u, `focus.${j}`, x)}>${trText(u, `focus.${j}`, x)}</li>`).join("")}</ul>`);
   const rest = [movesHTML(u), d.reason ? `<p><span class="lbl">Classifier</span><span class="tr" ${trDir(u, "reason", d.reason)}>${trText(u, "reason", d.reason)}</span></p>` : "", scoresHTML(u), classificationHTML(d)];
   const shown = main.filter(Boolean);
@@ -53,7 +56,7 @@ function unitHTML(f, u) {
         <span class="sym">${esc(u.symbol || "(file)")}</span>
         ${impactPill(u.impact)}${likelihoodPill(u.likelihood)}
         ${attentionPill(u)}
-        ${decisionChips(u)}
+        ${decisionChips(u)}${threadsChip(u)}
         <span class="src">${esc(d.source)}${d.confidence ? ` · ${(d.confidence * 100).toFixed(0)}%` : ""}</span>
       </div>
       <div class="headline"><span class="text tr" ${trDir(u, "headline", headline(u))} title="${esc(headline(u))}">${trShown(u, "headline", headline(u))}</span>${trToggle(u, "headline", headline(u))}${S.result.translating ? `<span class="tr-chip">translating…</span>` : ""}
@@ -91,7 +94,7 @@ export function reviewHTML() {
     <div class="toolbar">
       ${BUCKETS.map((b) => `<span class="filter ${b} ${S.hidden.has(b) ? "off" : ""}" data-act="filter" data-b="${b}"><b>${r.counts?.[b] || 0}</b> ${LABEL[b]}</span>`).join("")}
       <span class="spacer"></span>
-      ${files.some((f) => f.units.some((u) => u.issues?.length)) ? `<button class="details-btn" data-act="fix-all" ${fixDisabled()}>Fix all issues</button>` : ""}
+      ${fixAllHTML()}
       <button class="details-btn" data-act="all-diffs">${S.allHidden ? "show all code ▾" : "hide all code ▴"}</button>
       <span class="seg"><button class="${S.view === "split" ? "on" : ""}" data-act="view" data-v="split">Split</button><button class="${S.view === "unified" ? "on" : ""}" data-act="view" data-v="unified">Unified</button></span>
     </div>

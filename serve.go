@@ -48,6 +48,10 @@ type PRResult struct {
 	// Overview is nil for results from before overviews, and when it
 	// could not be written; see overview.
 	Overview *triage.Overview `json:"overview,omitempty"`
+	// Threads is when the PR's review threads were last loaded onto the
+	// units and what was left out; nil for local changes and results
+	// from before threads.
+	Threads *triage.ThreadStats `json:"threads,omitempty"`
 	// Impact, Likelihood and Attention are the highest unit scores; Impact
 	// is nil for results triaged without a code map.
 	Impact     *triage.Impact     `json:"impact,omitempty"`
@@ -231,10 +235,10 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	key := cacheKey(ref, info.HeadOid, o)
 	if !jo.Force {
 		if r, err := t.Load(key); err == nil {
-			return r, nil
+			return t.withThreads(ctx, r, o, progress), nil
 		}
 		if r, err := t.latestCached(ref, info.HeadOid); err == nil {
-			return r, nil
+			return t.withThreads(ctx, r, o, progress), nil
 		}
 	}
 	src, err := t.fetcher.Source(ctx, info)
@@ -266,11 +270,13 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Before the overview, so confirmed comments are in it.
+	threads := t.refreshThreads(ctx, info, units, o, pipe.Progress)
 
 	r := &PRResult{
 		Key: key, PR: info, CreatedAt: time.Now(), DurationMS: time.Since(start).Milliseconds(),
 		Classifier: describe(o.classifier, o.classifyModel, o.classifyEffort), Summarizer: describe(o.summarizer, o.summaryModel, o.reviewEffort),
-		Counts: (&triage.Report{Units: units}).Counts(),
+		Counts: (&triage.Report{Units: units}).Counts(), Threads: threads,
 	}
 	r.Impact, r.Likelihood, r.Attention = (&triage.Report{Units: units}).Scores()
 	if pipe.CodeMap != nil {
