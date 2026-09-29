@@ -18,7 +18,7 @@ export const LABEL = { human: "human review", skim: "skim", none: "no review" };
 export async function api(path, opts) {
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(body.error || r.statusText), { status: r.status, code: body.code });
   return body;
 }
 export const postJSON = (url, v) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) });

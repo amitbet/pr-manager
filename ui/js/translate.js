@@ -1,6 +1,6 @@
 // Summary language. PRs are reviewed in English; another language is
-// translated by the server at the end of the triage (or, failing that, when
-// the PR is opened), and cached there. The
+// translated by the server in the background once the triage ends (or,
+// failing that, when the PR is opened), and cached there. The
 // English text is kept so switching language, or back to English, needs
 // no new triage.
 import { postJSON } from "./util.js";

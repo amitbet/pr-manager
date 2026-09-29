@@ -64,6 +64,23 @@ func TestInspectLocalIncludesWorkingTreeWithoutChangingIndex(t *testing.T) {
 	if _, err := publishLocal(&PRResult{PR: snap.info}); err == nil || !strings.Contains(err.Error(), "commit") {
 		t.Fatalf("publish error: %v", err)
 	}
+	// A fix trusts a triage whose changes were committed since: the
+	// snapshot is the change from the base, wherever it lives.
+	if dirty, err := hasUncommitted(repo); err != nil || !dirty {
+		t.Fatalf("hasUncommitted before commit: %v, %v", dirty, err)
+	}
+	gitTest(t, repo, "add", "-A")
+	gitTest(t, repo, "commit", "-m", "the rest")
+	committed, err := inspectLocal(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.info.SnapshotHash != snap.info.SnapshotHash || committed.info.HeadOid == snap.info.HeadOid || committed.info.Uncommitted {
+		t.Fatalf("after commit: %+v", committed.info)
+	}
+	if dirty, err := hasUncommitted(repo); err != nil || dirty {
+		t.Fatalf("hasUncommitted after commit: %v, %v", dirty, err)
+	}
 }
 
 func TestLocalRepoRef(t *testing.T) {

@@ -20,8 +20,11 @@ import (
 type fixRequest struct {
 	Key      string `json:"key"`
 	Location string `json:"location"` // worktree (default) | clone
-	UnitID   string `json:"unit_id,omitempty"`
-	Issue    int    `json:"issue,omitempty"`
+	// Uncommitted says what to do with a local checkout's uncommitted
+	// changes: commit them first, or fix in the checkout's own branch.
+	Uncommitted string `json:"uncommitted,omitempty"` // commit | branch
+	UnitID      string `json:"unit_id,omitempty"`
+	Issue       int    `json:"issue,omitempty"`
 	// Thread, with UnitID, fixes one review thread instead of an issue.
 	Thread string `json:"thread,omitempty"`
 	All    bool   `json:"all"`
@@ -51,6 +54,9 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if req.Location != "" && req.Location != "worktree" && req.Location != "clone" {
 		return nil, errors.New("fix location must be worktree or clone")
 	}
+	if req.Uncommitted != "" && req.Uncommitted != "commit" && req.Uncommitted != "branch" {
+		return nil, errors.New("uncommitted changes must be committed or fixed in the current branch")
+	}
 	if !req.All && req.UnitID == "" {
 		return nil, errors.New("fix needs a unit and issue")
 	}
@@ -60,6 +66,15 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	}
 	if err := fixable(r, req.Location); err != nil {
 		return nil, err
+	}
+	if r.PR.LocalPath != "" && r.LocalFixDir == "" && req.Uncommitted == "" {
+		dirty, err := hasUncommitted(r.PR.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		if dirty {
+			return nil, errUncommitted
+		}
 	}
 	if len(fixTargets(r, req)) == 0 {
 		return nil, errors.New("no matching review issues")
@@ -79,15 +94,85 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	return j, nil
 }
 
+// errUncommitted asks the UI whether to commit a local checkout's changes
+// or fix in its current branch.
+var errUncommitted = errors.New("the checkout has uncommitted changes; commit them or fix in the current branch")
+
 // fixable says why a result can't be fixed: a GitHub PR has to be open
-// (as of its triage), and a local checkout needs a committed change and a
-// separate worktree.
+// (as of its triage), and a local checkout isn't fixed in the app's clone.
+// Uncommitted changes are checked when the fix starts, since the result
+// only knows how the checkout was at triage.
 func fixable(r *PRResult, location string) error {
 	if r.PR.LocalPath == "" && r.PR.State != "OPEN" {
 		return fmt.Errorf("the PR is %s; only open PRs and local repositories can be fixed", strings.ToLower(r.PR.State))
 	}
-	if r.PR.LocalPath != "" && ((r.PR.Uncommitted && r.LocalFixDir == "") || location == "clone") {
-		return errors.New("local fixes need a committed change and a separate worktree")
+	if r.PR.LocalPath != "" && location == "clone" {
+		return errors.New("local fixes go in a separate worktree or the current branch")
+	}
+	return nil
+}
+
+// localChanges describes how a checkout moved since its triage, or is
+// empty when it didn't. The snapshot hashes the change from the base,
+// working tree included, so committing what was triaged isn't a change.
+func localChanges(triaged, now *triage.PRInfo) string {
+	var what []string
+	if now.HeadRef != triaged.HeadRef {
+		what = append(what, fmt.Sprintf("the branch is now %s, not %s", now.HeadRef, triaged.HeadRef))
+	}
+	if now.BaseOid != triaged.BaseOid {
+		what = append(what, "the merge base with "+triaged.BaseRef+" moved")
+	}
+	if now.SnapshotHash != triaged.SnapshotHash {
+		what = append(what, "the code changed")
+	}
+	if len(what) == 0 {
+		return ""
+	}
+	return "The repository changed since triage (" + strings.Join(what, "; ") + "). The fix works on the current code, but the review is of the triaged code; triage again for a fresh review."
+}
+
+func hasUncommitted(dir string) (bool, error) {
+	status, err := triage.Git(dir, "status", "--porcelain", "--untracked-files=all")
+	return strings.TrimSpace(status) != "", err
+}
+
+var commitTool = llm.ToolDefinition{
+	Name: "submit_commit_message", Description: "Submit a git commit message for the changes.",
+	InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"message": map[string]any{"type": "string"},
+	}, "required": []string{"message"}},
+}
+
+// commitLocal commits a checkout's working tree changes, with a message
+// the summarizer writes from the staged diff and the recent subjects.
+func commitLocal(ctx context.Context, o options, dir string) error {
+	if _, err := triage.Git(dir, "add", "-A"); err != nil {
+		return err
+	}
+	diff, err := triage.Git(dir, "diff", "--cached", "--no-color", "--no-ext-diff", "--stat", "-p")
+	if err != nil {
+		return err
+	}
+	if len(diff) > 60000 {
+		diff = diff[:60000]
+	}
+	recent, _ := triage.Git(dir, "log", "-10", "--format=%s")
+	l, err := llm.New(o.summarizer, o.summaryModel)
+	if err != nil {
+		return err
+	}
+	prompt := fmt.Sprintf("Write a git commit message for these staged changes: a subject line under 72 characters in the imperative mood, then, if the change needs it, a blank line and a short body. Match the style of the recent subjects.\n\nRecent subjects:\n%s\nStaged diff:\n%s", recent, diff)
+	args, _, err := llm.CallTool(ctx, l, []llm.ChatMessage{{Role: "user", Content: prompt}}, commitTool, 2048)
+	if err != nil {
+		return fmt.Errorf("write commit message: %w", err)
+	}
+	msg, _ := args["message"].(string)
+	if strings.TrimSpace(msg) == "" {
+		return errors.New("write commit message: the summarizer returned none")
+	}
+	if _, err := triage.Git(dir, "commit", "-m", strings.TrimSpace(msg)); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }
@@ -152,14 +237,41 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	if o.summarizer == "off" {
 		return nil, errors.New("enable a summarizer to fix and review issues")
 	}
+	inBranch := false // fix in the local checkout itself
+	warning := ""
 	if old.PR.LocalPath != "" && old.LocalFixDir == "" {
 		s, err := inspectLocal(ctx, old.PR.LocalPath)
 		if err != nil {
 			return nil, err
 		}
-		if s.info.SnapshotHash != old.PR.SnapshotHash || s.info.HeadOid != old.PR.HeadOid || s.info.HeadRef != old.PR.HeadRef {
-			return nil, errors.New("repository changed since triage; triage it again before fixing")
+		// A checkout that moved on is still fixed, from its code as it is
+		// now; the warning says the review may be out of date.
+		if warning = localChanges(old.PR, s.info); warning != "" {
+			t.warn(ctx, jobID, warning)
 		}
+		if s.info.Uncommitted {
+			switch req.Uncommitted {
+			case "commit":
+				progress("commit", 0, 0)
+				if err := commitLocal(ctx, o, old.PR.LocalPath); err != nil {
+					return nil, err
+				}
+				if s, err = inspectLocal(ctx, old.PR.LocalPath); err != nil {
+					return nil, err
+				}
+			case "branch":
+				inBranch = true
+			default:
+				return nil, errUncommitted
+			}
+		}
+		// The fix starts from the checkout's head now, which a commit
+		// since triage moved.
+		pr := *old.PR
+		pr.HeadOid, pr.HeadRef, pr.BaseOid, pr.Ahead, pr.Behind, pr.Uncommitted, pr.Commits = s.info.HeadOid, s.info.HeadRef, s.info.BaseOid, s.info.Ahead, s.info.Behind, s.info.Uncommitted, s.info.Commits
+		cp := *old
+		cp.PR = &pr
+		old = &cp
 	}
 	ref := old.PR.PRRef
 	repoPath := t.fetcher.RepoDir(ref)
@@ -183,7 +295,9 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		if fixLocation == "" {
 			fixLocation = "worktree"
 		}
-		if fixLocation == "clone" {
+		if inBranch {
+			fixLocation, fixDir, fixBranch = "branch", repoDir, old.PR.HeadRef
+		} else if fixLocation == "clone" {
 			fixDir = repoDir
 			fixBranch, err = checkoutCloneBranch(repoDir, old.PR, jobID)
 			if err != nil {
@@ -210,9 +324,9 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		if err != nil {
 			return nil, err
 		}
-		if fixLocation == "clone" {
+		if fixLocation == "clone" || fixLocation == "branch" {
 			if path != repoDir {
-				return nil, errors.New("fix clone does not match the cached repository")
+				return nil, errors.New("fix checkout does not match the repository")
 			}
 		} else {
 			root, err := filepath.Abs(filepath.Join(t.opts.cache, "fixes"))
@@ -278,6 +392,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		next.LocalFixBranch = fixBranch
 		next.LocalFixLocation = fixLocation
 		next.FixRounds = current.FixRounds + 1
+		next.FixWarning = warning
 		next.Key = "fix__" + ref.FileKey() + "__" + jobID
 		if err := t.saveFixResult(next); err != nil {
 			return nil, err

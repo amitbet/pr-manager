@@ -65,7 +65,7 @@ func TestFixable(t *testing.T) {
 		{"closed PR", pr(triage.PRInfo{State: "CLOSED"}), "", false},
 		{"local repo", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r"}), "worktree", true},
 		{"local with a PR", pr(triage.PRInfo{State: "MERGED", LocalPath: "/r"}), "", true},
-		{"local uncommitted", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r", Uncommitted: true}), "", false},
+		{"local uncommitted", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r", Uncommitted: true}), "", true},
 		{"local in the clone", pr(triage.PRInfo{State: "LOCAL", LocalPath: "/r"}), "clone", false},
 	} {
 		if err := fixable(c.r, c.loc); (err == nil) != c.ok {

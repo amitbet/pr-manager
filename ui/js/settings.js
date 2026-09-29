@@ -258,6 +258,9 @@ export function initSettings(changed, langChanged) {
   const location = $("#fix_location");
   location.value = saved("fix_location") || S.cfg?.fix_location || "worktree";
   location.onchange = () => save("fix_location", location.value);
+  const uncommitted = $("#fix_uncommitted");
+  uncommitted.value = saved("fix_uncommitted");
+  uncommitted.onchange = () => (uncommitted.value ? save("fix_uncommitted", uncommitted.value) : localStorage.removeItem("pr-manager.fix_uncommitted"));
   recursive.checked = saved("recursive_fix") ? saved("recursive_fix") === "1" : S.cfg?.recursive_fix !== false;
   recursive.onchange = () => save("recursive_fix", recursive.checked ? "1" : "0");
   const rounds = $("#max_fix_rounds");

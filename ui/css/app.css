@@ -40,6 +40,7 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg h4 .linkbtn { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .settings-dlg .grid { display: grid; grid-template-columns: auto 1fr 1.4fr; gap: 6px 8px; align-items: center; font-size: 14px; }
 .settings-dlg select { font-size: 13px; min-width: 0; }
+.settings-dlg .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0 8px; }
 .settings-dlg .grid.codemap-src { grid-template-columns: auto 1fr; }
 .settings-dlg .codemap-src input { font-size: 13px; min-width: 0; }
 .settings-dlg .codemap-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
@@ -123,6 +124,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
    headline, and the text that will be replaced pulses. */
 .tr-banner { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--fg); font-size: 14px; font-weight: 600; }
 .tr-banner.error { border-color: #cf222e; background: color-mix(in srgb, #cf222e 10%, transparent); font-weight: 400; }
+.tr-banner.warn { border-color: #bf8700; background: color-mix(in srgb, #bf8700 12%, transparent); font-weight: 400; }
 .tr-banner .spinner { flex: none; width: 14px; height: 14px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .tr-chip { flex: none; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; color: var(--accent); border: 1px dashed var(--accent); }
 .translating .tr { animation: tr-pulse 1.4s ease-in-out infinite; }

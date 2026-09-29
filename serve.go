@@ -73,6 +73,9 @@ type PRResult struct {
 	LocalFixBranch   string               `json:"local_fix_branch,omitempty"`
 	LocalFixLocation string               `json:"local_fix_location,omitempty"`
 	FixRounds        int                  `json:"fix_rounds,omitempty"`
+	// FixWarning says how a local checkout had changed since its triage
+	// when the fix started.
+	FixWarning string `json:"fix_warning,omitempty"`
 }
 
 // tierPolicy is the budget table the result was triaged with (the
@@ -142,6 +145,7 @@ type job struct {
 	Done    int       `json:"done"`
 	Total   int       `json:"total"`
 	Error   string    `json:"error,omitempty"`
+	Warning string    `json:"warning,omitempty"`
 	Key     string    `json:"key,omitempty"`
 	Result  any       `json:"result,omitempty"` // index jobs
 	// Cached is when the result a triage job reused was made, if it
@@ -365,16 +369,15 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	}
 	if pipe.Summarizer != nil {
 		t.sequenceAfter(key, o)
-		// The summary language is written with the English, so the PR opens
-		// in it without waiting. A failure only means it is translated when
-		// the PR is opened instead.
+		// Translated in the background, so the triage does not wait for it.
+		// Opening the PR meanwhile waits on this call rather than starting
+		// another; a failure means it is translated when the PR is opened.
 		if !triage.IsEnglish(o.summaryLang) {
-			if pipe.Progress != nil {
-				pipe.Progress("translate", 0, 1)
-			}
-			if _, err := t.translate(ctx, r, o); err != nil {
-				log.Printf("translate %s to %s: %v", key, o.summaryLang, err)
-			}
+			go func() {
+				if _, err := t.translate(context.WithoutCancel(ctx), r, o); err != nil {
+					log.Printf("translate %s to %s: %v", key, o.summaryLang, err)
+				}
+			}()
 		}
 	}
 	return r, nil
@@ -476,6 +479,16 @@ func (t *triager) newJob(kind, url string) (*job, context.Context, func(stage st
 			activity.Printf(ctx, "stage %s", stage)
 		}
 	}
+}
+
+// warn sets a job's warning and logs it.
+func (t *triager) warn(ctx context.Context, jobID, msg string) {
+	t.mu.Lock()
+	if j := t.jobs[jobID]; j != nil {
+		j.Warning = msg
+	}
+	t.mu.Unlock()
+	activity.Printf(ctx, "warning: %s", msg)
 }
 
 // finish records the job's outcome in its log.
@@ -742,6 +755,10 @@ func newServeHandler(o options) (http.Handler, error) {
 			return
 		}
 		j, err := t.startFix(req)
+		if errors.Is(err, errUncommitted) {
+			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "uncommitted"})
+			return
+		}
 		if err != nil {
 			writeErr(w, 400, err)
 			return

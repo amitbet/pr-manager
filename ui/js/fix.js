@@ -17,11 +17,13 @@ export function initFix(done) {
 const running = () => run && run.job.status === "running";
 
 // startFix takes one of: all (with comments to add the confirmed review
-// threads), unit_id and issue, or unit_id and thread.
-async function startFix(target) {
+// threads), unit_id and issue, or unit_id and thread. uncommitted is what
+// to do with a local checkout's uncommitted changes (commit or branch);
+// without it, the server asks and the reviewer picks.
+async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "") {
   if (running() || !S.result) return false;
   menuOpen = false;
-  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings() };
+  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted };
   if (S.result.pr.local_path) body.location = "worktree";
   run = { id: "", key: S.result.key, job: { status: "running", stage: "" } };
   render();
@@ -31,8 +33,40 @@ async function startFix(target) {
     refreshJobs();
     follow(job.id);
   } catch (e) {
-    run.job = { status: "error", error: e.message };
+    if (e.code !== "uncommitted" || uncommitted) {
+      run.job = { status: "error", error: e.message };
+      paint();
+      return;
+    }
+    run = null;
+    render();
+    const choice = await askUncommitted();
+    if (choice) startFix(target, choice);
   }
+}
+
+// What to do with uncommitted local changes when a fix starts: commit
+// them, fix in the current branch, or ask (unset).
+const UNCOMMITTED = "pr-manager.fix_uncommitted";
+
+// askUncommitted asks whether to commit the checkout's changes or fix in
+// its current branch; "don't ask again" saves the answer.
+function askUncommitted() {
+  const dlg = $("#fix-uncommitted");
+  const again = dlg.querySelector("#fix-uncommitted-save");
+  again.checked = false;
+  dlg.returnValue = "";
+  dlg.showModal();
+  return new Promise((res) => dlg.addEventListener("close", () => {
+    const v = dlg.returnValue;
+    const choice = v === "commit" || v === "branch" ? v : "";
+    if (choice && again.checked) {
+      localStorage.setItem(UNCOMMITTED, choice);
+      const sel = $("#fix_uncommitted");
+      if (sel) sel.value = choice;
+    }
+    res(choice);
+  }, { once: true }));
 }
 
 // follow polls a fix job, keeping its banner current, and opens the fixed
@@ -71,17 +105,17 @@ export function fixBanner() {
   if (run.job.status === "error") {
     return `<div class="tr-banner error fix-banner" role="status">Fix failed: ${esc(run.job.error)} <span class="spacer"></span>${log}<button class="linkbtn" data-act="fix-dismiss">dismiss</button></div>`;
   }
-  return `<div class="tr-banner fix-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>`;
+  const warn = run.job.warning ? `<div class="tr-banner warn" role="status">${esc(run.job.warning)}</div>` : "";
+  return `<div class="fix-banner"><div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}</div>`;
 }
 
-// fixDisabled disables a fix button while a fix runs, on a PR that isn't
-// open (as of its triage), and when a local checkout has uncommitted
-// changes and no separate worktree to fix in.
+// fixDisabled disables a fix button while a fix runs and on a PR that
+// isn't open (as of its triage). Uncommitted local changes are asked
+// about when the fix starts.
 export function fixDisabled() {
   const r = S.result;
   if (running()) return 'disabled title="A fix is running"';
   if (!r.pr.local_path && r.pr.state !== "OPEN") return `disabled title="The PR is ${esc(r.pr.state.toLowerCase())}; only open PRs and local repositories can be fixed"`;
-  if (r.pr.local_path && r.pr.uncommitted && !r.local_fix_dir) return 'disabled title="Commit changes before fixing in a separate worktree"';
   return "";
 }
 

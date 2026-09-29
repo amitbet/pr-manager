@@ -98,7 +98,8 @@ function prHeadHTML(r) {
         <span class="dz ${attLevel(r.attention)}" title="highest review attention">max attention ${r.attention}</span>
         ${r.codemap ? `<span title="code map build">map ${esc(r.codemap)}</span>` : ""}</div>` : ""}
       ${carriedLine(r)}
-      ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}</div>` : ""}
+      ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : r.local_fix_location === "branch" ? "current checkout" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}</div>` : ""}
+      ${r.fix_warning ? `<div class="tr-banner warn" role="status">${esc(r.fix_warning)}</div>` : ""}
     </div>`;
 }
 

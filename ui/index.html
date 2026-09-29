@@ -73,7 +73,7 @@
     <section>
       <h4>Summary language</h4>
       <select id="summary_lang" aria-label="summary language"></select>
-      <p class="hint">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated at the end of the triage, so both are kept and the EN button switches between them; a PR triaged in another language is translated when you open it. Translations are cached. Code, paths and quoted evidence stay as they are.</p>
+      <p class="hint">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated in the background once the triage ends, so both are kept and the EN button switches between them; a PR triaged in another language is translated when you open it. Translations are cached. Code, paths and quoted evidence stay as they are.</p>
     </section>
     <section>
       <h4>Review budget</h4>
@@ -100,9 +100,22 @@
       <h4>Fix issues</h4>
       <label for="fix_location">Apply fixes in</label>
       <select id="fix_location" aria-label="fix location"><option value="worktree">Separate worktree (default)</option><option value="clone">Cached local clone</option></select>
+      <label for="fix_uncommitted">Uncommitted local changes</label>
+      <select id="fix_uncommitted" aria-label="uncommitted local changes"><option value="">Ask each time</option><option value="commit">Commit them, then fix in a worktree</option><option value="branch">Fix in the current branch</option></select>
       <label class="check"><input type="checkbox" id="recursive_fix"> keep fixing issues found by follow-up reviews</label>
       <label class="check" for="max_fix_rounds">Maximum fix and review rounds <input type="number" id="max_fix_rounds" min="1" max="10" value="3" style="width:64px"></label>
       <p class="hint">The cached clone option checks out the PR branch in the app's clone and applies changes there. It stops if that clone already has local changes. Existing fix results keep their current location. The selected issue and code touched by each fix are reviewed after every round.</p>
+    </section>
+  </form>
+</dialog>
+<dialog id="fix-uncommitted" class="settings-dlg" aria-labelledby="fix-uncommitted-title">
+  <form method="dialog">
+    <div class="dlg-head"><h3 id="fix-uncommitted-title">Uncommitted changes</h3><button class="icon" value="" aria-label="Close">✕</button></div>
+    <section>
+      <p>The checkout has changes that aren't committed. A fix in a separate worktree starts from the last commit, so it wouldn't see them.</p>
+      <p class="hint"><b>Commit and fix</b> commits everything, with a message the summarizer writes, then fixes in a worktree. <b>Fix in current branch</b> applies the fix to your checkout, next to your uncommitted changes.</p>
+      <label class="check"><input type="checkbox" id="fix-uncommitted-save"> Don't ask again (change it in Settings, under Fix issues)</label>
+      <div class="dlg-actions"><button value="">Cancel</button> <button value="branch">Fix in current branch</button> <button class="primary" value="commit">Commit and fix</button></div>
     </section>
   </form>
 </dialog>
