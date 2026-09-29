@@ -182,9 +182,13 @@ type jobOptions struct {
 	Lint          *string `json:"lint"`
 	Incremental   *bool   `json:"incremental"`
 	SummaryLang   *string `json:"summary_lang"`
-	CodeRoot      *string `json:"code_root"`
-	Org           *string `json:"org"`
-	Force         bool    `json:"force"`
+	// Translator and TranslateModel work like Classifier and ClassifyModel.
+	Translator      string  `json:"translator"`
+	TranslateModel  string  `json:"translate_model"`
+	TranslateEffort *string `json:"translate_effort"`
+	CodeRoot        *string `json:"code_root"`
+	Org             *string `json:"org"`
+	Force           bool    `json:"force"`
 }
 
 func (t *triager) options(jo jobOptions) options {
@@ -220,6 +224,15 @@ func (t *triager) options(jo jobOptions) options {
 	}
 	if jo.Incremental != nil {
 		o.incremental = *jo.Incremental
+	}
+	if jo.Translator != "" || jo.TranslateModel != "" {
+		if jo.Translator != "" {
+			o.translator = llm.ProviderID(jo.Translator)
+		}
+		o.translateModel = jo.TranslateModel
+	}
+	if jo.TranslateEffort != nil {
+		o.translateEffort = strings.TrimSpace(*jo.TranslateEffort)
 	}
 	if jo.SummaryLang != nil {
 		o.summaryLang = strings.TrimSpace(*jo.SummaryLang)
@@ -632,6 +645,7 @@ func newServeHandler(o options) (http.Handler, error) {
 		writeJSON(w, 200, map[string]any{
 			"classifier": d.classifier, "classify_model": d.classifyModel,
 			"summarizer": d.summarizer, "summary_model": d.summaryModel,
+			"translator": d.translator, "translate_model": d.translateModel, "translate_effort": d.translateEffort,
 			"classify_effort": d.classifyEffort, "review_effort": d.reviewEffort,
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
@@ -910,13 +924,14 @@ func portOf(addr string) string {
 // providerChoice is one provider the UI can offer, with its models and the
 // defaults for each role.
 type providerChoice struct {
-	ID            string      `json:"id"`
-	Reason        string      `json:"reason"`
-	Live          bool        `json:"live"`
-	Models        []llm.Model `json:"models"`
-	ClassifyModel string      `json:"classify_model,omitempty"`
-	SummaryModel  string      `json:"summary_model,omitempty"`
-	Summarize     bool        `json:"summarize"` // openjev only classifies
+	ID             string      `json:"id"`
+	Reason         string      `json:"reason"`
+	Live           bool        `json:"live"`
+	Models         []llm.Model `json:"models"`
+	ClassifyModel  string      `json:"classify_model,omitempty"`
+	TranslateModel string      `json:"translate_model,omitempty"`
+	SummaryModel   string      `json:"summary_model,omitempty"`
+	Summarize      bool        `json:"summarize"` // openjev only classifies
 }
 
 // providerList is GET /api/providers: the providers this machine can run
@@ -932,16 +947,17 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 			continue
 		}
 		pc := providerChoice{ID: c.Provider, Reason: c.Reason, Live: c.Live, Models: c.Models,
-			ClassifyModel: classifyDefaults[c.Provider], SummaryModel: summaryDefaults[c.Provider], Summarize: c.Provider != "openjev"}
+			ClassifyModel: classifyDefaults[c.Provider], SummaryModel: summaryDefaults[c.Provider], Summarize: c.Provider != "openjev",
+			TranslateModel: orDefault(translateDefaults[c.Provider], classifyDefaults[c.Provider])}
 		// A default the list doesn't show (hidden or older) is still offered.
-		for _, m := range []string{pc.SummaryModel, pc.ClassifyModel} {
+		for _, m := range []string{pc.SummaryModel, pc.ClassifyModel, pc.TranslateModel} {
 			if m != "" && !hasModel(pc.Models, m) {
 				pc.Models = append([]llm.Model{{ID: m}}, pc.Models...)
 			}
 		}
 		// Ollama's defaults are whatever is pulled if the preset isn't.
 		if c.Provider == "ollama" && len(c.Models) > 0 && !hasModel(c.Models, llm.OllamaQwen35_9B) {
-			pc.Models, pc.ClassifyModel, pc.SummaryModel = c.Models, c.Models[0].ID, c.Models[0].ID
+			pc.Models, pc.ClassifyModel, pc.SummaryModel, pc.TranslateModel = c.Models, c.Models[0].ID, c.Models[0].ID, c.Models[0].ID
 		}
 		avail = append(avail, pc)
 	}
@@ -949,6 +965,7 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 		"providers": avail, "unavailable": missing,
 		"classifier": d.classifier, "classify_model": d.classifyModel,
 		"summarizer": d.summarizer, "summary_model": d.summaryModel,
+		"translator": d.translator, "translate_model": d.translateModel,
 	}
 }
 

@@ -255,3 +255,7 @@ func CarriedDecision(old *Unit) Decision {
 	d.Failed = true
 	return d
 }
+
+// SameDiff says whether a and b show the same diff lines, context and
+// all: whether a decision or review made for one holds for the other.
+func SameDiff(a, b *Unit) bool { return diffBody(a) == diffBody(b) }

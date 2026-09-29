@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -365,82 +366,130 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			threads[x.Comment.Thread] = true
 		}
 	}
+	// Each round fixes and then checks: the check reviews what the patch
+	// touched and asks whether the targeted comments were addressed, and
+	// what it still finds goes into the next round. Classification, lint
+	// and the code map wait until the rounds are done, since only the
+	// final code's buckets count, and run once.
 	current := old
 	rounds := 1
 	if req.Recursive {
 		rounds = req.MaxRounds
 	}
+	applied := 0
+	stopped := "" // why the rounds ended early, once one had applied
 	for round := 1; round <= rounds && len(issues) > 0; round++ {
 		progress("fix", round, rounds)
-		patch, err := makeFixPatch(ctx, o, fixDir, current, issues, "")
+		changed, err := fixRound(ctx, o, fixDir, current, issues)
 		if err != nil {
-			return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
-		}
-		changed, err := applyFixPatch(ctx, fixDir, patch)
-		if err != nil {
-			// A patch that does not apply is usually a slip in its
-			// format or context: the fixer gets one try to correct it.
-			patch, err = makeFixPatch(ctx, o, fixDir, current, issues, fmt.Sprintf("Your previous patch did not apply (%v):\n````\n%s\n````\nReturn the whole corrected patch.", err, patch))
-			if err == nil {
-				changed, err = applyFixPatch(ctx, fixDir, patch)
+			if applied == 0 || ctx.Err() != nil {
+				return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
 			}
+			stopped = fmt.Sprintf("fix round %d failed, so the fix stops at round %d: %v", round, applied, err)
+			break
+		}
+		applied++
+		progress("check", round, rounds)
+		next, reviewed, err := t.checkFix(ctx, old, current, fixDir, o, selected, changed, threads, old.FixRounds+round)
+		if err == nil {
+			err = unreviewed(next, reviewed)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
-		}
-		progress("review fix", round, rounds)
-		next, reviewed, err := t.reviewFix(ctx, old, current, fixDir, o, selected, changed, threads, current.FixRounds+1)
-		if err != nil {
-			return nil, fmt.Errorf("round %d review: %w (worktree: %s)", round, err, fixDir)
-		}
-		next.LocalFixDir = fixDir
-		if old.PR.LocalPath != "" {
-			snapshot, err := inspectLocal(ctx, fixDir)
-			if err != nil {
+			if ctx.Err() != nil {
 				return nil, err
 			}
-			next.PR = snapshot.info
+			// The re-triage reviews what the failed check left out.
+			stopped = fmt.Sprintf("checking fix round %d failed: %v", round, err)
+			break
 		}
-		next.LocalFixBranch = fixBranch
-		next.LocalFixLocation = fixLocation
-		next.FixRounds = current.FixRounds + 1
-		next.FixWarning = warning
-		next.Key = "fix__" + ref.FileKey() + "__" + jobID
-		if err := t.saveFixResult(next); err != nil {
+		current, selected = next, reviewed
+		issues = remaining(next, reviewed, threads)
+	}
+	if stopped != "" {
+		t.warn(ctx, jobID, stopped)
+	}
+	progress("triage", 0, 0)
+	next, err := t.retriageFix(ctx, old, current, fixDir, o)
+	if err != nil {
+		return nil, fmt.Errorf("re-triage: %w (worktree: %s)", err, fixDir)
+	}
+	next.LocalFixDir = fixDir
+	if old.PR.LocalPath != "" {
+		snapshot, err := inspectLocal(ctx, fixDir)
+		if err != nil {
 			return nil, err
 		}
-		current = next
-		selected = reviewed
-		issues = nil
-		for _, f := range next.Files {
-			for _, u := range f.Units {
-				if !reviewed[u.ID] {
-					continue
-				}
-				if !u.Reviewed {
-					return nil, fmt.Errorf("round %d: review failed for %s (worktree: %s)", round, u.ID, fixDir)
-				}
+		next.PR = snapshot.info
+	}
+	next.LocalFixBranch = fixBranch
+	next.LocalFixLocation = fixLocation
+	next.FixRounds = old.FixRounds + applied
+	next.FixWarning = strings.Join(slices.DeleteFunc([]string{warning, stopped}, func(s string) bool { return s == "" }), "; ")
+	next.Key = "fix__" + ref.FileKey() + "__" + jobID
+	if err := t.saveFixResult(next); err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
+// fixRound asks for a patch and applies it. A patch that does not apply
+// is usually a slip in its format or context: the fixer gets one try to
+// correct it.
+func fixRound(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue) ([]triage.FileDiff, error) {
+	patch, err := makeFixPatch(ctx, o, dir, r, issues, "")
+	if err != nil {
+		return nil, err
+	}
+	changed, err := applyFixPatch(ctx, dir, patch)
+	if err != nil {
+		patch, err = makeFixPatch(ctx, o, dir, r, issues, fmt.Sprintf("Your previous patch did not apply (%v):\n````\n%s\n````\nReturn the whole corrected patch.", err, patch))
+		if err == nil {
+			changed, err = applyFixPatch(ctx, dir, patch)
+		}
+	}
+	return changed, err
+}
+
+// unreviewed says which unit a check meant to review got no answer.
+func unreviewed(r *PRResult, reviewed map[string]bool) error {
+	for _, f := range r.Files {
+		for _, u := range f.Units {
+			if reviewed[u.ID] && !u.Reviewed {
+				return fmt.Errorf("review failed for %s", u.ID)
+			}
+		}
+	}
+	return nil
+}
+
+// remaining is what the next round works on: the issues a check found in
+// the units it reviewed, and the targeted threads still not addressed.
+// Addressed threads are dropped from threads.
+func remaining(r *PRResult, reviewed, threads map[string]bool) []targetedIssue {
+	var out []targetedIssue
+	for _, f := range r.Files {
+		for _, u := range f.Units {
+			if reviewed[u.ID] {
 				for _, issue := range u.Issues {
-					issues = append(issues, targetedIssue{u.ID, f.Path, issue, nil})
+					out = append(out, targetedIssue{u.ID, f.Path, issue, nil})
 				}
 			}
 		}
-		// Threads the round did not address go round again.
-		for _, f := range next.Files {
-			for _, u := range f.Units {
-				for i := range u.Threads {
-					if th := &u.Threads[i]; threads[th.ID] {
-						if th.Fixed {
-							delete(threads, th.ID)
-						} else {
-							issues = append(issues, threadTarget(u.ID, f.Path, th))
-						}
+	}
+	for _, f := range r.Files {
+		for _, u := range f.Units {
+			for i := range u.Threads {
+				if th := &u.Threads[i]; threads[th.ID] {
+					if th.Fixed {
+						delete(threads, th.ID)
+					} else {
+						out = append(out, threadTarget(u.ID, f.Path, th))
 					}
 				}
 			}
 		}
 	}
-	return current, nil
+	return out
 }
 
 // checkoutFixBranch gives a fix worktree a branch at the exact reviewed PR
@@ -622,7 +671,7 @@ func gitPatch(patch, dir string) (string, error) {
 	lines := strings.Split(patch, "\n")
 	var out []string
 	var fileLines []string // the updated file's current lines
-	from, delta := 0, 0     // search position and line shift in that file
+	from, delta := 0, 0    // search position and line shift in that file
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
 		switch {
@@ -769,11 +818,9 @@ func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, e
 	return files, nil
 }
 
-// reviewFix re-reviews the units the fix touched and carries everything
-// else over. Review threads stay on their unit (by ID, else by line), and
-// each targeted thread is checked against the fixed code; round is the
-// fix round that addressed it.
-func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, dir string, o options, selected map[string]bool, changed []triage.FileDiff, targeted map[string]bool, round int) (*PRResult, map[string]bool, error) {
+// fixPipeline builds the triage pipeline over the fix checkout: its diff
+// against the PR base, with the repository's policy.
+func fixPipeline(original *PRResult, dir string, o options) (*triage.Source, *triage.Pipeline, error) {
 	_, _ = triage.Git(dir, "add", "-N", ".") // expose newly created files to git diff
 	base := original.PR.BaseOid
 	raw, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", base)
@@ -797,16 +844,31 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 	if err != nil {
 		return nil, nil, err
 	}
-	if m := loadCodeMap(o.codemapDir); m != nil {
-		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: original.PR.Repo}
+	return src, pipe, nil
+}
+
+func unitsByID(r *PRResult) map[string]*triage.Unit {
+	out := map[string]*triage.Unit{}
+	for _, u := range resultUnitsWithHunks(r) {
+		out[u.ID] = u
 	}
-	prior := map[string]*triage.Unit{}
-	for _, f := range previous.Files {
-		for _, u := range f.Units {
-			prior[u.ID] = u.Unit
-		}
+	return out
+}
+
+// checkFix reviews what a fix round touched, and the units it targeted,
+// and carries everything else over. Each targeted thread is checked
+// against the fixed code; round is the fix round that addressed it. It
+// is review only: no classifier call, lint or code map, so its buckets
+// and scores are not final, and retriageFix places the units once the
+// rounds are done.
+func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, dir string, o options, selected map[string]bool, changed []triage.FileDiff, targeted map[string]bool, round int) (*PRResult, map[string]bool, error) {
+	src, pipe, err := fixPipeline(original, dir, o)
+	if err != nil {
+		return nil, nil, err
 	}
-	pipe.Classifier = &carryClassifier{pipe.Classifier, prior, changed}
+	prior := unitsByID(previous)
+	pipe.Classifier, pipe.Decisions = keptDecisions(prior), nil
+	pipe.Lint, pipe.CodeMap = nil, nil
 	reviewed := map[string]bool{}
 	pipe.ReviewFilter = func(u *triage.Unit) bool {
 		if selected[u.ID] || touchesPatch(u, changed) {
@@ -819,38 +881,13 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	var lost []triage.Thread
-	for _, old := range prior {
-		lost = append(lost, old.Threads...)
-	}
-	placed := map[string]bool{}
+	placeThreads(units, prior, reviewed)
 	for _, u := range units {
-		old := prior[u.ID]
-		if old != nil {
-			u.Threads = append([]triage.Thread(nil), old.Threads...)
-			for _, th := range u.Threads {
-				placed[th.ID] = true
-			}
-		}
-		if reviewed[u.ID] {
-			// The issues were re-found, so their indexes changed.
-			for i := range u.Threads {
-				u.Threads[i].DuplicateOf = nil
-			}
-			continue
-		}
-		if old != nil {
+		if old := prior[u.ID]; old != nil && !reviewed[u.ID] {
 			u.Decision, u.Summary, u.Headline, u.Focus = old.Decision, old.Summary, old.Headline, old.Focus
 			u.Reviewed, u.Issues, u.Attention, u.Score = old.Reviewed, old.Issues, old.Attention, old.Score
 		}
 	}
-	var orphans []triage.Thread
-	for _, th := range lost {
-		if !placed[th.ID] {
-			orphans = append(orphans, th)
-		}
-	}
-	triage.AssignThreads(units, orphans)
 	if pipe.Summarizer != nil {
 		for _, u := range units {
 			for i := range u.Threads {
@@ -870,6 +907,87 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 			}
 		}
 	}
+	return fixResult(previous, src, units), reviewed, nil
+}
+
+// retriageFix triages the fixed code once the rounds are done. Units
+// whose diff the fix did not change keep the decision original gave
+// them, and units last checked keep that review, so this pass normally
+// only classifies what the fix changed, lints and scores. A unit whose
+// diff moved since last (a round whose check failed) is reviewed here.
+func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir string, o options) (*PRResult, error) {
+	src, pipe, err := fixPipeline(original, dir, o)
+	if err != nil {
+		return nil, err
+	}
+	if m := loadCodeMap(o.codemapDir); m != nil {
+		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: original.PR.Repo}
+	}
+	if pipe.Classifier != nil {
+		pipe.Classifier = &carryClassifier{pipe.Classifier, unitsByID(original)}
+	}
+	prior := unitsByID(last)
+	pipe.CarryFrom = func(fresh []*triage.Unit) *triage.ReviewCarry {
+		c := &triage.ReviewCarry{Reuse: map[string]*triage.Unit{}}
+		for _, u := range fresh {
+			if old := prior[u.ID]; old != nil && old.Reviewed && triage.SameDiff(old, u) {
+				c.Reuse[u.ID] = old
+			}
+		}
+		return c
+	}
+	reviewed := map[string]bool{}
+	pipe.ReviewFilter = func(u *triage.Unit) bool {
+		if old := prior[u.ID]; old == nil || !triage.SameDiff(old, u) {
+			reviewed[u.ID] = true
+			return true
+		}
+		return false
+	}
+	units := pipe.Run(ctx, src)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(reviewed) > 0 {
+		activity.Printf(ctx, "re-triage reviewed %d units the checks did not", len(reviewed))
+	}
+	placeThreads(units, prior, reviewed)
+	return fixResult(last, src, units), nil
+}
+
+// placeThreads gives units the review threads prior had: on their unit by
+// ID, else by line. A reviewed unit's issues were found again, so the
+// duplicate links into them are dropped.
+func placeThreads(units []*triage.Unit, prior map[string]*triage.Unit, reviewed map[string]bool) {
+	var lost []triage.Thread
+	for _, old := range prior {
+		lost = append(lost, old.Threads...)
+	}
+	placed := map[string]bool{}
+	for _, u := range units {
+		if old := prior[u.ID]; old != nil {
+			u.Threads = append([]triage.Thread(nil), old.Threads...)
+			for _, th := range u.Threads {
+				placed[th.ID] = true
+			}
+		}
+		if reviewed[u.ID] {
+			for i := range u.Threads {
+				u.Threads[i].DuplicateOf = nil
+			}
+		}
+	}
+	var orphans []triage.Thread
+	for _, th := range lost {
+		if !placed[th.ID] {
+			orphans = append(orphans, th)
+		}
+	}
+	triage.AssignThreads(units, orphans)
+}
+
+// fixResult is previous with units in place of its review.
+func fixResult(previous *PRResult, src *triage.Source, units []*triage.Unit) *PRResult {
 	// Re-found issues and fixed comments change what the comments add.
 	tp := previous.tierPolicy()
 	for _, u := range units {
@@ -889,25 +1007,32 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 		sort.SliceStable(us, func(i, j int) bool { return us[i].Line < us[j].Line })
 		next.Files = append(next.Files, resultFile{FileDiff: f, Units: us})
 	}
-	return &next, reviewed, nil
+	return &next
 }
 
-// carryClassifier keeps the earlier decision for units the fix did not
-// touch, so a fix round only pays to classify the code it changed. With a
-// reviewer there is no inner classifier: the review places what the fix
-// touched, and the rest keeps its decision.
+// keptDecisions places the units a check sees without asking the
+// classifier: from the result before it, or as human for a unit it did
+// not have. The re-triage decides them for real.
+type keptDecisions map[string]*triage.Unit
+
+func (k keptDecisions) Classify(_ context.Context, u *triage.Unit) triage.Decision {
+	if old := k[u.ID]; old != nil {
+		return triage.CarriedDecision(old)
+	}
+	return triage.Decision{Bucket: triage.BucketHuman, Source: "none", Reason: "decided when the fix is re-triaged", Failed: true}
+}
+
+// carryClassifier keeps the decision the fix started from for units whose
+// diff the fix did not change, so the re-triage only pays to classify
+// the code the fix changed. prior needs its units' hunks.
 type carryClassifier struct {
 	triage.Classifier
-	prior   map[string]*triage.Unit
-	changed []triage.FileDiff
+	prior map[string]*triage.Unit
 }
 
 func (c *carryClassifier) Classify(ctx context.Context, u *triage.Unit) triage.Decision {
-	if old := c.prior[u.ID]; old != nil && !touchesPatch(u, c.changed) {
+	if old := c.prior[u.ID]; old != nil && triage.SameDiff(old, u) {
 		return triage.CarriedDecision(old)
-	}
-	if c.Classifier == nil {
-		return triage.Decision{Bucket: triage.BucketHuman, Source: "none", Reason: "no classifier configured"}
 	}
 	return c.Classifier.Classify(ctx, u)
 }

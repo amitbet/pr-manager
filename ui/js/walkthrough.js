@@ -1,6 +1,6 @@
 // Walkthrough tab: one step at a time, most important first, with the
-// explanation beside the code. A step is one file's changes (Settings →
-// Walkthrough), else one unit.
+// explanation beside the code. A step is one unit, or one file's changes
+// (Settings → Walkthrough steps).
 import { trText, trDir } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
 import { S, render, allUnits, fileByPath } from "./state.js";

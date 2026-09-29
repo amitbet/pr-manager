@@ -38,7 +38,10 @@ type options struct {
 	codemapConfig                          string
 	codeRoot, org                          string // code map sources, see codemap_build.go
 	classifyEffort, reviewEffort           string
-	reviewTools                            bool
+	// translator, translateModel and translateEffort pick the model that
+	// translates to -summary-lang; see translator.
+	translator, translateModel, translateEffort string
+	reviewTools                                 bool
 	// incremental lets a re-run of the same PR keep the review of units
 	// whose diff and surroundings did not move.
 	incremental bool
@@ -114,6 +117,9 @@ func main() {
 	fs.BoolVar(&o.incremental, "incremental", true, "when a PR is triaged again after a push, keep the review of every unit whose diff, and whose callers, callees, file-mates and moved code, did not change; the rest of the pipeline still runs on the whole diff (-incremental=false, or -force, reviews everything)")
 	fs.BoolVar(&o.groupReview, "group-review", true, "review related change units together in one call instead of one call each: fewer, larger review tasks and much less repeated context (-group-review=false to turn off; grouping in .triage.yaml overrides when this flag is not given)")
 	fs.StringVar(&o.lint, "lint", "auto", "static analysis over the lines the PR adds, fed to the review prompt, the likelihood score and the Issues tab: auto (the linters the repository is configured for and that are installed, plus the built-in secret scan), off, or a comma-separated list of "+strings.Join(triage.KnownLinters(), ",")+" (lint in .triage.yaml decides when this flag is not given)")
+	fs.StringVar(&o.translator, "translator", "auto", "provider that translates to -summary-lang (auto: the reviewer's provider, else the classifier's)")
+	fs.StringVar(&o.translateModel, "translate-model", "", "translation model (default per provider: the fastest that translates well)")
+	fs.StringVar(&o.translateEffort, "translate-effort", "auto", "reasoning effort for translation (openai, codex, claude-code; auto = per provider, '' = model default)")
 	fs.StringVar(&o.summaryLang, "summary-lang", "", "language to translate summaries, review notes and issue text into, e.g. Hebrew or Japanese (default English: no translation)")
 	fs.StringVar(&o.reviewBudget, "review-budget", "", "how much goes to human review: "+strings.Join(triage.BudgetNames, "|")+" (default: tiers.review_budget in the policy, else "+triage.DefaultBudget+")")
 	fs.StringVar(&o.openjevURL, "openjev-url", "", "OpenJev server (default $OPENJEV_BASE_URL or http://127.0.0.1:8771)")
@@ -342,6 +348,11 @@ var (
 		llm.Bedrock: llm.BedrockSonnet5, llm.Vertex: llm.VertexSonnet5, llm.Foundry: llm.FoundrySonnet5,
 		llm.AzureOpenAI: orDefault(os.Getenv("AZURE_OPENAI_REVIEW_DEPLOYMENT"), llm.OpenAIGPT6Sol),
 	}
+	// Translation: on the CLIs, the fastest of their models in a benchmark
+	// on cached PRs (claude-code's Haiku was the slowest); elsewhere the
+	// classifier's small model.
+	translateDefaults = map[string]string{"codex": llm.CodexTranslate, "claude-code": llm.ClaudeCodeTranslate}
+	translateEfforts  = map[string]string{"codex": "minimal", "claude-code": "low", llm.OpenAIAPI: "minimal", llm.AzureOpenAI: "minimal"}
 )
 
 // resolveProviders replaces "auto" with the best provider that has
@@ -379,6 +390,25 @@ func resolveProviders(o options) options {
 	}
 	if o.summaryModel == "" {
 		o.summaryModel = summaryDefaults[o.summarizer]
+	}
+	// Translation follows the reviewer, else the classifier: whichever
+	// provider the run already uses. OpenJev can't translate.
+	if o.translator == "auto" || o.translator == "" {
+		o.translator = ""
+		for _, p := range []string{o.summarizer, o.classifier, o.fallback} {
+			if p != "off" && p != "openjev" {
+				o.translator = p
+				break
+			}
+		}
+	} else {
+		o.translator = llm.ProviderID(o.translator)
+	}
+	if o.translateModel == "" {
+		o.translateModel = orDefault(translateDefaults[o.translator], classifyDefaults[o.translator])
+	}
+	if o.translateEffort == "auto" {
+		o.translateEffort = orDefault(translateEfforts[o.translator], "low")
 	}
 	return o
 }

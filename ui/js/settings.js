@@ -11,7 +11,8 @@ import { refreshJobs } from "./jobs.js";
 // model list. "default" means the server's choice for that role.
 const ROLES = [
   { role: "classifier", model: "classify_model", def: "classify_model", label: "classifier" },
-  { role: "summarizer", model: "summary_model", def: "summary_model", label: "summarizer" },
+  { role: "summarizer", model: "summary_model", def: "summary_model", label: "reviewer" },
+  { role: "translator", model: "translate_model", def: "translate_model", label: "translator", noOff: true },
 ];
 let P = null; // GET /api/providers
 const saved = (k) => localStorage.getItem(`pr-manager.${k}`) || "";
@@ -36,9 +37,9 @@ function fillProviders(r) {
   sel.title = `${r.label} provider${why ? `\n\nnot available:\n${why}` : ""}`;
   sel.innerHTML = `<option value="">default (${esc(P[r.role])})</option>` +
     list.map((p) => `<option value="${esc(p.id)}" title="${esc(p.reason)}">${esc(p.id)}</option>`).join("") +
-    `<option value="off">off</option>`;
+    (r.noOff ? "" : `<option value="off">off</option>`);
   const want = saved(r.role);
-  sel.value = want === "off" || list.some((p) => p.id === want) ? want : "";
+  sel.value = (want === "off" && !r.noOff) || list.some((p) => p.id === want) ? want : "";
 }
 
 function fillModels(r) {
@@ -146,13 +147,34 @@ function showBudget() {
   showLine();
 }
 
+// classifying: the reviewer is off, so the classifier places the units.
+// Otherwise the review call does and the classifier settings do nothing.
+function classifying() {
+  return ($("#summarizer").value || P?.summarizer) === "off";
+}
+
+// Translation effort: "" is the server's choice for the translator.
+const EFFORTS = ["none", "minimal", "low", "medium"];
+function fillEffort() {
+  const sel = $("#translate_effort");
+  const def = S.cfg?.translate_effort || "model default";
+  sel.innerHTML = `<option value="">default (${esc(def)})</option>` + EFFORTS.map((e) => `<option value="${e}">${e}</option>`).join("");
+  sel.value = EFFORTS.includes(saved("translate_effort")) ? saved("translate_effort") : "";
+  sel.onchange = () => save("translate_effort", sel.value);
+}
+
 function showLine() {
+  // The translator only matters when there is something to translate.
+  $("#translate-opts").style.display = summaryLang() ? "" : "none";
+  const cls = classifying();
+  for (const el of document.querySelectorAll(".classify-only")) el.style.display = cls ? "" : "none";
   const list = budgetList();
   const b = list.length ? budget.chosen(list, budgetDefault()) : "";
   const lang = summaryLang();
-  const text = [roleText(ROLES[0]), roleText(ROLES[1])].join(" · ") + (lang ? ` · ${lang}` : "") + (b ? ` · budget ${b}` : "");
+  const models = cls ? `classify ${roleText(ROLES[0])} · no review` : `analyze ${roleText(ROLES[1])}`;
+  const text = models + (lang ? ` · ${lang}` : "") + (b ? ` · budget ${b}` : "");
   $("#settings-line").textContent = text;
-  $("#settings-line").title = `classifier · summarizer${lang ? " · language" : ""} · review budget\n${text}`;
+  $("#settings-line").title = `models${lang ? " · language" : ""} · review budget\n${text}`;
 }
 
 // Code map sources. Empty fields fall back to the server's
@@ -207,7 +229,7 @@ async function runIndex() {
 // jobSettings are the fields a triage request sends.
 export function jobSettings() {
   const body = {};
-  for (const k of ["classifier", "classify_model", "summarizer", "summary_model"]) body[k] = $("#" + k).value.trim();
+  for (const k of ["classifier", "classify_model", "summarizer", "summary_model", "translator", "translate_model"]) body[k] = $("#" + k).value.trim();
   body.review_tools = $("#review_tools").checked;
   body.classify_batch = $("#classify_batch").checked;
   body.lint = $("#lint").checked ? "auto" : "off";
@@ -215,6 +237,8 @@ export function jobSettings() {
   // Only sent when picked, so the server's -summary-lang stays the default.
   const lang = $("#summary_lang").value;
   if (lang) body.summary_lang = lang;
+  const effort = $("#translate_effort").value;
+  if (effort) body.translate_effort = effort;
   return { ...body, ...codeSources() };
 }
 
@@ -294,6 +318,7 @@ export function initSettings(changed, langChanged) {
     save("max_fix_rounds", rounds.value);
   };
   fillLang();
+  fillEffort();
   fillCodeSources();
   $("#providers-refresh").onclick = () => loadProviders(true);
   loadProviders(false);

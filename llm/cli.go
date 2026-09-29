@@ -28,6 +28,9 @@ const (
 	CodexLarge      = OpenAIGPT6Sol
 	ClaudeCodeSmall = "claude-haiku-4-5"
 	ClaudeCodeLarge = AnthropicClaudeOpus55
+	// The fastest to translate in a benchmark of the models on each CLI.
+	CodexTranslate      = "gpt-5.6-luna"
+	ClaudeCodeTranslate = "claude-sonnet-5-5"
 )
 
 const cliTimeout = 5 * time.Minute

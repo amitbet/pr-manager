@@ -41,6 +41,7 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg .grid { display: grid; grid-template-columns: auto 1fr 1.4fr; gap: 6px 8px; align-items: center; font-size: 14px; }
 .settings-dlg select { font-size: 13px; min-width: 0; }
 .settings-dlg .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0 8px; }
+.settings-dlg .grid.translate-opts { margin-top: 8px; }
 .settings-dlg .grid.codemap-src { grid-template-columns: auto 1fr; }
 .settings-dlg .grid.fix-opts { grid-template-columns: auto auto; justify-content: start; margin-bottom: 6px; }
 .settings-dlg .codemap-src input { font-size: 13px; min-width: 0; }

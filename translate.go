@@ -108,25 +108,17 @@ func (t *triager) translate(ctx context.Context, r *PRResult, o options) (*trans
 
 var newTranslator = translator // tests replace it
 
-// translator is the model that translates: the classifier's, which is the
-// small fast one, else the small model of the summarizer's provider.
+// translator is the model that translates, as resolveProviders picked it.
 func translator(o options) (llm.LLMTool, error) {
-	for _, c := range [][2]string{
-		{o.classifier, o.classifyModel},
-		{o.fallback, o.fallbackModel}, // the classifier's when it is openjev
-		{o.summarizer, classifyDefaults[o.summarizer]},
-	} {
-		if c[0] == "" || c[0] == "off" || c[0] == "openjev" {
-			continue
-		}
-		l, err := llm.New(c[0], c[1])
-		if err != nil {
-			return nil, err
-		}
-		llm.SetEffort(l, o.classifyEffort)
-		return l, nil
+	if o.translator == "" || o.translator == "off" || o.translator == "openjev" {
+		return nil, errors.New("no model to translate with: pick a translator provider")
 	}
-	return nil, errors.New("no model to translate with: pick a classifier or summarizer provider")
+	l, err := llm.New(o.translator, o.translateModel)
+	if err != nil {
+		return nil, err
+	}
+	llm.SetEffort(l, o.translateEffort)
+	return l, nil
 }
 
 // translateUnits translates units without a cache, for -C runs.

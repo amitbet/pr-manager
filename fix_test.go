@@ -43,23 +43,40 @@ func (c *countingClassifier) Classify(context.Context, *triage.Unit) triage.Deci
 	return triage.Decision{Bucket: triage.BucketHuman, Source: "llm"}
 }
 
-func TestCarryClassifierOnlyClassifiesTouchedUnits(t *testing.T) {
-	changed := []triage.FileDiff{{Path: "a.go", Hunks: []triage.Hunk{{NewStart: 3, NewLines: 1}}}}
+func TestCarryClassifierOnlyClassifiesChangedUnits(t *testing.T) {
+	hunk := func(line string) []triage.Hunk { return []triage.Hunk{{NewStart: 3, NewLines: 1, Lines: []string{line}}} }
 	kept := triage.Decision{Bucket: triage.BucketSkim, Source: "llm", Reason: "earlier"}
 	prior := map[string]*triage.Unit{
-		"a.go:f": {ID: "a.go:f", Decision: kept},
-		"a.go:g": {ID: "a.go:g", Decision: kept},
+		"a.go:f": {ID: "a.go:f", Decision: kept, Hunks: hunk("+return 0")},
+		"a.go:g": {ID: "a.go:g", Decision: kept, Hunks: hunk("+return 2")},
 	}
 	inner := &countingClassifier{}
-	c := &carryClassifier{inner, prior, changed}
+	c := &carryClassifier{inner, prior}
 	ctx := context.Background()
-	if d := c.Classify(ctx, &triage.Unit{ID: "a.go:g", File: "a.go", Hunks: []triage.Hunk{{NewStart: 20, NewLines: 2}}}); d.Reason != "earlier" || inner.calls != 0 {
-		t.Errorf("untouched unit: decision %+v, %d calls", d, inner.calls)
+	if d := c.Classify(ctx, &triage.Unit{ID: "a.go:g", File: "a.go", Hunks: hunk("+return 2")}); d.Reason != "earlier" || !d.Failed || inner.calls != 0 {
+		t.Errorf("unchanged unit: decision %+v, %d calls", d, inner.calls)
 	}
-	c.Classify(ctx, &triage.Unit{ID: "a.go:f", File: "a.go", Hunks: []triage.Hunk{{NewStart: 1, NewLines: 5}}})
-	c.Classify(ctx, &triage.Unit{ID: "a.go:new", File: "a.go", Hunks: []triage.Hunk{{NewStart: 40, NewLines: 2}}})
+	c.Classify(ctx, &triage.Unit{ID: "a.go:f", File: "a.go", Hunks: hunk("+return 1")})
+	c.Classify(ctx, &triage.Unit{ID: "a.go:new", File: "a.go", Hunks: hunk("+return 3")})
 	if inner.calls != 2 {
-		t.Errorf("touched and new units: %d calls, want 2", inner.calls)
+		t.Errorf("changed and new units: %d calls, want 2", inner.calls)
+	}
+}
+
+func TestRemainingIssuesAndThreads(t *testing.T) {
+	r := &PRResult{Files: []resultFile{
+		{FileDiff: triage.FileDiff{Path: "a.go"}, Units: []resultUnit{
+			{Unit: &triage.Unit{ID: "a.go:f", Issues: []triage.Issue{{Title: "still"}}, Threads: []triage.Thread{{ID: "t1", Fixed: true}, {ID: "t2"}}}},
+			{Unit: &triage.Unit{ID: "a.go:g", Issues: []triage.Issue{{Title: "not checked"}}}},
+		}},
+	}}
+	threads := map[string]bool{"t1": true, "t2": true}
+	got := remaining(r, map[string]bool{"a.go:f": true}, threads)
+	if len(got) != 2 || got[0].Issue.Title != "still" || got[1].Comment == nil || got[1].Comment.Thread != "t2" {
+		t.Errorf("remaining = %+v", got)
+	}
+	if threads["t1"] || !threads["t2"] {
+		t.Errorf("threads = %v, want only t2 left", threads)
 	}
 }
 
