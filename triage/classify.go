@@ -2,7 +2,10 @@ package triage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -21,6 +24,9 @@ type Decision struct {
 	// Escalated records why the classifier's bucket was raised (low
 	// confidence, a truncated diff) or the reviewer disagreed with it.
 	Escalated []string `json:"escalated,omitempty"`
+	// Failed marks a decision that stands in for an error, so it is never
+	// kept for a later run.
+	Failed bool `json:"-"`
 }
 
 func (d *Decision) escalate(to Bucket, why string) {
@@ -32,12 +38,83 @@ func (d *Decision) escalate(to Bucket, why string) {
 
 // failed is the decision for any unit whose classification errored.
 func failed(source string, err error) Decision {
-	return Decision{Bucket: BucketHuman, Source: source, Reason: "classification failed: " + err.Error()}
+	return Decision{Bucket: BucketHuman, Source: source, Reason: "classification failed: " + err.Error(), Failed: true}
 }
 
 type Classifier interface {
 	// Classify must always return a usable decision; errors become "human".
 	Classify(ctx context.Context, u *Unit) Decision
+}
+
+// BatchClassifier classifies several units in one call, which saves the
+// per-call cost (a CLI start, the system prompt) that dominates a small
+// model's answer. It returns one decision per unit, in order.
+type BatchClassifier interface {
+	Classifier
+	ClassifyBatch(ctx context.Context, units []*Unit) []Decision
+}
+
+// BatchPolicy controls how many units share one classify call.
+type BatchPolicy struct {
+	// MaxUnits caps the units in one call (1: one call per unit).
+	MaxUnits int `yaml:"max_units"`
+	// MaxChars caps the diff text in one call. A unit at least this big
+	// is classified alone.
+	MaxChars int `yaml:"max_chars"`
+}
+
+const (
+	DefaultBatchUnits = 6
+	DefaultBatchChars = 16000
+)
+
+func DefaultBatchPolicy() BatchPolicy {
+	return BatchPolicy{MaxUnits: DefaultBatchUnits, MaxChars: DefaultBatchChars}
+}
+
+// classifyBatches packs units into classify calls in their order, which
+// keeps a file's units, and a package's files, together.
+func classifyBatches(units []*Unit, p BatchPolicy) [][]*Unit {
+	var out [][]*Unit
+	var cur []*Unit
+	chars := 0
+	for _, u := range units {
+		n := len(u.Diff())
+		if len(cur) > 0 && (len(cur) >= p.MaxUnits || chars+n > p.MaxChars) {
+			out, cur, chars = append(out, cur), nil, 0
+		}
+		cur, chars = append(cur, u), chars+n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+func batchID(b []*Unit) string {
+	ids := make([]string, len(b))
+	for i, u := range b {
+		ids[i] = u.ID
+	}
+	return strings.Join(ids, " + ")
+}
+
+// DecisionStore keeps classifier decisions between runs. Keys come from
+// decisionKey.
+type DecisionStore interface {
+	Load(key string) (Decision, bool)
+	Save(key string, d Decision)
+}
+
+// decisionKey is what a unit's decision depends on: the prompts, the
+// classifier and policy (salt), and the unit's file, declaration and diff.
+// The list of other units in the PR is left out, so adding a unit to a PR
+// does not send every other unit back to the model.
+func decisionKey(salt string, u *Unit) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00", PromptVersion, salt, u.File, u.Status, u.Symbol)
+	h.Write([]byte(u.Diff()))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // applyThresholds moves low-confidence answers up a bucket and forbids
@@ -62,10 +139,15 @@ func applyThresholds(d Decision, th Thresholds, truncated bool) Decision {
 // unitPrompt is unitDiff plus the IDs of the other units.
 func unitPrompt(u *Unit, maxChars int) (string, bool) {
 	s, truncated := unitDiff(u, maxChars)
-	if len(u.Related) > 0 {
-		s += "\nOther units changed in the same PR (not shown): " + strings.Join(u.Related, ", ") + "\n"
-	}
+	s += relatedLine(u.Related)
 	return s, truncated
+}
+
+func relatedLine(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return "\nOther units changed in the same PR (not shown): " + strings.Join(ids, ", ") + "\n"
 }
 
 // unitDiff is the unit's file, declaration and diff.
@@ -136,6 +218,32 @@ var triageTool = llm.ToolDefinition{
 	},
 }
 
+const classifyBatchNote = `
+
+This call holds several units of the PR, each under its own "## Unit U<n>" heading. Decide each one on its own merits, as if it were the only one shown: a harmless unit next to a risky one is still harmless, and the other way round. Submit exactly one decision per unit, with its label (U1, U2, ...) in "unit".`
+
+var triageBatchTool = func() llm.ToolDefinition {
+	props := map[string]any{"unit": map[string]any{"type": "string", "description": "The unit's label, e.g. U1."}}
+	for k, v := range triageTool.InputSchema["properties"].(map[string]any) {
+		props[k] = v
+	}
+	required := append([]string{"unit"}, triageTool.InputSchema["required"].([]string)...)
+	return llm.ToolDefinition{
+		Name:        "submit_triage_batch",
+		Description: "Submit the triage decision for every change unit in this call.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"decisions": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "object", "properties": props, "required": required},
+				},
+			},
+			"required": []string{"decisions"},
+		},
+	}
+}()
+
 // LLMClassifier classifies with a tool-calling chat model.
 type LLMClassifier struct {
 	LLM    llm.LLMTool
@@ -159,6 +267,67 @@ func (c *LLMClassifier) Classify(ctx context.Context, u *Unit) Decision {
 	}
 	d.Source = c.source()
 	return applyThresholds(d, c.Policy.Thresholds, truncated)
+}
+
+// ClassifyBatch classifies units in one call. Units the answer leaves out
+// or gets wrong, and every unit when the call fails, are classified again
+// one by one, so a bad batch costs time but never a decision.
+func (c *LLMClassifier) ClassifyBatch(ctx context.Context, units []*Unit) []Decision {
+	out := make([]Decision, len(units))
+	if len(units) == 1 {
+		out[0] = c.Classify(ctx, units[0])
+		return out
+	}
+	in := map[string]bool{}
+	for _, u := range units {
+		in[u.ID] = true
+	}
+	var sb strings.Builder
+	var others []string
+	seen := map[string]bool{}
+	truncated := make([]bool, len(units))
+	for i, u := range units {
+		s, t := unitDiff(u, c.Policy.MaxUnitChars)
+		truncated[i] = t
+		fmt.Fprintf(&sb, "## Unit U%d\n%s\n", i+1, s)
+		for _, id := range u.Related {
+			if !in[id] && !seen[id] && len(others) < maxRelated {
+				seen[id] = true
+				others = append(others, id)
+			}
+		}
+	}
+	sb.WriteString(relatedLine(others))
+	done := make([]bool, len(units))
+	args, _, err := llm.CallTool(ctx, c.LLM, []llm.ChatMessage{
+		{Role: "system", Content: classifySystem + classifyBatchNote},
+		{Role: "user", Content: sb.String()},
+	}, triageBatchTool, classifyMaxTokens+1024*int32(len(units)))
+	if err == nil {
+		list, _ := args["decisions"].([]any)
+		for _, x := range list {
+			m, _ := x.(map[string]any)
+			label, _ := m["unit"].(string)
+			i, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(label), "U"))
+			if err != nil || i < 1 || i > len(units) || done[i-1] {
+				continue
+			}
+			d, err := decodeDecision(m)
+			if err != nil {
+				continue
+			}
+			d.Source = c.source()
+			out[i-1], done[i-1] = applyThresholds(d, c.Policy.Thresholds, truncated[i-1]), true
+		}
+	}
+	// One at a time: the batch holds one concurrency slot, so the retries
+	// must not multiply the calls in flight.
+	for i, u := range units {
+		if !done[i] {
+			out[i] = c.Classify(ctx, u)
+		}
+	}
+	return out
 }
 
 // decodeDecision validates tool arguments in Go; providers (OpenAI in
@@ -239,12 +408,16 @@ func (c *JevClassifier) Classify(ctx context.Context, u *Unit) Decision {
 	prompt, truncated := unitPrompt(u, c.Policy.MaxUnitChars)
 	resp, err := c.Jev.Decide(ctx, prompt, jevQuestions)
 	if err != nil {
-		return c.fallback(ctx, u, err.Error())
+		d := c.fallback(ctx, u, err.Error())
+		d.Failed = d.Failed || c.Fallback == nil
+		return d
 	}
 	a, ok := resp.Answers["bucket"]
 	bucket := Bucket(a.Choice)
 	if !ok || !bucket.Valid() {
-		return c.fallback(ctx, u, fmt.Sprintf("invalid answer %q", a.Choice))
+		d := c.fallback(ctx, u, fmt.Sprintf("invalid answer %q", a.Choice))
+		d.Failed = d.Failed || c.Fallback == nil
+		return d
 	}
 	p := a.Probabilities[a.Choice]
 	if p == 0 {

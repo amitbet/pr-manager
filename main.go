@@ -45,6 +45,10 @@ type options struct {
 	// groupReview is only consulted when the flag was given; otherwise
 	// grouping follows the policy file.
 	groupReview, groupReviewSet bool
+	// classifyBatch overrides classify_batch.max_units when > 0.
+	classifyBatch int
+	// classifyCache keeps classifier decisions under the cache directory.
+	classifyCache bool
 	// lint is the -lint spec: auto, off or a tool list. lintSet marks the
 	// flag as given, so otherwise the policy file decides.
 	lint, lintSpecDefault          string
@@ -119,6 +123,8 @@ func main() {
 	fs.StringVar(&o.org, "org", os.Getenv("PR_MANAGER_ORG"), "code map: GitHub or GitHub Enterprise org or user whose repos `pr-manager index` clones and indexes: name, host/name or https://host/name (default $PR_MANAGER_ORG)")
 	fs.StringVar(&o.mapRepo, "map-repo", "", "repo name in the code map for local runs (default: basename of the -C checkout)")
 	fs.IntVar(&o.concurrency, "j", 8, "parallel classify calls")
+	fs.IntVar(&o.classifyBatch, "classify-batch", 0, "change units per classify call (0: classify_batch.max_units in .triage.yaml, else 6; 1: one call per unit)")
+	fs.BoolVar(&o.classifyCache, "classify-cache", true, "keep classifier decisions under -cache, so a unit whose diff did not change is not classified again (-classify-cache=false to turn off; eval never uses it)")
 	fs.IntVar(&o.reviewConcurrency, "review-j", 16, "parallel summarize/review calls (0 = same as -j)")
 	fs.BoolVar(&o.failOnHuman, "fail-on-human", false, "exit 2 if any unit needs human review")
 	fs.StringVar(&o.fixtures, "fixtures", "testdata/eval", "eval: directory of NAME.json cases")
@@ -300,6 +306,8 @@ func runEval(ctx context.Context, o options) error {
 	if err != nil {
 		return err
 	}
+	// Eval measures the model, not the cache.
+	pipe.Decisions = nil
 	cases, err := triage.LoadEvalCases(o.fixtures)
 	if err != nil {
 		return err
@@ -424,12 +432,17 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 			return nil, err
 		}
 	}
+	if o.classifyBatch > 0 {
+		policy.ClassifyBatch.MaxUnits = o.classifyBatch
+	}
 	pipe := &triage.Pipeline{
 		Presorter:         &triage.Presorter{Policy: policy, GitattributesGenerated: gitattrs},
 		Lint:              &triage.Linter{Policy: policy.Lint},
 		Concurrency:       o.concurrency,
 		ReviewConcurrency: o.reviewConcurrency,
 	}
+	// classifyKey names the model that decides, for the decision store.
+	classifyKey := ""
 	llmClassifier := func(provider, model string) (triage.Classifier, error) {
 		if provider == "off" {
 			return nil, nil
@@ -439,6 +452,7 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 			return nil, err
 		}
 		llm.SetEffort(l, o.classifyEffort)
+		classifyKey = l.Name() + "/" + l.ModelID() + "@" + o.classifyEffort
 		return &triage.LLMClassifier{LLM: l, Policy: policy}, nil
 	}
 	var err error
@@ -454,10 +468,15 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 			Fallback: fb,
 			Accept:   triage.DefaultJevAccept(),
 		}
+		classifyKey = "openjev " + o.openjevURL + " → " + classifyKey
 	default:
 		if pipe.Classifier, err = llmClassifier(o.classifier, o.classifyModel); err != nil {
 			return nil, err
 		}
+	}
+	if pipe.Classifier != nil && o.classifyCache && o.cache != "" {
+		pipe.Decisions = decisionDir(filepath.Join(o.cache, "decisions"))
+		pipe.ClassifyKey = fmt.Sprint(classifyKey, " ", policy.Thresholds, " ", policy.MaxUnitChars)
 	}
 	if o.summarizer != "off" {
 		l, err := llm.New(o.summarizer, o.summaryModel)

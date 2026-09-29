@@ -73,6 +73,8 @@ type Policy struct {
 	Tiers TierPolicy `yaml:"tiers"`
 	// Grouping reviews related units in one call instead of one each.
 	Grouping GroupPolicy `yaml:"grouping"`
+	// ClassifyBatch classifies several units in one call.
+	ClassifyBatch BatchPolicy `yaml:"classify_batch"`
 	// Lint runs static analysis over the lines the PR adds.
 	Lint LintPolicy `yaml:"lint"`
 }
@@ -171,6 +173,7 @@ func DefaultPolicy() Policy {
 		ReviewContextChars: DefaultReviewContextChars,
 		Tiers:              DefaultTierPolicy(),
 		Grouping:           DefaultGroupPolicy(),
+		ClassifyBatch:      DefaultBatchPolicy(),
 	}
 }
 
@@ -206,6 +209,12 @@ func ParsePolicy(b []byte) (Policy, error) {
 	}
 	if user.ReviewContextChars > 0 {
 		p.ReviewContextChars = user.ReviewContextChars
+	}
+	if user.ClassifyBatch.MaxUnits > 0 {
+		p.ClassifyBatch.MaxUnits = user.ClassifyBatch.MaxUnits
+	}
+	if user.ClassifyBatch.MaxChars > 0 {
+		p.ClassifyBatch.MaxChars = user.ClassifyBatch.MaxChars
 	}
 	// Grouping.Enabled defaults to true, so an absent key and an explicit
 	// false must be told apart.

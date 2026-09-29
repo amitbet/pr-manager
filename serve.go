@@ -178,6 +178,7 @@ type jobOptions struct {
 	Summarizer    string  `json:"summarizer"`
 	SummaryModel  string  `json:"summary_model"`
 	ReviewTools   *bool   `json:"review_tools"`
+	ClassifyBatch *bool   `json:"classify_batch"`
 	Lint          *string `json:"lint"`
 	Incremental   *bool   `json:"incremental"`
 	SummaryLang   *string `json:"summary_lang"`
@@ -204,6 +205,15 @@ func (t *triager) options(jo jobOptions) options {
 	}
 	if jo.ReviewTools != nil {
 		o.reviewTools = *jo.ReviewTools
+	}
+	if jo.ClassifyBatch != nil {
+		switch {
+		case !*jo.ClassifyBatch:
+			o.classifyBatch = 1
+		case o.classifyBatch == 1:
+			// Turned on over a server started with -classify-batch 1.
+			o.classifyBatch = triage.DefaultBatchUnits
+		}
 	}
 	if jo.Lint != nil {
 		o.lint, o.lintSet = strings.TrimSpace(*jo.Lint), true
@@ -237,6 +247,10 @@ func settingsHash(o options) string {
 		lint = o.lint
 	}
 	parts := []string{triage.PromptVersion, o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.summarizer, o.summaryModel, o.classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
+	if o.classifyBatch > 0 {
+		// Appended only when set, so existing keys stay valid.
+		parts = append(parts, fmt.Sprintf("batch=%d", o.classifyBatch))
+	}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return fmt.Sprintf("%x", h[:4])
 }
@@ -611,6 +625,7 @@ func newServeHandler(o options) (http.Handler, error) {
 			"classify_effort": d.classifyEffort, "review_effort": d.reviewEffort,
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
+			"classify_batch": o.classifyBatch != 1,
 			"lint":           !o.lintSet || strings.ToLower(o.lint) != "off",
 			"incremental":    o.incremental,
 			"linters":        triage.KnownLinters(),

@@ -13,6 +13,7 @@ let onFinished = () => {};
 let timer = null;
 const status = new Map(); // job id -> last seen status
 let triaging = []; // running triage jobs
+let busy = []; // running triage and fix jobs
 
 // A triage job's url is the PR link or local path it was started with.
 const same = (a, b) => !!a && !!b && a.trim().replace(/\/+$/, "").toLowerCase() === b.trim().replace(/\/+$/, "").toLowerCase();
@@ -24,10 +25,11 @@ export async function triageJobFor(src) {
   return triaging.find((j) => same(j.url, src));
 }
 
-// markTriaging flags the sidebar's results that are being triaged again.
+// markTriaging flags the sidebar's results that are being triaged again
+// or fixed.
 export function markTriaging() {
   document.querySelectorAll("#list .pr-item").forEach((el) =>
-    el.classList.toggle("triaging", triaging.some((j) => same(j.url, el.dataset.src))));
+    el.classList.toggle("triaging", busy.some((j) => same(j.url, el.dataset.src))));
 }
 
 // initJobs sets what opens a finished job's result (its key) and what runs
@@ -51,6 +53,8 @@ export function stageText(j) {
     comments: j.total ? `checking review comments ${j.done}/${j.total}` : "loading review comments",
     lint: "running static analysis over the changed lines",
     list: "listing the org's repos",
+    fix: `fix round ${j.done} of up to ${j.total}`,
+    "review fix": `reviewing fix round ${j.done} of up to ${j.total}`,
     clone: j.kind === "index" ? `cloning ${j.done + 1}/${j.total}` : `${repo} is not in the code map: cloning it into the workspace…`,
     codemap: j.kind === "index" ? "building the code map" : `${repo} is not in the code map: building it before triage (a few minutes the first time)…`,
   }[j.stage];
@@ -135,7 +139,8 @@ export async function refreshJobs() {
     status.set(j.id, j.status);
   }
   if (finished) onFinished();
-  triaging = jobs.filter((j) => j.kind === "triage" && j.status === "running");
+  busy = jobs.filter((j) => (j.kind === "triage" || j.kind === "fix") && j.status === "running");
+  triaging = busy.filter((j) => j.kind === "triage");
   markTriaging();
   const shown = jobs.filter((j) => j.status === "running" || (j.status === "error" && Date.now() - new Date(j.started) < FAILED_FOR));
   const active = watched() ? $("#jobs .job-item.active")?.dataset.id : null;

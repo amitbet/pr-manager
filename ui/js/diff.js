@@ -173,8 +173,9 @@ function expRow(r, cols) {
 }
 
 // Rows flagged with iss (a review issue's line) get a marker and data-iss,
-// so the walkthrough can scroll to them.
-const issAttrs = (x, r, start = r?.start) => `class="${x ? "ctx-x" : ""} ${r?.iss ? "iss" : ""} ${r?.other ? "other" : ""} ${start ? "focus-start" : ""}"${r?.iss ? ` data-iss="${r.n}"` : ""}`;
+// and rows with uid (a unit's first change) get data-unit, so the
+// walkthrough can scroll to them.
+const issAttrs = (x, r, start = r?.start, uid = r?.uid) => `class="${x ? "ctx-x" : ""} ${r?.iss ? "iss" : ""} ${r?.other ? "other" : ""} ${start ? "focus-start" : ""}"${r?.iss ? ` data-iss="${r.n}"` : ""}${uid ? ` data-unit="${esc(uid)}"` : ""}`;
 
 function unifiedTable(f, rows) {
   let out = "";
@@ -226,7 +227,7 @@ function splitTable(f, rows) {
       continue;
     }
     const x = (p.l || p.r).x;
-    out += `<tr ${issAttrs(x, p.r || p.l, p.l?.start || p.r?.start)}>${cell(p.l, "LEFT")}${cell(p.r, "RIGHT")}</tr>`;
+    out += `<tr ${issAttrs(x, p.r || p.l, p.l?.start || p.r?.start, p.l?.uid || p.r?.uid)}>${cell(p.l, "LEFT")}${cell(p.r, "RIGHT")}</tr>`;
     if (!x) {
       const anchors = [];
       if (p.l) anchors.push({ side: "LEFT", line: p.l.o });

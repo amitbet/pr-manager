@@ -15,6 +15,9 @@ review_context_chars: 32000
 # that name each other, a test named after the symbol it exercises, and small
 # changes in the same file. On by default; -group-review=false also turns it
 # off for a run.
+classify_batch:
+  max_units: 6        # units per classify call (1: one call per unit)
+  max_chars: 16000    # cap on one call's combined diff
 grouping:
   enabled: true
   max_chars: 12000    # cap on one group's combined diff

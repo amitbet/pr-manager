@@ -1,7 +1,7 @@
 // Settings dialog: provider and model pickers, code map sources, summary
-// language, review budget and review tools. Choices are kept in localStorage under pr-manager.<key>.
+// language, review budget, walkthrough steps and review tools. Choices are kept in localStorage under pr-manager.<key>.
 import { $, esc, api, LABEL } from "./util.js";
-import { S } from "./state.js";
+import { S, render } from "./state.js";
 import * as budget from "./budget.js";
 import { refreshJobs } from "./jobs.js";
 
@@ -209,6 +209,7 @@ export function jobSettings() {
   const body = {};
   for (const k of ["classifier", "classify_model", "summarizer", "summary_model"]) body[k] = $("#" + k).value.trim();
   body.review_tools = $("#review_tools").checked;
+  body.classify_batch = $("#classify_batch").checked;
   body.lint = $("#lint").checked ? "auto" : "off";
   body.incremental = $("#incremental").checked;
   // Only sent when picked, so the server's -summary-lang stays the default.
@@ -229,6 +230,19 @@ export function fixSettings() {
 // refreshSettings updates the budget section for the result on screen.
 export const refreshSettings = () => showBudget();
 
+// placeTip puts an (i) tooltip below its icon, or above it when there is no
+// room, kept inside the window.
+function placeTip(el) {
+  const tip = el.querySelector(".tip");
+  tip.style.display = "block";
+  const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  tip.style.display = "";
+  const left = Math.max(8, Math.min(r.left - 12, innerWidth - t.width - 8));
+  const below = r.bottom + 6;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${below + t.height > innerHeight - 8 ? Math.max(8, r.top - t.height - 6) : below}px`;
+}
+
 // initSettings wires the dialog. changed() runs when the budget moves,
 // langChanged() when the summary language does.
 export function initSettings(changed, langChanged) {
@@ -238,6 +252,10 @@ export function initSettings(changed, langChanged) {
   $("#settings-btn").onclick = () => { showBudget(); dlg.showModal(); };
   $("#theme-btn").onclick = () => window.toggleTheme();
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); }); // backdrop
+  for (const el of dlg.querySelectorAll(".info")) {
+    el.addEventListener("mouseenter", () => placeTip(el));
+    el.addEventListener("focus", () => placeTip(el));
+  }
   $("#budget").oninput = (e) => {
     const b = budgetList()[e.target.value];
     if (!b) return;
@@ -248,6 +266,12 @@ export function initSettings(changed, langChanged) {
   const tools = $("#review_tools");
   tools.checked = saved("review_tools") ? saved("review_tools") === "1" : !!S.cfg?.review_tools;
   tools.onchange = () => save("review_tools", tools.checked ? "1" : "0");
+  const group = $("#wz_group");
+  group.checked = S.wz.group;
+  group.onchange = () => { S.wz.group = group.checked; save("wz_group", group.checked ? "1" : "0"); if (S.result) render(); };
+  const batch = $("#classify_batch");
+  batch.checked = saved("classify_batch") ? saved("classify_batch") === "1" : S.cfg?.classify_batch !== false;
+  batch.onchange = () => save("classify_batch", batch.checked ? "1" : "0");
   const lint = $("#lint");
   lint.checked = saved("lint") ? saved("lint") === "1" : S.cfg?.lint !== false;
   lint.onchange = () => save("lint", lint.checked ? "1" : "0");

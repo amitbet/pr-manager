@@ -1,5 +1,6 @@
-// Walkthrough tab: one unit per step, most important first, with the
-// explanation beside the code.
+// Walkthrough tab: one step at a time, most important first, with the
+// explanation beside the code. A step is one file's changes (Settings →
+// Walkthrough), else one unit.
 import { trText, trDir } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
 import { S, render, allUnits, fileByPath } from "./state.js";
@@ -12,20 +13,58 @@ import { lintHTML } from "./lint.js";
 import { openPanel } from "./panel.js";
 import { overviewHTML, hasOverview } from "./overview.js";
 
-// Steps are ordered by bucket, then score, then review attention, then risk
+// Units are ranked by bucket, then score, then review attention, then risk
 // (impact times likelihood), then file order. "no review" units only on request.
 const BRANK = { human: 0, skim: 1, none: 2 };
+const byRank = (a, b) => BRANK[a.u.decision.bucket] - BRANK[b.u.decision.bucket]
+  || (b.u.score?.total ?? 0) - (a.u.score?.total ?? 0)
+  || (b.u.attention || 0) - (a.u.attention || 0)
+  || risk(b.u) - risk(a.u)
+  || a.i - b.i;
 
+// STEP_LINES is the most changed lines a file step holds before it is split,
+// the size past which review effectiveness falls (SmartBear/Cisco; see
+// experiments/grouping-readability/FINDINGS.md).
+const STEP_LINES = 400;
+
+const changedLines = (u) => (u.hunks || []).reduce((n, h) => n + (h.lines || []).filter((l) => l[0] === "+" || l[0] === "-").length, 0);
+const firstLine = (u) => Math.min(Infinity, ...(u.hunks || []).map((h) => h.new_start));
+
+// A step is {f, members, lead}: units of one file in file order, and the
+// highest-ranked of them, which ranks the step and gives its bucket.
+// Grouping here is only how a person reads the PR. The reviewer model's
+// grouping (triage/group.go) is separate and only saves calls.
 function steps() {
-  return allUnits()
-    .map((x, i) => ({ ...x, i }))
-    .filter(({ u }) => S.wz.all || u.decision.bucket !== "none")
-    .sort((a, b) => BRANK[a.u.decision.bucket] - BRANK[b.u.decision.bucket]
-      || (b.u.score?.total ?? 0) - (a.u.score?.total ?? 0)
-      || (b.u.attention || 0) - (a.u.attention || 0)
-      || risk(b.u) - risk(a.u)
-      || a.i - b.i);
+  const units = allUnits().map((x, i) => ({ ...x, i })).filter(({ u }) => S.wz.all || u.decision.bucket !== "none");
+  const groups = S.wz.group ? fileGroups(units) : units.map((x) => [x]);
+  return groups.map((members) => ({ f: members[0].f, members, lead: [...members].sort(byRank)[0] }))
+    .sort((a, b) => byRank(a.lead, b.lead));
 }
+
+// fileGroups puts each file's units in one step. A file whose changes pass
+// STEP_LINES is split between units into runs of at most STEP_LINES (a
+// bigger unit stays whole); in practice that is a large test file.
+function fileGroups(units) {
+  const byPath = new Map();
+  for (const x of units) byPath.set(x.f.path, [...(byPath.get(x.f.path) || []), x]);
+  const out = [];
+  for (const xs of byPath.values()) {
+    xs.sort((a, b) => firstLine(a.u) - firstLine(b.u) || a.i - b.i);
+    const split = xs.reduce((n, x) => n + changedLines(x.u), 0) > STEP_LINES;
+    let run = [], n = 0;
+    for (const x of xs) {
+      const c = changedLines(x.u);
+      if (split && run.length && n + c > STEP_LINES) { out.push(run); run = []; n = 0; }
+      run.push(x);
+      n += c;
+    }
+    out.push(run);
+  }
+  return out;
+}
+
+const has = (s, id) => s.members.some((x) => x.u.id === id);
+const stepDone = (s) => s.members.every((x) => S.wz.done.has(x.u.id));
 
 // Progress is kept per result, so a reload resumes where the reviewer left
 // off. A walkthrough not started yet opens on the overview.
@@ -39,29 +78,37 @@ export function loadProgress() {
 const onIntro = () => S.wz.intro && hasOverview(S.result);
 const save = () => localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
 
-// current is the index of the shown step: the saved one, else the first
-// unreviewed one.
+// current is the index of the shown step: the one holding the saved unit,
+// else the first unreviewed one. Progress is kept per unit, so it survives
+// switching the grouping.
 function current(st) {
-  const i = st.findIndex((s) => s.u.id === S.wz.cur);
+  const i = st.findIndex((s) => has(s, S.wz.cur));
   if (i >= 0) return i;
-  const open = st.findIndex((s) => !S.wz.done.has(s.u.id));
+  const open = st.findIndex((s) => !stepDone(s));
   return open >= 0 ? open : 0;
 }
 
 // HEADER_H is the sticky page header.
 const HEADER_H = 54;
 
-// showStep opens the walkthrough on unit id, including no-review units
-// if that's what it is; false if it isn't a step even then.
+// showStep opens the walkthrough on the step holding unit id, including
+// no-review units if that's what it is, and scrolls to the unit's code;
+// false if it isn't in a step even then.
 export function showStep(id) {
-  let i = steps().findIndex((s) => s.u.id === id);
+  let i = steps().findIndex((s) => has(s, id));
   if (i < 0 && !S.wz.all) {
     S.wz.all = true;
-    i = steps().findIndex((s) => s.u.id === id);
+    i = steps().findIndex((s) => has(s, id));
   }
   if (i < 0) return false;
   go(i);
+  if (steps()[i].members[0].u.id !== id) scrollToUnit(id);
   return true;
+}
+
+function scrollToUnit(id) {
+  const row = document.querySelector(`.wz-code tr[data-unit="${CSS.escape(id)}"]`);
+  if (row) { row.scrollIntoView({ block: "center" }); row.classList.add("flash"); }
 }
 
 // go shows step i. When the page is scrolled past the card, it scrolls back
@@ -70,7 +117,7 @@ export function showStep(id) {
 function go(i) {
   const st = steps();
   if (!st.length) return;
-  S.wz.cur = st[Math.max(0, Math.min(st.length - 1, i))].u.id;
+  S.wz.cur = st[Math.max(0, Math.min(st.length - 1, i))].members[0].u.id;
   S.wz.finished = S.wz.intro = false;
   S.composer = null;
   save();
@@ -98,8 +145,8 @@ function showIntro() {
 function toggleReviewed() {
   const st = steps();
   if (!st.length) return;
-  const id = st[current(st)].u.id;
-  S.wz.done.has(id) ? S.wz.done.delete(id) : S.wz.done.add(id);
+  const s = st[current(st)], on = !stepDone(s);
+  for (const { u } of s.members) on ? S.wz.done.add(u.id) : S.wz.done.delete(u.id);
   save();
   render();
 }
@@ -111,9 +158,9 @@ function markAndNext() {
   const st = steps();
   if (!st.length) return;
   const i = current(st);
-  S.wz.done.add(st[i].u.id);
+  for (const { u } of st[i].members) S.wz.done.add(u.id);
   if (i < st.length - 1) { go(i + 1); return; }
-  const open = st.findIndex((s) => !S.wz.done.has(s.u.id));
+  const open = st.findIndex((s) => !stepDone(s));
   if (open >= 0) { go(open); return; }
   S.wz.finished = true;
   save();
@@ -168,14 +215,65 @@ function explainHTML(f, u, shown) {
   return parts.join("");
 }
 
+// memberHTML is one unit's explanation inside a file step. A unit in a
+// lower bucket than the step is dimmed.
+function memberHTML(f, u, shown, bucket) {
+  const b = u.decision.bucket;
+  return `<div class="wz-member ${BRANK[b] > BRANK[bucket] ? "low" : ""}">
+    <div class="wz-mhead"><span class="pill ${b}">${LABEL[b]}</span>${u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="spacer"></span>${u.line ? `<button class="linkbtn" data-act="wz-unit" data-id="${esc(u.id)}">line ${u.line}</button>` : ""}</div>
+    <div class="wz-mline tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</div>
+    ${explainHTML(f, u, shown)}</div>`;
+}
+
+// newSide is the code a reader reads as the change: added and context
+// lines. Removed lines name the old code, not what the step depends on.
+const newSide = (u) => (u.hunks || []).flatMap((h) => (h.lines || []).filter((l) => l[0] === "+" || l[0] === " ").map((l) => l.slice(1))).join("\n");
+
+// shortName and mentions match triage/prcontext.go: the identifier other
+// code uses for a unit's symbol, and a whole-word mention of it.
+function shortName(sym) {
+  if (!sym || sym === "imports") return "";
+  const last = sym.trim().split(/\s+/).pop();
+  return last.slice(last.lastIndexOf(".") + 1);
+}
+const mentions = (text, name) => name.length >= 3 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && new RegExp(`\\b${name}\\b`).test(text);
+
+// uses is the changed units outside step s whose name s's new code
+// mentions: the types, helpers and callees it relies on. Matching is by
+// name, so it can miss indirect uses and over-match common names.
+function uses(s) {
+  const mine = new Set(s.members.map((x) => x.u.id));
+  const text = s.members.map((x) => newSide(x.u)).join("\n");
+  return allUnits().filter(({ u }) => !mine.has(u.id) && mentions(text, shortName(u.symbol)));
+}
+
+// usesHTML shows the definitions a step uses, collapsed to their name with
+// a link to the step that reviews them; opening one shows its diff for
+// reference.
+function usesHTML(s, st) {
+  const us = uses(s);
+  if (!us.length) return "";
+  const rows = us.map(({ u, f }) => {
+    const j = st.findIndex((t) => has(t, u.id));
+    const k = `${s.members[0].u.id}|${u.id}`, open = S.wz.usesOpen.has(k);
+    const where = j >= 0 ? `<button class="linkbtn" data-act="wz-go" data-i="${j}">step ${j + 1}</button>` : `<span class="chip">${LABEL[u.decision.bucket]}, not a step</span>`;
+    return `<div class="wz-use ${open ? "open" : ""}"><div class="wz-use-h">
+        <button class="wz-use-t" data-act="wz-use" data-k="${esc(k)}" aria-expanded="${open}"><span class="car">${open ? "▾" : "▸"}</span><span class="sym">${esc(u.symbol)}</span><span class="path">${esc(f.path)}${u.line ? `:${u.line}` : ""}</span></button>
+        <span class="h tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</span>${where}</div>
+      ${open ? diffTable(f, unitRows(f, u), S.wz.view) : ""}</div>`;
+  }).join("");
+  return `<div class="wz-uses"><div class="wz-uses-bar"><b>Uses ${us.length} changed definition${us.length > 1 ? "s" : ""} from elsewhere in the PR</b><span>reviewed in their own step, shown here for reference</span></div>${rows}</div>`;
+}
+
 function progressHTML(st, i, toggle) {
-  const done = st.filter((s) => S.wz.done.has(s.u.id)).length;
+  const done = st.filter(stepDone).length;
   const intro = onIntro();
   const ovDot = hasOverview(S.result) ? `<button class="wz-dot ov-dot ${intro ? "cur" : ""}" data-act="wz-intro" title="Overview of the PR">Overview</button>` : "";
   const dots = ovDot + st.map((s, j) => {
-    const ok = S.wz.done.has(s.u.id);
-    return `<button class="wz-dot ${s.u.decision.bucket} ${ok ? "done" : ""} ${j === i && !S.wz.finished && !intro ? "cur" : ""}"
-      data-act="wz-go" data-i="${j}" title="${esc(`${j + 1}. ${s.u.id}\n${headline(s.u)}`)}">${ok ? "✓" : j + 1}</button>`;
+    const ok = stepDone(s);
+    const title = s.members.length > 1 ? `${j + 1}. ${s.f.path}\n${s.members.map(({ u }) => `· ${headline(u)}`).join("\n")}` : `${j + 1}. ${s.lead.u.id}\n${headline(s.lead.u)}`;
+    return `<button class="wz-dot ${s.lead.u.decision.bucket} ${ok ? "done" : ""} ${j === i && !S.wz.finished && !intro ? "cur" : ""}"
+      data-act="wz-go" data-i="${j}" title="${esc(title)}">${ok ? "✓" : j + 1}</button>`;
   }).join("");
   return `
     <div class="wz-top"><span><b>${done}</b> of <b>${st.length}</b> reviewed</span><span class="spacer"></span>${toggle}
@@ -206,35 +304,50 @@ function introHTML(st, i) {
     </div>`;
 }
 
+// stepRows is the diff of a step's units in file order. The first changed
+// row of each unit carries its id (data-unit), so "line N" can scroll to it.
+function stepRows(f, units) {
+  const owner = new Map(units.flatMap((u) => (u.hunks || []).map((h) => [h, u.id])));
+  const seen = new Set();
+  return [...owner.keys()].sort((a, b) => a.new_start - b.new_start || a.old_start - b.old_start).flatMap((h) => {
+    const rows = unitRows(f, { hunks: [h] }), id = owner.get(h);
+    const first = !seen.has(id) && rows.find((r) => r.t === "add" || r.t === "del");
+    if (first) { first.uid = id; seen.add(id); }
+    return rows;
+  });
+}
+
 function cardHTML(st, i) {
-  const { u, f } = st[i];
+  const s = st[i], { f } = s, u = s.lead.u;
+  const units = s.members.map((x) => x.u), group = units.length > 1;
   const b = u.decision.bucket;
   // Expanded, the whole file shows, with other units' changes dimmed.
   const whole = fullyExpanded(f);
-  const rows = whole ? fileRows(f, u) : unitRows(f, u);
-  const issueLines = new Set((u.issues || []).map((x) => x.line).filter(Boolean));
+  const rows = whole ? fileRows(f, { hunks: units.flatMap((x) => x.hunks || []) }) : stepRows(f, units);
+  const issueLines = new Set(units.flatMap((x) => x.issues || []).map((x) => x.line).filter(Boolean));
   const shown = new Set();
   rows.forEach((r) => {
     if (r.t === "del" || !r.n || r.other) return;
     shown.add(r.n);
     if (issueLines.has(r.n)) r.iss = true;
   });
-  const isDone = S.wz.done.has(u.id);
+  const isDone = stepDone(s);
   const fd = S.drafts.filter((d) => d.path === f.path).length;
   return `
     <div class="wz-card ${b}">
       <div class="wz-head">
         <div class="wz-where"><span class="pill ${b}">${LABEL[b]}</span><b>Step ${i + 1} of ${st.length}</b> ·
-          <span class="path">${f.old_path && f.old_path !== f.path ? esc(f.old_path) + " → " : ""}${esc(f.path)}${u.line ? `:${u.line}` : ""}</span>
-          ${u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="status chip">${esc(f.status)}</span></div>
+          <span class="path">${f.old_path && f.old_path !== f.path ? esc(f.old_path) + " → " : ""}${esc(f.path)}${!group && u.line ? `:${u.line}` : ""}</span>
+          ${group ? `<span class="chip">${units.length} changes</span>` : u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="status chip">${esc(f.status)}</span></div>
         <div class="wz-headline tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</div>
         <div class="row">${impactPill(u.impact)}${likelihoodPill(u.likelihood)}${attentionPill(u)}${decisionChips(u)}</div>
       </div>
       <div class="wz-body">
-        <section class="wz-explain">${explainHTML(f, u, shown)}</section>
+        <section class="wz-explain">${group ? units.map((x) => memberHTML(f, x, shown, b)).join("") : explainHTML(f, u, shown)}</section>
         <section class="wz-code">
-          <div class="wz-codebar"><b>Step ${i + 1} of ${st.length}</b><span>${esc(u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
+          <div class="wz-codebar"><b>Step ${i + 1} of ${st.length}</b><span>${esc(group ? `${units.length} changes` : u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
           ${diffTable(f, rows, S.wz.view)}
+          ${usesHTML(s, st)}
         </section>
       </div>
       <div class="wz-nav">
@@ -275,6 +388,8 @@ export const actions = {
   "wz-all": (el) => { S.wz.all = el.checked; },
   "wz-view": (el) => { S.wz.view = el.dataset.v; localStorage.setItem("pr-manager.wzview", S.wz.view); },
   "wz-submit": () => { openPanel(); return false; },
+  "wz-unit": (el) => { scrollToUnit(el.dataset.id); return false; },
+  "wz-use": (el) => { const k = el.dataset.k; S.wz.usesOpen.has(k) ? S.wz.usesOpen.delete(k) : S.wz.usesOpen.add(k); },
   "wz-line": (el) => {
     const row = document.querySelector(`.wz-code tr[data-iss="${+el.dataset.line}"]`);
     if (row) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.add("flash"); }

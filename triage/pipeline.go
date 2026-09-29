@@ -12,9 +12,16 @@ import (
 
 type Pipeline struct {
 	Presorter  *Presorter
-	Classifier Classifier  // nil: every unit left after presort is "human"
-	Summarizer *Summarizer // nil: no summaries, review notes or issues
-	CodeMap    *CodeMap    // nil: no impact scores, no file history and no tier moves
+	Classifier Classifier // nil: every unit left after presort is "human"
+	// Decisions, if set, keeps classifier answers between runs: a unit
+	// whose file, declaration and diff were classified before under the
+	// same ClassifyKey is not sent to the model again.
+	Decisions DecisionStore
+	// ClassifyKey names what else a decision depends on (the classifier,
+	// its model and effort, the thresholds); it is part of the store key.
+	ClassifyKey string
+	Summarizer  *Summarizer // nil: no summaries, review notes or issues
+	CodeMap     *CodeMap    // nil: no impact scores, no file history and no tier moves
 	// Lint runs the repository's static analysis over the lines the PR
 	// adds, before anything is scored (nil or disabled: no findings).
 	Lint        *Linter
@@ -91,6 +98,24 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		carry = p.CarryFrom(units)
 	}
 
+	// Classification only reads the units' diffs, so it runs while the
+	// repository is checked out, linted and mapped. Whichever finishes
+	// last owns the progress line: lint has no count to show, so it is
+	// only reported once classify is done.
+	var stageMu sync.Mutex
+	classifyDone, linting := false, false
+	classified := make(chan struct{})
+	go func() {
+		defer close(classified)
+		p.classify(ctx, rest)
+		stageMu.Lock()
+		classifyDone = true
+		if linting && p.Progress != nil {
+			p.Progress("lint", 0, 0)
+		}
+		stageMu.Unlock()
+	}()
+
 	// The repository at the PR head is checked out once and shared: the
 	// linters read it, and a reviewer whose provider supports tools reads
 	// it too. It is removed when the run ends.
@@ -112,10 +137,16 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		if ws != nil {
 			dir = ws.Dir
 		}
-		if p.Progress != nil {
+		stageMu.Lock()
+		linting = true
+		if classifyDone && p.Progress != nil {
 			p.Progress("lint", 0, 0)
 		}
+		stageMu.Unlock()
 		p.Lint.Run(ctx, dir, src, units)
+		stageMu.Lock()
+		linting = false
+		stageMu.Unlock()
 	}
 
 	if p.CodeMap != nil {
@@ -127,6 +158,8 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 			u.Impact = p.CodeMap.Assess(u, files[u.File], src.BaseContent)
 		}
 	}
+	// Likelihood reads the decisions, so it waits for them.
+	<-classified
 	lc := newLikelihoodCtx(src, p.CodeMap)
 	for _, u := range units {
 		u.Likelihood = lc.assess(u, fileOf(src, u.File))
@@ -134,13 +167,6 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	tiers := p.Presorter.Policy.Tiers
 	maxChars := p.Presorter.Policy.MaxUnitChars
 
-	p.each(ctx, "classify", p.Concurrency, rest, func(ctx context.Context, u *Unit) {
-		if p.Classifier == nil {
-			u.Decision = Decision{Bucket: BucketHuman, Source: "none", Reason: "no classifier configured"}
-		} else {
-			u.Decision = p.Classifier.Classify(ctx, u)
-		}
-	})
 	// Rule-decided units get a score too, so every unit explains its bucket.
 	for _, u := range units {
 		tiers.prior(u, maxChars)
@@ -184,6 +210,54 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 
 	SortByBucket(units)
 	return units
+}
+
+// classify decides the units the presort left: from Decisions where an
+// earlier run already did, the rest in batches when the classifier
+// supports them.
+func (p *Pipeline) classify(ctx context.Context, units []*Unit) {
+	if p.Classifier == nil {
+		for _, u := range units {
+			u.Decision = Decision{Bucket: BucketHuman, Source: "none", Reason: "no classifier configured"}
+		}
+		return
+	}
+	var todo []*Unit
+	keys := map[*Unit]string{}
+	for _, u := range units {
+		if p.Decisions != nil {
+			k := decisionKey(p.ClassifyKey, u)
+			if d, ok := p.Decisions.Load(k); ok {
+				u.Decision = d
+				continue
+			}
+			keys[u] = k
+		}
+		todo = append(todo, u)
+	}
+	save := func(u *Unit) {
+		if k, ok := keys[u]; ok && !u.Decision.Failed {
+			p.Decisions.Save(k, u.Decision)
+		}
+	}
+	bc, ok := p.Classifier.(BatchClassifier)
+	var batches [][]*Unit
+	if ok && p.Presorter.Policy.ClassifyBatch.MaxUnits > 1 {
+		batches = classifyBatches(todo, p.Presorter.Policy.ClassifyBatch)
+	}
+	if len(batches) == 0 || len(batches) == len(todo) {
+		p.each(ctx, "classify", p.Concurrency, todo, func(ctx context.Context, u *Unit) {
+			u.Decision = p.Classifier.Classify(ctx, u)
+			save(u)
+		})
+		return
+	}
+	runStage(ctx, p, "classify", p.Concurrency, batches, batchID, func(ctx context.Context, b []*Unit) {
+		for i, d := range bc.ClassifyBatch(ctx, b) {
+			b[i].Decision = d
+			save(b[i])
+		}
+	})
 }
 
 // summarizer is a copy of p.Summarizer the run can give a workspace to,
@@ -280,8 +354,9 @@ func reviewGroups(units []*Unit, policy GroupPolicy) []*ReviewGroup {
 
 // setRelated gives each unit the IDs of the other units, capped so large
 // PRs don't blow up every prompt.
+const maxRelated = 60
+
 func setRelated(units []*Unit) {
-	const maxRelated = 60
 	for _, u := range units {
 		u.Related = u.Related[:0]
 		for _, o := range units {

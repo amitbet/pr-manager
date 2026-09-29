@@ -143,7 +143,7 @@ func TestTranslationAtTriageIsFoundOnOpen(t *testing.T) {
 		Focus: []string{"backoff"}, Issues: []triage.Issue{{Title: "No cap", Detail: "Retries forever."}}}
 	r := &PRResult{Key: "k1", PR: &triage.PRInfo{Title: "Retry"}, Budgets: triage.DefaultTierPolicy().OrderedBudgets(),
 		Overview: &triage.Overview{Why: "Flaky links.", How: []string{"Retries Fetch"}},
-		Files: []resultFile{{Units: []resultUnit{{Unit: u}}}}}
+		Files:    []resultFile{{Units: []resultUnit{{Unit: u}}}}}
 	b, _ := json.Marshal(r)
 	if err := os.WriteFile(filepath.Join(tr.results, "k1.json"), b, 0o644); err != nil {
 		t.Fatal(err)

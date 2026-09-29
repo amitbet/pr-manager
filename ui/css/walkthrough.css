@@ -68,3 +68,23 @@
 .wz-code tr.other td { opacity: .5; }
 .wz-code tr.other td.add, .wz-code tr.other td.del { background: transparent; }
 .wz-codebar .expand-all { font-size: 12px; padding: 0 8px; }
+/* File steps: one block per unit in the explanation, lower buckets dimmed. */
+.wz-member { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border); }
+.wz-member:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
+.wz-member.low { opacity: .7; }
+.wz-member.low:hover { opacity: 1; }
+.wz-mhead { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.wz-mhead .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); overflow-wrap: anywhere; }
+.wz-mline { margin: 6px 0 12px; font-size: 17px; line-height: 1.35; font-weight: 650; }
+/* Changed definitions the step uses, collapsed to one line each. */
+.wz-uses { border-top: 1px solid var(--border); }
+.wz-uses-bar { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 8px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.wz-uses-bar b { color: var(--fg); }
+.wz-use { border-bottom: 1px solid var(--border); }
+.wz-use-h { display: flex; gap: 10px; align-items: center; padding: 4px 14px; font-size: 13px; }
+.wz-use-t { display: inline-flex; gap: 8px; align-items: baseline; min-width: 0; padding: 2px 0; border: 0; background: none; color: var(--fg); text-align: left; cursor: pointer; }
+.wz-use-t .car { color: var(--muted); width: 10px; }
+.wz-use-t .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); }
+.wz-use-t .path { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.wz-use-h .h { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wz-use.open { background: var(--bg2); }

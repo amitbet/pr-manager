@@ -14,6 +14,44 @@ function took(t) {
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour12: false });
 
+const isDiff = (s) => /^(diff --git |--- |@@ )/.test(s) || /\n@@ -\d/.test(s);
+
+function diffBlock(s) {
+  const cls = (l) =>
+    /^(diff --git|index |--- |\+\+\+ |new file|deleted file)/.test(l) ? "hd"
+    : l.startsWith("@@") ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "";
+  return `<div class="act-block act-diff">${s.split("\n").map((l) => `<span class="${cls(l)}">${esc(l) || " "}</span>`).join("")}</div>`;
+}
+
+// value lays out a model's structured output: fields as labeled rows,
+// multi-line text and patches as blocks, lists as numbered items.
+function value(v) {
+  if (v === null || v === undefined) return `<span class="act-nil">null</span>`;
+  if (typeof v === "string") {
+    if (isDiff(v)) return diffBlock(v);
+    if (v.includes("\n") || v.length > 160) return `<div class="act-block">${esc(v)}</div>`;
+    return v ? `<span class="act-str">${esc(v)}</span>` : `<span class="act-nil">""</span>`;
+  }
+  if (typeof v !== "object") return `<span class="act-lit">${esc(String(v))}</span>`;
+  if (Array.isArray(v)) {
+    if (!v.length) return `<span class="act-nil">none</span>`;
+    if (v.every((x) => x === null || typeof x !== "object") && v.join(", ").length < 160 && !v.some((x) => typeof x === "string" && x.includes("\n")))
+      return `<span class="act-str">${v.map((x) => esc(String(x))).join(", ")}</span>`;
+    return `<ol class="act-arr">${v.map((x) => `<li>${value(x)}</li>`).join("")}</ol>`;
+  }
+  const keys = Object.keys(v);
+  if (!keys.length) return `<span class="act-nil">{}</span>`;
+  return `<div class="act-obj">${keys.map((k) => `<div class="act-k">${esc(k)}</div><div class="act-v">${value(v[k])}</div>`).join("")}</div>`;
+}
+
+// output renders a line's attached data as a collapsible section, open
+// when small enough to read at a glance.
+function output(data) {
+  const raw = JSON.stringify(data);
+  const keys = data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).join(", ") : "";
+  return `<details class="act-data"${raw.length < 1500 ? " open" : ""}><summary>output${keys ? ` · ${esc(keys)}` : ""}<button type="button" class="linkbtn act-copy">copy JSON</button></summary>${value(data)}</details>`;
+}
+
 // mountActivity renders the panel into el and returns refresh(), which
 // fetches the job's log and updates the panel.
 export function mountActivity(el, jobId) {
@@ -68,7 +106,12 @@ export function mountActivity(el, jobId) {
     for (const l of fresh) {
       const div = document.createElement("div");
       div.className = /^(error|✗|stderr:)/.test(l.text) ? "act-line err" : "act-line";
-      div.innerHTML = `<span class="act-ts">${esc(clock(l.t))}</span>${esc(l.text)}`;
+      div.innerHTML = `<span class="act-ts">${esc(clock(l.t))}</span>${esc(l.text)}${l.data !== undefined ? output(l.data) : ""}`;
+      const copy = div.querySelector(".act-copy");
+      if (copy) copy.onclick = (e) => {
+        e.preventDefault();
+        navigator.clipboard?.writeText(JSON.stringify(l.data, null, 2)).then(() => { copy.textContent = "copied"; });
+      };
       frag.appendChild(div);
     }
     pre.appendChild(frag);

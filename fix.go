@@ -79,7 +79,11 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if len(fixTargets(r, req)) == 0 {
 		return nil, errors.New("no matching review issues")
 	}
-	j, ctx, progress := t.newJob("fix", r.PR.URL)
+	src := r.PR.URL
+	if r.PR.LocalPath != "" {
+		src = r.PR.LocalPath
+	}
+	j, ctx, progress := t.newJob("fix", src)
 	go func() {
 		res, err := t.runFix(ctx, j.ID, r, req, progress)
 		j.finish(err)
@@ -368,11 +372,19 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	}
 	for round := 1; round <= rounds && len(issues) > 0; round++ {
 		progress("fix", round, rounds)
-		patch, err := makeFixPatch(ctx, o, fixDir, current, issues)
+		patch, err := makeFixPatch(ctx, o, fixDir, current, issues, "")
 		if err != nil {
 			return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
 		}
 		changed, err := applyFixPatch(ctx, fixDir, patch)
+		if err != nil {
+			// A patch that does not apply is usually a slip in its
+			// format or context: the fixer gets one try to correct it.
+			patch, err = makeFixPatch(ctx, o, fixDir, current, issues, fmt.Sprintf("Your previous patch did not apply (%v):\n````\n%s\n````\nReturn the whole corrected patch.", err, patch))
+			if err == nil {
+				changed, err = applyFixPatch(ctx, fixDir, patch)
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
 		}
@@ -527,7 +539,9 @@ func availableFixBranch(repoDir string, pr *triage.PRInfo, jobID string) string 
 	return fmt.Sprintf("pr-manager/pr-%d-%s", pr.Number, jobID)
 }
 
-func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue) (string, error) {
+// makeFixPatch asks the summarizer for a patch. retry, when set, says why
+// its last patch was rejected.
+func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue, retry string) (string, error) {
 	l, err := llm.New(o.summarizer, o.summaryModel)
 	if err != nil {
 		return "", err
@@ -572,6 +586,9 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 		}
 		fmt.Fprintf(&prompt, "\nCurrent file %s:\n````\n%s\n````\n", path, content)
 	}
+	if retry != "" {
+		prompt.WriteString("\n" + retry + "\n")
+	}
 	ws := &llm.Workspace{Dir: dir}
 	if !llm.SupportsWorkspace(l) {
 		ws = nil
@@ -593,7 +610,139 @@ func safeRepoPath(path string) bool {
 	return path != "" && !filepath.IsAbs(path) && clean != ".." && !strings.HasPrefix(clean, ".."+string(os.PathSeparator)) && clean != ".git" && !strings.HasPrefix(clean, ".git"+string(os.PathSeparator)) && !strings.Contains(path, "\\")
 }
 
+// gitPatch turns the file headers of Codex's apply_patch format, which
+// fixers slip into even when asked for a git patch, into git ones. The
+// hunk bodies are the same in both, but apply_patch hunks start with "@@"
+// or "@@ <context line>" and no line ranges; those get ranges, placed
+// after the context line in the file under dir when it can be found (git
+// apply --recount fixes the counts and searches for the exact position).
+// Deletes and moves can't be converted without the files' contents, so
+// they are rejected for the fixer to redo in git form rather than dropped.
+func gitPatch(patch, dir string) (string, error) {
+	lines := strings.Split(patch, "\n")
+	var out []string
+	var fileLines []string // the updated file's current lines
+	from, delta := 0, 0     // search position and line shift in that file
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		switch {
+		case l == "*** Begin Patch" || l == "*** End Patch" || l == "*** End of File":
+		case strings.HasPrefix(l, "*** Delete File: "):
+			return "", fmt.Errorf("unsupported apply_patch directive %q; use a git diff with deleted file mode", l)
+		case strings.HasPrefix(l, "*** Move to: "):
+			return "", fmt.Errorf("unsupported apply_patch directive %q; use a git diff with rename from/rename to", l)
+		case strings.HasPrefix(l, "*** Update File: "):
+			path := strings.TrimSpace(strings.TrimPrefix(l, "*** Update File: "))
+			fileLines, from, delta = nil, 0, 0
+			if dir != "" && safeRepoPath(path) {
+				if b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path))); err == nil {
+					fileLines = strings.Split(string(b), "\n")
+				}
+			}
+			out = append(out, "diff --git a/"+path+" b/"+path)
+			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "--- ") {
+				out = append(out, "--- a/"+path, "+++ b/"+path)
+			}
+		case strings.HasPrefix(l, "*** Add File: "):
+			path := strings.TrimSpace(strings.TrimPrefix(l, "*** Add File: "))
+			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "--- ") {
+				// The file's own headers and hunk follow; don't make
+				// another. A new file's old side is /dev/null whatever
+				// the fixer wrote.
+				out = append(out, "diff --git a/"+path+" b/"+path, "new file mode 100644")
+				i++
+				out = append(out, "--- /dev/null")
+				continue
+			}
+			var added []string
+			for i+1 < len(lines) && strings.HasPrefix(lines[i+1], "+") && !strings.HasPrefix(lines[i+1], "+++ ") {
+				i++
+				added = append(added, lines[i])
+			}
+			out = append(out, "diff --git a/"+path+" b/"+path, "new file mode 100644", "--- /dev/null", "+++ b/"+path, fmt.Sprintf("@@ -0,0 +1,%d @@", len(added)))
+			out = append(out, added...)
+		case (l == "@@" || strings.HasPrefix(l, "@@ ")) && !strings.HasPrefix(l, "@@ -"):
+			locator := strings.TrimSpace(strings.TrimPrefix(l, "@@"))
+			oldN, newN := 0, 0
+			firstOld, hasOld := "", false // the hunk's first old-side line
+			for j := i + 1; j < len(lines); j++ {
+				b := lines[j]
+				if strings.HasPrefix(b, "@@") || strings.HasPrefix(b, "*** ") || strings.HasPrefix(b, "diff --git ") {
+					break
+				}
+				if !hasOld && (strings.HasPrefix(b, " ") || strings.HasPrefix(b, "-")) {
+					firstOld, hasOld = b[1:], true
+				}
+				switch {
+				case strings.HasPrefix(b, " "):
+					oldN++
+					newN++
+				case strings.HasPrefix(b, "-"):
+					oldN++
+				case strings.HasPrefix(b, "+"):
+					newN++
+				}
+			}
+			start := from + 1
+			lead := "" // the locator line, as the hunk's leading context
+			if locator != "" {
+				found := -1
+				for j := from; j < len(fileLines) && found < 0; j++ {
+					if strings.TrimSpace(fileLines[j]) == locator {
+						found = j
+					}
+				}
+				for j := from; j < len(fileLines) && found < 0; j++ {
+					if strings.Contains(fileLines[j], locator) {
+						found = j
+					}
+				}
+				if found >= 0 {
+					// The locator line becomes leading context when the
+					// hunk starts right after it: a hunk with none of its
+					// own would only apply at the end of file. When the
+					// hunk's lines are further down, adding it would make
+					// context that isn't contiguous in the file.
+					start = found + 1
+					switch {
+					case hasOld && firstOld == fileLines[found]:
+						// The hunk already starts at the locator line.
+					case !hasOld || (found+1 < len(fileLines) && firstOld == fileLines[found+1]):
+						lead = " " + fileLines[found]
+						oldN++
+						newN++
+					default:
+						start = found + 2 // somewhere after the locator; git apply searches
+					}
+				}
+			}
+			oldStart, newStart := start, start+delta
+			if oldN == 0 {
+				oldStart--
+			}
+			if newN == 0 {
+				newStart--
+			}
+			out = append(out, fmt.Sprintf("@@ -%d,%d +%d,%d @@", oldStart, oldN, newStart, newN))
+			if lead != "" {
+				out = append(out, lead)
+			}
+			from, delta = start-1+oldN, delta+newN-oldN
+		default:
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n"), nil
+}
+
 func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, error) {
+	patch, err := gitPatch(patch, dir)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(patch, "\n") {
+		patch += "\n"
+	}
 	files, err := triage.ParseDiff(patch)
 	if err != nil || len(files) == 0 {
 		return nil, errors.New("fixer returned an invalid git patch")
@@ -604,7 +753,8 @@ func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, e
 		}
 	}
 	for _, check := range []bool{true, false} {
-		args := []string{"apply"}
+		// Models miscount hunk lengths; the hunk lines themselves say.
+		args := []string{"apply", "--recount"}
 		if check {
 			args = append(args, "--check")
 		}
@@ -650,6 +800,15 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 	if m := loadCodeMap(o.codemapDir); m != nil {
 		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: original.PR.Repo}
 	}
+	prior := map[string]*triage.Unit{}
+	for _, f := range previous.Files {
+		for _, u := range f.Units {
+			prior[u.ID] = u.Unit
+		}
+	}
+	if pipe.Classifier != nil {
+		pipe.Classifier = &carryClassifier{pipe.Classifier, prior, changed}
+	}
 	reviewed := map[string]bool{}
 	pipe.ReviewFilter = func(u *triage.Unit) bool {
 		if selected[u.ID] || touchesPatch(u, changed) {
@@ -661,12 +820,6 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 	units := pipe.Run(ctx, src)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
-	}
-	prior := map[string]*triage.Unit{}
-	for _, f := range previous.Files {
-		for _, u := range f.Units {
-			prior[u.ID] = u.Unit
-		}
 	}
 	var lost []triage.Thread
 	for _, old := range prior {
@@ -739,6 +892,33 @@ func (t *triager) reviewFix(ctx context.Context, original, previous *PRResult, d
 		next.Files = append(next.Files, resultFile{FileDiff: f, Units: us})
 	}
 	return &next, reviewed, nil
+}
+
+// carryClassifier keeps the earlier decision for units the fix did not
+// touch, so a fix round only pays to classify the code it changed.
+type carryClassifier struct {
+	triage.Classifier
+	prior   map[string]*triage.Unit
+	changed []triage.FileDiff
+}
+
+func (c *carryClassifier) Classify(ctx context.Context, u *triage.Unit) triage.Decision {
+	if old := c.prior[u.ID]; old != nil && !touchesPatch(u, c.changed) {
+		// The stored decision holds the placed bucket (budget, pins,
+		// review issues); the classifier's own call is in the score.
+		d := old.Decision
+		d.Escalated = append([]string(nil), d.Escalated...)
+		d.RiskSignals = append([]string(nil), d.RiskSignals...)
+		if old.Score != nil && old.Score.Classified != "" {
+			d.Bucket = old.Score.Classified
+		}
+		// A carried decision is not a fresh answer (and a failed one lost
+		// its Failed flag in the stored result), so it must never be saved
+		// to the decision store.
+		d.Failed = true
+		return d
+	}
+	return c.Classifier.Classify(ctx, u)
 }
 
 func touchesPatch(u *triage.Unit, changed []triage.FileDiff) bool {

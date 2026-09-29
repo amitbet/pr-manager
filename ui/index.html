@@ -48,7 +48,7 @@
   <form method="dialog">
     <div class="dlg-head"><h3 id="settings-title">Settings</h3><button class="icon" value="close" aria-label="Close">✕</button></div>
     <section>
-      <h4>Models <button type="button" id="providers-refresh" class="linkbtn">refresh list</button></h4>
+      <h4>Models <span class="info" tabindex="0" aria-label="About models">i<span class="tip" role="tooltip">Used by the next triage. A different model gives a different cached result.</span></span> <button type="button" id="providers-refresh" class="linkbtn">refresh list</button></h4>
       <div class="grid">
         <span>Classifier</span>
         <select id="classifier" aria-label="classifier provider"><option value="">default</option></select>
@@ -57,10 +57,9 @@
         <select id="summarizer" aria-label="summarizer provider"><option value="">default</option></select>
         <select id="summary_model" aria-label="summarizer model"><option value="">default model</option></select>
       </div>
-      <p class="hint">Used by the next triage. A different model gives a different cached result.</p>
     </section>
     <section>
-      <h4>Code map</h4>
+      <h4>Code map <span class="info" tabindex="0" aria-label="About code map">i<span class="tip" role="tooltip">Impact scores come from a map of your repos. Index now links the checkouts in the local directory (as they are on disk, uncommitted changes included), clones the org&#39;s other repos, and re-reads only repos that changed. A PR from a repo outside the map is added when it&#39;s triaged. Cross-repo impact only counts mapped repos, so index the whole org. Server defaults: <code>PR_MANAGER_CODE_ROOT</code>, <code>PR_MANAGER_ORG</code>.</span></span></h4>
       <div class="grid codemap-src">
         <label for="code_root">Local code directory</label>
         <input id="code_root" spellcheck="false" placeholder="~/code (git checkouts in DIR/repo or DIR/org/repo)">
@@ -68,43 +67,46 @@
         <input id="org" spellcheck="false" placeholder="acme, or https://ghe.example.com/platform">
       </div>
       <div class="codemap-actions"><button type="button" id="index-btn">Index now</button> <span id="index-status" class="hint"></span></div>
-      <p class="hint">Impact scores come from a map of your repos. Index now links the checkouts in the local directory (indexed as they are on disk, including uncommitted changes) and clones the org's other repos, then rebuilds the map; only repos that changed are re-read. A PR from a repo that isn't in the map is added when it's triaged: linked from the local directory, else cloned. Cross-repo impact only counts repos in the map, so index the whole org. The server defaults are <code>PR_MANAGER_CODE_ROOT</code> and <code>PR_MANAGER_ORG</code>.</p>
     </section>
     <section>
-      <h4>Summary language</h4>
+      <h4>Summary language <span class="info" tabindex="0" aria-label="About summary language">i<span class="tip" role="tooltip">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated in the background; the EN button switches between the two. Translations are cached. Code, paths and quoted evidence aren&#39;t translated.</span></span></h4>
       <select id="summary_lang" aria-label="summary language"></select>
-      <p class="hint">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated in the background once the triage ends, so both are kept and the EN button switches between them; a PR triaged in another language is translated when you open it. Translations are cached. Code, paths and quoted evidence stay as they are.</p>
     </section>
     <section>
-      <h4>Review budget</h4>
+      <h4>Review budget <span class="info" tabindex="0" aria-label="About review budget">i<span class="tip" role="tooltip">How much of the PR goes to human review. Toward Less, a clean review counts for more, and on Less and Least a unit held at skim can drop to none. Pinned units (force_human paths, critical impact, medium or worse issues, failed reviews) always stay in human review. Moving the slider re-buckets the open PR without re-running it.</span></span></h4>
       <div class="budget"><span>More</span><input type="range" id="budget" min="0" max="4" step="1" aria-label="review budget"><span>Less</span></div>
       <div id="budget-info" class="hint"></div>
-      <p class="hint">How much of the PR goes to human review. Toward Less, a review that found nothing counts for more, and on Less and Least it lets a behavior change (or another unit held at skim) drop to none. Pinned units (force_human paths, critical impact, medium or worse issues, failed reviews) stay in human review at every step. Moving the slider re-buckets the open PR without re-running it.</p>
     </section>
     <section>
-      <h4>Review tools</h4>
+      <h4>Walkthrough steps <span class="info" tabindex="0" aria-label="About walkthrough steps">i<span class="tip" role="tooltip">A step is one file&#39;s changes, read in file order, with the changed definitions it uses from other files listed collapsed. A file over 400 changed lines is split between declarations. Off: one declaration per step. Only changes how the walkthrough is shown, so it applies at once. It is separate from the grouping the reviewer model uses to save calls.</span></span></h4>
+      <label class="check"><input type="checkbox" id="wz_group"> group each file's changes into one step</label>
+    </section>
+    <section>
+      <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>
+      <label class="check"><input type="checkbox" id="classify_batch"> classify several units per call</label>
+    </section>
+    <section>
+      <h4>Review tools <span class="info" tabindex="0" aria-label="About review tools">i<span class="tip" role="tooltip">codex and claude-code summarizers only. Slower, but catches claims about code outside the diff. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="review_tools"> let the reviewer read the repo at the PR head and the Go module cache</label>
-      <p class="hint">codex and claude-code summarizers only. Slower, but catches claims about code outside the diff. Applies to the next triage.</p>
     </section>
     <section>
-      <h4>Incremental review</h4>
+      <h4>Incremental review <span class="info" tabindex="0" aria-label="About incremental review">i<span class="tip" role="tooltip">A unit keeps its review when its diff is unchanged and so are the units it was judged against (callers, callees, other changes in its file). Everything else is re-reviewed. A rebase, a different model or review setting, a rebuilt code map, or Force carries nothing over.</span></span></h4>
       <label class="check"><input type="checkbox" id="incremental"> after a push, keep the review of units that did not change</label>
-      <p class="hint">A unit keeps its review when its own diff is unchanged and so are the units it was judged against: its callers and callees, the other changes in its file, and any unit code moved between. Everything else runs on the whole diff, so the buckets are as fresh as a full run's. A rebase, a different model, a different review setting or a rebuilt code map carries nothing, and neither does re-running a PR with Force.</p>
     </section>
     <section>
-      <h4>Static analysis</h4>
+      <h4>Static analysis <span class="info" tabindex="0" aria-label="About static analysis">i<span class="tip" role="tooltip">A linter runs only when the repo has a config for it (<code>.golangci.yml</code>, <code>eslint.config.js</code>, <code>ruff.toml</code>) and it is installed; shellcheck runs on changed shell scripts. The built-in credential scan always runs. Findings go to the reviewer, raise the unit&#39;s likelihood, and appear on the Issues tab. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="lint"> run the repository's linters over the lines the PR adds</label>
-      <p class="hint">A tool runs only when the repository has a config for it (<code>.golangci.yml</code>, <code>eslint.config.js</code>, <code>ruff.toml</code>) and it is installed; shellcheck runs on changed shell scripts. The built-in credential scan needs nothing installed and runs whenever this is on. Findings go to the reviewer as facts, raise the unit's likelihood, and show up on the Issues tab, where you can dismiss one. Applies to the next triage.</p>
     </section>
     <section>
-      <h4>Fix issues</h4>
-      <label for="fix_location">Apply fixes in</label>
-      <select id="fix_location" aria-label="fix location"><option value="worktree">Separate worktree (default)</option><option value="clone">Cached local clone</option></select>
-      <label for="fix_uncommitted">Uncommitted local changes</label>
-      <select id="fix_uncommitted" aria-label="uncommitted local changes"><option value="">Ask each time</option><option value="commit">Commit them, then fix in a worktree</option><option value="branch">Fix in the current branch</option></select>
+      <h4>Fix issues <span class="info" tabindex="0" aria-label="About fix issues">i<span class="tip" role="tooltip">The cached clone option checks out the PR branch in the app&#39;s clone and stops if that clone has local changes. Existing fix results keep their location. The issue and the code each fix touches are reviewed after every round.</span></span></h4>
+      <div class="grid fix-opts">
+        <label for="fix_location">Apply fixes in</label>
+        <select id="fix_location" aria-label="fix location"><option value="worktree">Separate worktree (default)</option><option value="clone">Cached local clone</option></select>
+        <label for="fix_uncommitted">Uncommitted local changes</label>
+        <select id="fix_uncommitted" aria-label="uncommitted local changes"><option value="">Ask each time</option><option value="commit">Commit them, then fix in a worktree</option><option value="branch">Fix in the current branch</option></select>
+      </div>
       <label class="check"><input type="checkbox" id="recursive_fix"> keep fixing issues found by follow-up reviews</label>
       <label class="check" for="max_fix_rounds">Maximum fix and review rounds <input type="number" id="max_fix_rounds" min="1" max="10" value="3" style="width:64px"></label>
-      <p class="hint">The cached clone option checks out the PR branch in the app's clone and applies changes there. It stops if that clone already has local changes. Existing fix results keep their current location. The selected issue and code touched by each fix are reviewed after every round.</p>
     </section>
   </form>
 </dialog>

@@ -36,6 +36,33 @@ func TestApplyFixPatchAndSelectChangedUnit(t *testing.T) {
 	}
 }
 
+type countingClassifier struct{ calls int }
+
+func (c *countingClassifier) Classify(context.Context, *triage.Unit) triage.Decision {
+	c.calls++
+	return triage.Decision{Bucket: triage.BucketHuman, Source: "llm"}
+}
+
+func TestCarryClassifierOnlyClassifiesTouchedUnits(t *testing.T) {
+	changed := []triage.FileDiff{{Path: "a.go", Hunks: []triage.Hunk{{NewStart: 3, NewLines: 1}}}}
+	kept := triage.Decision{Bucket: triage.BucketSkim, Source: "llm", Reason: "earlier"}
+	prior := map[string]*triage.Unit{
+		"a.go:f": {ID: "a.go:f", Decision: kept},
+		"a.go:g": {ID: "a.go:g", Decision: kept},
+	}
+	inner := &countingClassifier{}
+	c := &carryClassifier{inner, prior, changed}
+	ctx := context.Background()
+	if d := c.Classify(ctx, &triage.Unit{ID: "a.go:g", File: "a.go", Hunks: []triage.Hunk{{NewStart: 20, NewLines: 2}}}); d.Reason != "earlier" || inner.calls != 0 {
+		t.Errorf("untouched unit: decision %+v, %d calls", d, inner.calls)
+	}
+	c.Classify(ctx, &triage.Unit{ID: "a.go:f", File: "a.go", Hunks: []triage.Hunk{{NewStart: 1, NewLines: 5}}})
+	c.Classify(ctx, &triage.Unit{ID: "a.go:new", File: "a.go", Hunks: []triage.Hunk{{NewStart: 40, NewLines: 2}}})
+	if inner.calls != 2 {
+		t.Errorf("touched and new units: %d calls, want 2", inner.calls)
+	}
+}
+
 func TestFixTargets(t *testing.T) {
 	r := &PRResult{Files: []resultFile{
 		{FileDiff: triage.FileDiff{Path: "a.go"}, Units: []resultUnit{
@@ -195,5 +222,49 @@ func TestFixTargetsThreads(t *testing.T) {
 	}
 	if got := fixTargets(r, fixRequest{UnitID: "a.go:f", Thread: "evil"}); len(got) != 1 {
 		t.Errorf("untrusted thread not fixable on request: %+v", got)
+	}
+}
+
+func TestLocalChanges(t *testing.T) {
+	triaged := &triage.PRInfo{HeadRef: "feature", BaseRef: "main", BaseOid: "b1", HeadOid: "h1", SnapshotHash: "s1"}
+	committed := *triaged
+	committed.HeadOid = "h2"
+	if w := localChanges(triaged, &committed); w != "" {
+		t.Errorf("a commit of the triaged code warned: %s", w)
+	}
+	edited := committed
+	edited.SnapshotHash, edited.HeadRef = "s2", "other"
+	w := localChanges(triaged, &edited)
+	if !strings.Contains(w, "code changed") || !strings.Contains(w, "now other") || strings.Contains(w, "merge base") {
+		t.Errorf("warning: %s", w)
+	}
+}
+
+// Fixers mix Codex's apply_patch headers into git patches and miscount
+// hunks; the patch still applies.
+func TestApplyFixPatchMixedFormat(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n\nfunc f() int { return 0 }\n", "b.go": "package a\n\nfunc g() int { return 0 }\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	patch := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n" +
+		"*** Update File: b.go\n--- a/b.go\n+++ b/b.go\n@@ -3,7 +3,9 @@\n-func g() int { return 0 }\n+func g() int { return 1 }\n" +
+		"*** Add File: c.go\n+package a\n+\n+func h() {}\n*** End Patch"
+	changed, err := applyFixPatch(context.Background(), dir, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 3 {
+		t.Errorf("changed %d files, want 3", len(changed))
+	}
+	for name, want := range map[string]string{"a.go": "return 1", "b.go": "return 1", "c.go": "func h() {}"} {
+		if b, _ := os.ReadFile(filepath.Join(dir, name)); !strings.Contains(string(b), want) {
+			t.Errorf("%s = %q, want %q in it", name, b, want)
+		}
 	}
 }

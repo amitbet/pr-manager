@@ -8,6 +8,7 @@ package activity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	maxLines    = 400  // per thread; older lines are dropped
-	maxLineLen  = 2000 // longer lines are cut
-	maxThreads  = 2000 // per log; older finished threads are dropped
+	maxLines    = 400       // per thread; older lines are dropped
+	maxLineLen  = 2000      // longer lines are cut
+	maxDataLen  = 256 << 10 // larger attached data is dropped
+	maxThreads  = 2000      // per log; older finished threads are dropped
 	statusRun   = "running"
 	statusDone  = "done"
 	statusError = "error"
@@ -26,6 +28,9 @@ const (
 type Line struct {
 	T    time.Time `json:"t"`
 	Text string    `json:"text"`
+	// Data is a structured value shown under the line, such as a model's
+	// output, which the UI lays out instead of printing as one long line.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 type Thread struct {
@@ -101,6 +106,27 @@ func Printf(ctx context.Context, format string, args ...any) {
 	t.Printf(format, args...)
 }
 
+// PrintData is Printf with data attached to the line. Data too large to
+// keep is appended to the text as JSON, cut like any long line.
+func PrintData(ctx context.Context, data any, format string, args ...any) {
+	t, _ := ctx.Value(threadKey{}).(*Thread)
+	if t == nil {
+		l := from(ctx)
+		if l == nil {
+			return
+		}
+		t = l.jobThread()
+	}
+	b, err := json.Marshal(data)
+	if err != nil || len(b) > maxDataLen {
+		t.Printf("%s: %s", fmt.Sprintf(format, args...), b)
+		return
+	}
+	t.log.mu.Lock()
+	defer t.log.mu.Unlock()
+	t.add(Line{T: time.Now(), Text: clip(fmt.Sprintf(format, args...)), Data: b})
+}
+
 // Errorf is Printf for a failure: the thread ends as failed.
 func Errorf(ctx context.Context, format string, args ...any) {
 	if t, _ := ctx.Value(threadKey{}).(*Thread); t != nil {
@@ -144,8 +170,14 @@ func (t *Thread) Printf(format string, args ...any) {
 	t.log.mu.Lock()
 	defer t.log.mu.Unlock()
 	for _, s := range strings.Split(strings.TrimRight(fmt.Sprintf(format, args...), "\n"), "\n") {
-		t.Lines = append(t.Lines, Line{T: now, Text: clip(s)})
+		t.add(Line{T: now, Text: clip(s)})
 	}
+}
+
+// add appends l, dropping the oldest lines past maxLines. The log's lock
+// is held.
+func (t *Thread) add(l Line) {
+	t.Lines = append(t.Lines, l)
 	if n := len(t.Lines) - maxLines; n > 0 {
 		t.Lines = append(t.Lines[:0:0], t.Lines[n:]...)
 		t.Dropped += n

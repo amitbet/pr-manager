@@ -9,7 +9,6 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -217,8 +216,7 @@ func CallToolIn(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatMessag
 			activity.Errorf(ctx, "✗ %s after %s: %v", tool.Name, took, err)
 			return
 		}
-		b, _ := json.Marshal(args)
-		activity.Printf(ctx, "← %s in %s, %d in / %d out tokens: %s", tool.Name, took, usage.InputTokens, usage.OutputTokens, b)
+		activity.PrintData(ctx, args, "← %s in %s, %d in / %d out tokens", tool.Name, took, usage.InputTokens, usage.OutputTokens)
 	}()
 	resp, err := l.Call(ctx, LLMRequest{
 		Messages:   msgs,

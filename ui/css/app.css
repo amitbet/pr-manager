@@ -42,6 +42,7 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg select { font-size: 13px; min-width: 0; }
 .settings-dlg .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0 8px; }
 .settings-dlg .grid.codemap-src { grid-template-columns: auto 1fr; }
+.settings-dlg .grid.fix-opts { grid-template-columns: auto auto; justify-content: start; margin-bottom: 6px; }
 .settings-dlg .codemap-src input { font-size: 13px; min-width: 0; }
 .settings-dlg .codemap-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
 .settings-dlg select:disabled { opacity: .55; }
@@ -50,6 +51,11 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg .hint { color: var(--muted); font-size: 13px; margin: 6px 0; }
 .settings-dlg #budget-info { color: var(--fg); display: flex; flex-direction: column; gap: 4px; }
 .settings-dlg .check { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+/* (i) next to a section title; js/settings.js places the tip (fixed, so the dialog's scroll doesn't clip it). */
+.settings-dlg .info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 1px solid var(--muted); border-radius: 50%; font: italic 600 10px/1 Georgia, serif; text-transform: none; color: var(--muted); cursor: help; align-self: center; }
+.settings-dlg .info:hover, .settings-dlg .info:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.settings-dlg .info .tip { display: none; position: fixed; z-index: 10; width: 340px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--fg); box-shadow: 0 4px 12px rgba(0,0,0,.2); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: 0; text-transform: none; cursor: auto; }
+.settings-dlg .info:hover .tip, .settings-dlg .info:focus .tip { display: block; }
 .layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 54px); }
 aside { border-right: 1px solid var(--border); background: var(--bg2); overflow-y: auto; max-height: calc(100vh - 54px); position: sticky; top: 54px; }
 aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 12px 6px; }
