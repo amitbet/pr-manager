@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/amitbet/pr-manager/internal/activity"
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 type FileStatus string
@@ -50,7 +51,7 @@ func Git(dir string, args ...string) (string, error) {
 func GitCtx(ctx context.Context, dir string, args ...string) (_ string, err error) {
 	_, done := activity.Command(ctx, dir, "git", args...)
 	defer func() { done(err) }()
-	cmd := exec.Command("git", args...)
+	cmd := proc.Command("git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

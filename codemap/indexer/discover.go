@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -20,7 +19,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/amitbet/pr-manager/codemap"
 	"github.com/amitbet/pr-manager/codemap/githist"
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/internal/sitter"
 )
 
@@ -64,7 +65,7 @@ func discoverRepos(ws string) ([]*RepoInfo, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		root, err := filepath.EvalSymlinks(filepath.Join(ws, "code", name))
+		root, err := codemap.ResolveLink(filepath.Join(ws, "code", name))
 		if err != nil {
 			continue
 		}
@@ -83,9 +84,22 @@ func discoverRepos(ws string) ([]*RepoInfo, error) {
 }
 
 func gitOut(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := proc.Command("git", append([]string{"-C", dir}, args...)...)
 	b, err := cmd.Output()
 	return string(b), err
+}
+
+// repoRemote is the identity of the checkout's origin remote
+// (codemap.RemoteID), "" without one.
+func repoRemote(root string) string {
+	if root == "" {
+		return ""
+	}
+	out, err := gitOut(root, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return codemap.RemoteID(strings.TrimSpace(out))
 }
 
 func (ri *RepoInfo) loadFiles() error {

@@ -128,7 +128,7 @@ func (l *lexer) code(untilBrace bool) bool {
 			inClass := false
 			for l.i < n && src[l.i] != '\n' {
 				if src[l.i] == '\\' {
-					l.i += 2
+					l.i = min(l.i+2, n)
 					continue
 				}
 				if src[l.i] == '[' {
@@ -190,7 +190,7 @@ func (l *lexer) blockComment() {
 		}
 		l.i++
 	}
-	l.i += 2
+	l.i = min(l.i+2, l.n) // an unclosed /* runs to the end
 }
 
 // template reads a template literal after its opening backtick. The code in

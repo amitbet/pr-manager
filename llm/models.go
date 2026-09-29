@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 // Model is one entry in a provider's model list.
@@ -59,6 +61,9 @@ func Catalogs(ctx context.Context, openjevURL string, refresh bool) []Catalog {
 	defer catMu.Unlock()
 	if !refresh && catCache != nil && time.Since(catAt) < cacheFor {
 		return catCache
+	}
+	if refresh {
+		forgetSubscriptions()
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
@@ -117,7 +122,8 @@ func probeCodex(ctx context.Context) Catalog {
 func codexModelList(ctx context.Context) ([]Model, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "codex", "app-server")
+	cmd := proc.CommandContext(ctx, "codex", "app-server")
+	ownGroup(cmd)
 	cmd.Env = cliEnv("OPENAI_API_KEY", "CODEX_API_KEY") // list what the subscription can run
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

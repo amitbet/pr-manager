@@ -7,7 +7,7 @@ export const SEV_CLASS = { low: "medium", medium: "high", high: "critical", crit
 export const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 // issueCapChip says why the severity is lower than the reviewer's claim.
 export const issueCapChip = (is) => is.claimed_severity
-  ? ` <span class="chip" title="${esc(is.capped || "")}">${is.pre_existing ? "pre-existing" : "capped"} · claimed ${esc(is.claimed_severity)}</span>` : "";
+  ? ` <span class="chip" title="${esc(is.capped || "")}">${is.critic_rejected ? "critic rejected" : is.pre_existing ? "pre-existing" : "capped"} · claimed ${esc(is.claimed_severity)}</span>` : "";
 
 // issueScenarioHTML is the failure scenario of u's issue i and the quoted
 // evidence.

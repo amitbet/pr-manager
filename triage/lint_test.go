@@ -2,6 +2,9 @@ package triage
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,14 +114,16 @@ func TestLintPolicySet(t *testing.T) {
 }
 
 func TestParseGolangCIAndESLint(t *testing.T) {
+	// Absolute in the OS's own form: C:\... on Windows, /... elsewhere.
+	repo := filepath.Join(t.TempDir(), "repo")
 	gci := []byte(`level=info skipping
-{"Issues":[{"FromLinter":"errcheck","Text":"Error return value of ` + "`w.Write`" + ` is not checked","Severity":"error","Pos":{"Filename":"/repo/a.go","Line":7,"Column":3}}]}`)
-	fs, err := parseGolangCI(gci, "/repo")
+{"Issues":[{"FromLinter":"errcheck","Text":"Error return value of ` + "`w.Write`" + ` is not checked","Severity":"error","Pos":{"Filename":` + strconv.Quote(filepath.Join(repo, "a.go")) + `,"Line":7,"Column":3}}]}`)
+	fs, err := parseGolangCI(gci, repo)
 	if err != nil || len(fs) != 1 || fs[0].Path != "a.go" || fs[0].Line != 7 || fs[0].Rule != "errcheck" {
 		t.Fatalf("parseGolangCI = %+v, %v", fs, err)
 	}
-	es := []byte(`[{"filePath":"/repo/src/x.ts","messages":[{"ruleId":"no-unused-vars","severity":1,"message":"'y' is defined but never used","line":3,"column":9}]}]`)
-	fs, err = parseESLint(es, "/repo")
+	es := []byte(`[{"filePath":` + strconv.Quote(filepath.Join(repo, "src", "x.ts")) + `,"messages":[{"ruleId":"no-unused-vars","severity":1,"message":"'y' is defined but never used","line":3,"column":9}]}]`)
+	fs, err = parseESLint(es, repo)
 	if err != nil || len(fs) != 1 || fs[0].Path != "src/x.ts" || fs[0].Severity != lintWarning {
 		t.Fatalf("parseESLint = %+v, %v", fs, err)
 	}
@@ -131,5 +136,45 @@ func TestPickSkipsToolsTheRepoIsNotConfiguredFor(t *testing.T) {
 		if len(got.config) > 0 {
 			t.Errorf("auto picked %s with no config in the repo", got.name)
 		}
+	}
+}
+
+// On macOS the lint worktree sits under /var, a link to /private/var, and
+// eslint and ruff report the resolved path. A finding must still land on
+// the repo-relative path, whichever side is the resolved one.
+func TestRelSlashThroughSymlinkedDir(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(real, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "src", "x.ts"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if got := relSlash(link, filepath.Join(real, "src", "x.ts")); got != "src/x.ts" {
+		t.Errorf("dir via link, path resolved: %q", got)
+	}
+	if got := relSlash(real, filepath.Join(link, "src", "x.ts")); got != "src/x.ts" {
+		t.Errorf("dir resolved, path via link: %q", got)
+	}
+	// A path that no longer exists still resolves through the dir.
+	if got := relSlash(link, filepath.Join(real, "gone.ts")); got != "gone.ts" {
+		t.Errorf("missing file: %q", got)
+	}
+	es := []byte(`[{"filePath":` + strconv.Quote(filepath.Join(real, "src", "x.ts")) + `,"messages":[{"ruleId":"r","severity":2,"message":"m","line":1,"column":1}]}]`)
+	fs, err := parseESLint(es, link)
+	if err != nil || len(fs) != 1 {
+		t.Fatalf("parseESLint = %+v, %v", fs, err)
+	}
+	added := map[string]map[int]bool{"src/x.ts": {1: true}}
+	if kept := onAddedLines(fs, added); len(kept) != 1 {
+		t.Errorf("finding dropped: path %q", fs[0].Path)
 	}
 }

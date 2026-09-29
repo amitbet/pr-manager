@@ -3,12 +3,15 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
 func TestVertexRequest(t *testing.T) {
@@ -79,7 +82,7 @@ func TestMantleSigV4(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	t.Setenv("AWS_REGION", "eu-west-1")
-	awsOnce = sync.Once{} // load the config with the keys above
+	awsCfg = nil // load the config with the keys above
 	m := &mantle{}
 	url, _ := m.URL("")
 	if url != "https://bedrock-mantle.eu-west-1.api.aws/anthropic/v1/messages" {
@@ -170,5 +173,71 @@ func TestConfiguredCloud(t *testing.T) {
 		if got := ProviderID(alias); got != want {
 			t.Errorf("ProviderID(%s) = %s", alias, got)
 		}
+	}
+}
+
+func TestBedrockBaseModel(t *testing.T) {
+	for id, want := range map[string]string{
+		"anthropic.claude-sonnet-5":                                                  "anthropic.claude-sonnet-5",
+		"us.anthropic.claude-opus-5-5-v1:0":                                          "anthropic.claude-opus-5-5",
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0":                            "anthropic.claude-haiku-4-5",
+		"apac.anthropic.claude-sonnet-5":                                             "anthropic.claude-sonnet-5",
+		"us-gov.anthropic.claude-fable-5-1-v2:0":                                     "anthropic.claude-fable-5-1",
+		"anthropic.claude-3-sonnet-20240229-v1:0:200k":                               "anthropic.claude-3-sonnet",
+		"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-5-5-v1:0": "anthropic.claude-opus-5-5",
+		"arn:aws:bedrock:us-east-1:1:inference-profile/eu.anthropic.claude-sonnet-5": "anthropic.claude-sonnet-5",
+		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x":                "x",
+		"amazon.nova-pro-v1:0":                                                       "amazon.nova-pro",
+		"us.amazon.nova-pro-v1:0":                                                    "amazon.nova-pro",
+	} {
+		if got := bedrockBaseModel(id); got != want {
+			t.Errorf("bedrockBaseModel(%s) = %s, want %s", id, got, want)
+		}
+	}
+}
+
+func TestConverseToolChoice(t *testing.T) {
+	tools := []ToolDefinition{{Name: "answer"}}
+	req := LLMRequest{Messages: []ChatMessage{{Role: "user", Content: "hi"}}, Tools: tools, ToolChoice: ToolChoiceRequired}
+	for model, want := range map[string]bool{
+		"us.anthropic.claude-sonnet-5-v1:0":     true,
+		"global.anthropic.claude-opus-5-5-v1:0": false,
+		"eu.anthropic.claude-fable-5-1-v1:0":    false,
+		"amazon.nova-pro-v1:0":                  true,
+	} {
+		forced := converseForced(model, req)
+		if forced != want {
+			t.Errorf("%s: forced = %v, want %v", model, forced, want)
+		}
+		in := converseInput(model, req, forced)
+		_, specific := in.ToolConfig.ToolChoice.(*brtypes.ToolChoiceMemberTool)
+		if specific != want {
+			t.Errorf("%s: specific tool choice = %v, want %v", model, specific, want)
+		}
+		if !want && len(in.System) == 0 {
+			t.Errorf("%s: auto tool choice without an instruction to call the tool", model)
+		}
+	}
+	if converseForced("anthropic.claude-sonnet-5", LLMRequest{Tools: tools, ToolChoice: ToolChoiceAuto}) {
+		t.Error("auto request forced")
+	}
+
+	// A model that rejected a specific tool choice once is not forced again,
+	// under any profile or version of its id.
+	model := "us.meta.llama4-maverick-17b-instruct-v1:0"
+	if !converseForced(model, req) {
+		t.Fatal("unknown model not forced before a rejection")
+	}
+	rejected := &brtypes.ValidationException{Message: aws.String("This model doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and try again.")}
+	if !toolChoiceRejected(fmt.Errorf("wrapped: %w", rejected)) {
+		t.Fatal("toolChoice 400 not recognized")
+	}
+	if toolChoiceRejected(&brtypes.ValidationException{Message: aws.String("max_tokens too large")}) {
+		t.Fatal("unrelated 400 taken for a toolChoice rejection")
+	}
+	noForcedTool.Store(bedrockBaseModel(model), true)
+	t.Cleanup(func() { noForcedTool.Delete(bedrockBaseModel(model)) })
+	if converseForced("meta.llama4-maverick-17b-instruct-v1:0", req) {
+		t.Error("rejected model forced again")
 	}
 }

@@ -175,8 +175,9 @@ func TestTierMoves(t *testing.T) {
 	check("svc/both.go", BucketHuman, 41, "score 41 = 59 × 0.7 (clean review) → human (≥ 40 on balanced)") // √(60×58)
 	check("svc/flaky.go", BucketSkim, 28, "40 × 0.7")                                                      // √(20×80): a clean review is trusted
 	check("svc/hot.go", BucketSkim, 22, "→ skim")                                                          // impact 82 is under critical_impact 85
-	check("svc/calm.go", BucketNone, 5, "12 × kind 0.6 × 0.7")
-	check("svc/calm3.go", BucketNone, 9, "→ none")
+	// Both score none, but they change code: only a rule can skip that.
+	check("svc/calm.go", BucketSkim, 5, "12 × kind 0.6 × 0.7 (clean review) → none (< 15 on balanced); raised to skim: the change is more than comments")
+	check("svc/calm3.go", BucketSkim, 9, "no budget lifts this")
 	check("svc/calm2.go", BucketSkim, 15, "review attention 15")                               // a low issue: half the trust, attention floor
 	check("svc/test_like.go", BucketSkim, 7, "raised to skim: the classifier asked for human") // scores none
 	if u := check("svc/issue.go", BucketHuman, 45, "any budget"); u.Score.Pin != BucketHuman || u.Issues[0].Line != 5 {
@@ -196,7 +197,8 @@ func TestTierMoves(t *testing.T) {
 	}
 
 	// Other budgets re-bucket without a re-run; pins hold, and floors hold
-	// until a budget lets a clean review lift them.
+	// until a budget lets a clean review lift them. The code floor holds on
+	// every budget: every unit here changes a code line.
 	all := sortedUnits(units)
 	bucketsAt := func(budget string) map[string]Bucket {
 		t.Helper()
@@ -210,15 +212,15 @@ func TestTierMoves(t *testing.T) {
 		return out
 	}
 	most := bucketsAt("most")
-	if most["svc/flaky.go"] != BucketHuman || most["svc/hot.go"] != BucketHuman || most["svc/calm.go"] != BucketNone || most["svc/calm3.go"] != BucketSkim {
+	if most["svc/flaky.go"] != BucketHuman || most["svc/hot.go"] != BucketHuman || most["svc/calm.go"] != BucketSkim || most["svc/calm3.go"] != BucketSkim {
 		t.Errorf("most: %v", most)
 	}
 	least := bucketsAt("least")
 	if least["svc/both.go"] != BucketSkim || least["svc/issue.go"] != BucketHuman || least["db/migrations/1.sql"] != BucketHuman ||
-		least["svc/flaky.go"] != BucketNone || least["svc/test_like.go"] != BucketNone || least["svc/calm2.go"] != BucketSkim { // a low issue keeps the floor
+		least["svc/flaky.go"] != BucketSkim || least["svc/test_like.go"] != BucketSkim || least["svc/calm2.go"] != BucketSkim { // a low issue keeps the floor
 		t.Errorf("least: %v", least)
 	}
-	if u := units["svc/flaky.go"]; !strings.Contains(u.Score.Why, "a behavior change is never skipped lifted by the clean review") {
+	if u := units["svc/flaky.go"]; !strings.Contains(u.Score.Why, "a behavior change is never skipped lifted by the clean review; raised to skim: the change is more than comments") {
 		t.Errorf("flaky on least: %q", u.Score.Why)
 	}
 	if err := Rebucket(all, DefaultTierPolicy(), "nope"); err == nil {
@@ -483,5 +485,32 @@ func TestScoreFindings(t *testing.T) {
 	r.scoreFindings(c, units)
 	if r.Found != 0 || len(r.WrongSeverity) != 1 || len(r.Missed) != 2 {
 		t.Errorf("second run: %+v", r)
+	}
+}
+
+// A test file scores no likelihood, so its score is 0: a test edit the
+// reviewer sent to human must stay there on every budget, even after a
+// clean review, while one it sent to skim is left to the score.
+func TestTestFileKeepsHuman(t *testing.T) {
+	answers := map[string]script{
+		"svc/calm_test.go":  {bucket: "human", kind: "test"},
+		"svc/calm2_test.go": {bucket: "skim", kind: "test"},
+	}
+	diff := fileDiff("svc/calm_test.go") + fileDiff("svc/calm2_test.go")
+	units, _ := runScripted(t, testMap(t), "svc", diff, answers)
+	u, other := units["svc/calm_test.go"], units["svc/calm2_test.go"]
+	if u == nil || other == nil || !u.Reviewed || !u.Impact.Known() || u.Likelihood == nil || u.Likelihood.Score != 0 {
+		t.Fatalf("setup: %+v", u)
+	}
+	for _, b := range BudgetNames {
+		if err := Rebucket([]*Unit{u, other}, DefaultTierPolicy(), b); err != nil {
+			t.Fatal(err)
+		}
+		if u.Decision.Bucket != BucketHuman {
+			t.Errorf("%s: human test edit placed %s: %s", b, u.Decision.Bucket, u.Score.Why)
+		}
+		if other.Score.Pin != "" {
+			t.Errorf("%s: a skim test edit should not be pinned: %s", b, other.Score.Why)
+		}
 	}
 }

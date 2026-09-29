@@ -272,7 +272,7 @@ func runTriage(ctx context.Context, o options) error {
 			return err
 		}
 		if m := loadCodeMap(o.codemapDir); m != nil {
-			pipe.CodeMap = &triage.CodeMap{Map: m, Repo: localRepoName(o)}
+			pipe.CodeMap = &triage.CodeMap{Map: m, Repo: localRepoName(o, m)}
 		}
 		report = &triage.Report{Base: o.base, Head: o.head, Units: pipe.Run(ctx, src)}
 		if !triage.IsEnglish(o.summaryLang) {
@@ -453,21 +453,40 @@ func dirConfig(o options) (triage.Policy, []string, error) {
 	return policy, triage.LoadGitattributesGenerated(filepath.Join(o.dir, ".gitattributes")), nil
 }
 
-// sourceConfig loads .triage.yaml and .gitattributes from the head revision.
-func sourceConfig(src *triage.Source) (triage.Policy, []string, error) {
-	policy := triage.DefaultPolicy()
-	if src.Content == nil {
-		return policy, nil, nil
-	}
-	if b, err := src.Content(".triage.yaml"); err == nil && len(b) > 0 {
-		p, err := triage.ParsePolicy(b)
-		if err != nil {
-			return policy, nil, fmt.Errorf(".triage.yaml: %w", err)
+// sourceConfig loads .triage.yaml and .gitattributes. A remote PR's head is
+// the change under review and could exempt itself, so by default they come
+// from the merge base and the head's .triage.yaml can only add force_human
+// (see triage.ParsePRPolicy). trustHead is for the user's own checkout: its
+// head config applies as is, and a head .triage.yaml that doesn't parse is
+// an error.
+func sourceConfig(src *triage.Source, trustHead bool) (triage.Policy, []string, error) {
+	read := func(get triage.ContentFunc, file string) []byte {
+		if get == nil {
+			return nil
 		}
-		policy = p
+		b, err := get(file)
+		if err != nil {
+			return nil
+		}
+		return b
+	}
+	attrsFrom := src.BaseContent
+	var policy triage.Policy
+	var err error
+	if trustHead {
+		attrsFrom = src.Content
+		policy = triage.DefaultPolicy()
+		if b := read(src.Content, ".triage.yaml"); len(b) > 0 {
+			policy, err = triage.ParsePolicy(b)
+		}
+	} else {
+		policy, err = triage.ParsePRPolicy(read(src.BaseContent, ".triage.yaml"), read(src.Content, ".triage.yaml"))
+	}
+	if err != nil {
+		return policy, nil, fmt.Errorf(".triage.yaml: %w", err)
 	}
 	var gitattrs []string
-	if b, err := src.Content(".gitattributes"); err == nil {
+	if b := read(attrsFrom, ".gitattributes"); b != nil {
 		gitattrs = triage.ParseGitattributesGenerated(b)
 	}
 	return policy, gitattrs, nil
@@ -601,7 +620,22 @@ func openCodeMap(dir string) *codemap.Map {
 	return m
 }
 
-// codeMapVersion goes into result cache keys so a rebuilt map re-triages.
+// codeMapSettings is the code map's part of the settings hash (see
+// settingsHash): whether there is a map, and its format. Not its build
+// time: the map is rebuilt whenever a new repo is first triaged or Index
+// is pressed, and a hash that moved with it would stop every earlier run
+// of every repo from being carried over (incremental.go). Nothing carried
+// depends on the map anyway; impact and likelihood are scored again on
+// every run from the map as it is then.
+func codeMapSettings(m *codemap.Map) string {
+	if m == nil {
+		return "nomap"
+	}
+	return fmt.Sprintf("map%d", m.Meta.Version)
+}
+
+// codeMapVersion is when the map was built: shown with a result, and a
+// key for what is derived from one build (treemaps).
 func codeMapVersion(m *codemap.Map) string {
 	if m == nil {
 		return "nomap"
@@ -614,9 +648,9 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-// localRepoName is the map repo for -C runs: -map-repo, else the checkout's
-// directory name.
-func localRepoName(o options) string {
+// localRepoName is the map repo for -C runs: -map-repo, else the map's
+// repo with the checkout's origin remote, else its directory name.
+func localRepoName(o options, m *codemap.Map) string {
 	if o.mapRepo != "" {
 		return o.mapRepo
 	}
@@ -625,7 +659,11 @@ func localRepoName(o options) string {
 		abs, _ := filepath.Abs(o.dir)
 		return filepath.Base(abs)
 	}
-	return filepath.Base(strings.TrimSpace(top))
+	top = strings.TrimSpace(top)
+	if ref := localRepoRef(top); ref.Owner != "local" {
+		return codeMapRepo(m, ref)
+	}
+	return filepath.Base(top)
 }
 
 func readDiff(path string) (string, error) {

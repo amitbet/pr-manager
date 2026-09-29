@@ -25,6 +25,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -110,8 +112,10 @@ func ConfiguredCloud() string {
 // ---- Amazon Bedrock ----
 
 // BedrockLLM sends Claude (anthropic.claude-* ids) to the Messages API on
-// Bedrock (bedrock-mantle), and every other model id, including inference
-// profile and provisioned-throughput ARNs, to the Converse API.
+// Bedrock (bedrock-mantle), and every other model id to the Converse API.
+// That includes Claude as a cross-region inference profile
+// (us.anthropic.claude-...), a versioned id (...-v1:0) or an ARN: those are
+// Converse/InvokeModel ids, not Messages API model names.
 type BedrockLLM struct {
 	Model  string
 	Region string // default: AWS_REGION, AWS_DEFAULT_REGION, the profile's region, us-east-1
@@ -136,18 +140,24 @@ func (b *BedrockLLM) Call(ctx context.Context, req LLMRequest) (*LLMResponse, er
 }
 
 var (
-	awsOnce sync.Once
-	awsCfg  aws.Config
-	awsErr  error
+	awsMu  sync.Mutex
+	awsCfg *aws.Config
 )
 
-// awsConfig loads the default AWS config once: env keys, profiles and SSO,
-// web identity (EKS), container and instance roles.
+// awsConfig loads the default AWS config once it loads: env keys, profiles
+// and SSO, web identity (EKS), container and instance roles. A failure is
+// retried on the next call.
 func awsConfig(ctx context.Context) (aws.Config, error) {
-	awsOnce.Do(func() {
-		awsCfg, awsErr = awsconfig.LoadDefaultConfig(context.WithoutCancel(ctx))
-	})
-	return awsCfg, awsErr
+	awsMu.Lock()
+	defer awsMu.Unlock()
+	if awsCfg == nil {
+		cfg, err := awsconfig.LoadDefaultConfig(context.WithoutCancel(ctx))
+		if err != nil {
+			return aws.Config{}, err
+		}
+		awsCfg = &cfg
+	}
+	return *awsCfg, nil
 }
 
 func awsRegion(ctx context.Context, region string) string {
@@ -207,19 +217,98 @@ func bedrockClient(ctx context.Context, region string) (*bedrockruntime.Client, 
 	if c := brClients[region]; c != nil {
 		return c, nil
 	}
-	c := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) { o.Region = region })
+	c := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
+		o.Region = region
+		o.Retryer = bedrockRetryer(cfg.RetryMaxAttempts)
+	})
 	brClients[region] = c
 	return c, nil
 }
 
+// bedrockRetryer: the SDK already retries throttling, 5xx and transient
+// network errors with jittered backoff, so Converse doesn't go through
+// doRetry. Its defaults are tuned for control-plane calls: 3 attempts, and
+// a client-wide retry quota that a burst of concurrent reviews drains, after
+// which every throttled call fails at once. Match httpRetry instead:
+// 5 attempts, backoff up to 30s, no quota. AWS_MAX_ATTEMPTS still wins.
+func bedrockRetryer(maxAttempts int) aws.Retryer {
+	if maxAttempts <= 0 {
+		maxAttempts = httpRetry.MaxRetries + 1
+	}
+	return retry.NewStandard(func(o *retry.StandardOptions) {
+		o.MaxAttempts = maxAttempts
+		o.MaxBackoff = httpRetry.Max
+		o.RateLimiter = ratelimit.None
+	})
+}
+
+// bedrockBaseModel strips what Bedrock wraps a model id in, for capability
+// checks: an ARN's resource type, a cross-region inference profile's
+// geography (us., eu., apac., global. ...), and a date and -v1:0 version
+// suffix. us.anthropic.claude-haiku-4-5-20251001-v1:0 becomes
+// anthropic.claude-haiku-4-5, the id Claude has on the Messages API.
+// Application inference profile ARNs stay opaque.
+func bedrockBaseModel(id string) string {
+	if strings.HasPrefix(id, "arn:") {
+		if i := strings.LastIndexByte(id, '/'); i >= 0 {
+			id = id[i+1:]
+		}
+	}
+	id = bedrockGeo.ReplaceAllString(id, "")
+	id = bedrockVersion.ReplaceAllString(id, "")
+	return bedrockDate.ReplaceAllString(id, "")
+}
+
+var (
+	bedrockGeo     = regexp.MustCompile(`^(?:us|us-gov|eu|apac|jp|au|ca|global)\.`)
+	bedrockVersion = regexp.MustCompile(`-v\d+(?::[0-9a-z]+)*$`)
+	bedrockDate    = regexp.MustCompile(`-\d{8}$`)
+)
+
+// converseForced: whether a ToolChoiceRequired request names the tool, or
+// falls back to auto plus an instruction, as the Messages API path does.
+// Converse also rejects a specific tool choice for models without it (Llama,
+// some Mistral), which then land in noForcedTool.
+func converseForced(model string, req LLMRequest) bool {
+	return req.ToolChoice == ToolChoiceRequired && len(req.Tools) > 0 && forcedToolOK(bedrockBaseModel(model))
+}
+
+// toolChoiceRejected: a Converse 400 about toolChoice, e.g. "This model
+// doesn't support the toolConfig.toolChoice.tool field."
+func toolChoiceRejected(err error) bool {
+	var ve *brtypes.ValidationException
+	if !errors.As(err, &ve) {
+		return false
+	}
+	m := strings.ToLower(ve.ErrorMessage())
+	return strings.Contains(m, "toolchoice") || strings.Contains(m, "tool_choice")
+}
+
 // converse is the Converse API path, for models Bedrock doesn't serve
-// through the Messages API (Nova, Llama, Mistral, ARN-versioned Claude).
+// through the Messages API (Nova, Llama, Mistral, inference profiles and
+// versioned or ARN Claude ids).
 func (b *BedrockLLM) converse(ctx context.Context, req LLMRequest) (*LLMResponse, error) {
 	client, err := bedrockClient(ctx, awsRegion(ctx, b.Region))
 	if err != nil {
 		return nil, err
 	}
-	in := &bedrockruntime.ConverseInput{ModelId: aws.String(b.ModelID())}
+	forced := converseForced(b.ModelID(), req)
+	out, err := client.Converse(ctx, converseInput(b.ModelID(), req, forced))
+	if err != nil && forced && toolChoiceRejected(err) {
+		noForcedTool.Store(bedrockBaseModel(b.ModelID()), true)
+		out, err = client.Converse(ctx, converseInput(b.ModelID(), req, false))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("bedrock converse %s: %w", b.ModelID(), err)
+	}
+	return parseConverseOutput(out)
+}
+
+// converseInput builds a Converse request. Without forced, a
+// ToolChoiceRequired request gets auto tool choice and an instruction to
+// call the first tool.
+func converseInput(model string, req LLMRequest, forced bool) *bedrockruntime.ConverseInput {
+	in := &bedrockruntime.ConverseInput{ModelId: aws.String(model)}
 	for _, m := range req.Messages {
 		switch m.Role {
 		case "system":
@@ -249,17 +338,23 @@ func (b *BedrockLLM) converse(ctx context.Context, req LLMRequest) (*LLMResponse
 				InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: document.NewLazyDocument(schema)},
 			}})
 		}
-		if req.ToolChoice == ToolChoiceRequired {
+		switch {
+		case forced && req.ToolChoice == ToolChoiceRequired:
 			cfg.ToolChoice = &brtypes.ToolChoiceMemberTool{Value: brtypes.SpecificToolChoice{Name: aws.String(req.Tools[0].Name)}}
-		} else {
+		case req.ToolChoice == ToolChoiceRequired:
+			in.System = append(in.System, &brtypes.SystemContentBlockMemberText{
+				Value: fmt.Sprintf("Answer by calling the %s tool exactly once. Do not answer in text.", req.Tools[0].Name),
+			})
+			cfg.ToolChoice = &brtypes.ToolChoiceMemberAuto{Value: brtypes.AutoToolChoice{}}
+		default:
 			cfg.ToolChoice = &brtypes.ToolChoiceMemberAuto{Value: brtypes.AutoToolChoice{}}
 		}
 		in.ToolConfig = cfg
 	}
-	out, err := client.Converse(ctx, in)
-	if err != nil {
-		return nil, fmt.Errorf("bedrock converse %s: %w", b.ModelID(), err)
-	}
+	return in
+}
+
+func parseConverseOutput(out *bedrockruntime.ConverseOutput) (*LLMResponse, error) {
 	resp := &LLMResponse{StopReason: mapBedrockStopReason(string(out.StopReason))}
 	if out.Usage != nil {
 		resp.Usage = Usage{
@@ -387,16 +482,23 @@ func (vertex) URL(model string) (string, error) {
 }
 
 var (
-	gcpOnce sync.Once
-	gcpTS   oauth2.TokenSource
-	gcpErr  error
+	gcpMu sync.Mutex
+	gcpTS oauth2.TokenSource
 )
 
+// gcpTokenSource finds application default credentials once they are there;
+// a failure is retried on the next call.
 func gcpTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
-	gcpOnce.Do(func() {
-		gcpTS, gcpErr = google.DefaultTokenSource(context.WithoutCancel(ctx), "https://www.googleapis.com/auth/cloud-platform")
-	})
-	return gcpTS, gcpErr
+	gcpMu.Lock()
+	defer gcpMu.Unlock()
+	if gcpTS == nil {
+		ts, err := google.DefaultTokenSource(context.WithoutCancel(ctx), "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, err
+		}
+		gcpTS = ts
+	}
+	return gcpTS, nil
 }
 
 func (vertex) Auth(ctx context.Context, req *http.Request, _ []byte) error {
@@ -559,9 +661,7 @@ func probeAzureOpenAI(ctx context.Context) Catalog {
 // ---- Entra ID ----
 
 var (
-	entraOnce sync.Once
-	entraCred azcore.TokenCredential
-	entraErr  error
+	entraCred azcore.TokenCredential // set once created; a failure is retried
 	entraMu   sync.Mutex
 	entraToks = map[string]azcore.AccessToken{} // scope -> token
 )
@@ -576,9 +676,12 @@ func entraToken(ctx context.Context, scope string) (string, error) {
 	if t, ok := entraToks[scope]; ok && time.Until(t.ExpiresOn) > 5*time.Minute {
 		return t.Token, nil
 	}
-	entraOnce.Do(func() { entraCred, entraErr = azidentity.NewDefaultAzureCredential(nil) })
-	if entraErr != nil {
-		return "", entraErr
+	if entraCred == nil {
+		cred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return "", err
+		}
+		entraCred = cred
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

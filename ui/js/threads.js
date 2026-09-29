@@ -9,7 +9,7 @@ const STATUS = {
   rejected: ["not confirmed", "The check did not find this problem in the code"],
   question: ["question", "Asks the author something; makes no claim about the code"],
   nit: ["nit", "Naming, style or chatter: nothing to fix"],
-  untrusted: ["not checked", "Left by someone without write access (or who hides their org membership): not checked, and fixed only if you ask"],
+  untrusted: ["not checked", "Left by the PR author, or by someone without write access (or who hides their org membership): not checked, and fixed only if you ask"],
   unchecked: ["not checked", "The check failed or no review model is configured"],
 };
 
@@ -32,7 +32,7 @@ function threadItem(u, t) {
   const line = is?.line || t.line;
   const dup = t.duplicate_of != null && u.issues?.[t.duplicate_of] ? `<span class="chip" title="${esc(u.issues[t.duplicate_of].title)}">same as review issue ${t.duplicate_of + 1}</span>` : "";
   const why = t.fixed ? t.fix_note : t.reason;
-  const quoted = (t.comments || []).map((c) => `<div class="tq"><a href="${esc(c.url)}" target="_blank" rel="noopener">@${esc(c.author)}</a>${c.trusted ? "" : ` <span class="chip">no write access</span>`}<blockquote>${esc(c.body)}</blockquote></div>`).join("");
+  const quoted = (t.comments || []).map((c) => `<div class="tq"><a href="${esc(c.url)}" target="_blank" rel="noopener">@${esc(c.author)}</a>${c.trusted ? "" : ` <span class="chip">${c.pr_author ? "PR author" : "no write access"}</span>`}<blockquote>${esc(c.body)}</blockquote></div>`).join("");
   return `<li class="thread-item"><div>${statusChip(t)}${line ? `<span class="ln">line ${line}</span>` : ""}<b>${esc(title)}</b>
       <a class="tauthor" href="${esc(t.url)}" target="_blank" rel="noopener">@${esc(t.author)}</a>${dup} ${threadFixButton(u, t)}</div>
     ${is?.detail ? `<span class="idetail">${esc(is.detail)}</span>` : ""}

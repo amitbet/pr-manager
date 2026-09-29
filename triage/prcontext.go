@@ -17,6 +17,12 @@ const DefaultReviewContextChars = 32000
 // unit before the added code counts as moved from there.
 const minMovedLines = 3
 
+// A unit's added code counts as moved from another unit only when the match
+// is more than a few stock lines both happen to share: a run of at least
+// minMovedLines consecutive distinctive added lines, or at least
+// movedShare of them.
+const movedShare = 0.8
+
 // setReviewContext gives every unit with a diff the rest of the PR as the
 // reviewer should see it: notes on moved and new code, then the other
 // units' diffs, most related first, until budget characters are used.
@@ -65,18 +71,22 @@ func buildContext(members, units []*Unit, baseDecls map[string]map[string]bool, 
 			if member[o] || !reviewable(o) {
 				continue
 			}
-			n, sample := overlap(lines[u].added, lines[o].removed)
-			if n >= minMovedLines {
+			n, m, sample, ok := movedFrom(lines[u], lines[o])
+			if ok {
 				moved[o] = max(moved[o], n)
-				notes = append(notes, label(u)+fmt.Sprintf("%d added lines here were removed from %s in this PR (e.g. `%s`): that code moved, so the behavior it carries is not new.", n, o.ID, sample))
+				rest := fmt.Sprintf("the other %d are new. The matching part is code that moved, so the behavior it carries is not new; judge the rest as new code.", m-n)
+				if n == m {
+					rest = "none are new. This is code that moved, so the behavior it carries is not new."
+				}
+				notes = append(notes, label(u)+fmt.Sprintf("%d of the %d distinctive added lines here match lines removed from %s in this PR (e.g. `%s`); %s", n, m, o.ID, sample, rest))
 			}
 		}
 	}
 	var sb strings.Builder
 	var hidden []string
 	left := budget
-	for _, o := range rankRelated(members, units, moved) {
-		d := o.Diff()
+	for _, o := range rankRelated(members, units, moved, lines) {
+		d := lines[o].diff
 		if budget > 0 && len(d) > left {
 			hidden = append(hidden, o.ID)
 			continue
@@ -122,25 +132,23 @@ func reviewable(u *Unit) bool {
 // rankRelated orders the units outside members: code moved from them,
 // then units that name a member or that a member names (callers and
 // callees), then the same file, then the rest, keeping PR order inside
-// each group. A unit any member ranks highly is shown early.
-func rankRelated(members, units []*Unit, moved map[*Unit]int) []*Unit {
+// each group. A unit any member ranks highly is shown early. lines holds
+// every unit's precomputed text (see changedText).
+func rankRelated(members, units []*Unit, moved map[*Unit]int, lines map[*Unit]changed) []*Unit {
 	member := make(map[*Unit]bool, len(members))
-	names := make([]string, len(members))
-	diffs := make([]string, len(members))
-	for i, u := range members {
+	for _, u := range members {
 		member[u] = true
-		names[i] = shortName(u.Symbol)
-		diffs[i] = u.Diff()
 	}
 	rank := func(o *Unit) int {
 		if moved[o] > 0 {
 			return 0
 		}
-		oDiff, oName := o.Diff(), shortName(o.Symbol)
+		oc := lines[o]
 		best := 3
-		for i, u := range members {
+		for _, u := range members {
+			uc := lines[u]
 			switch {
-			case mentions(oDiff, names[i]) || mentions(diffs[i], oName):
+			case mentions(oc.diff, uc.name) || mentions(uc.diff, oc.name):
 				return 1
 			case o.File == u.File:
 				best = min(best, 2)
@@ -149,13 +157,23 @@ func rankRelated(members, units []*Unit, moved map[*Unit]int) []*Unit {
 		return best
 	}
 	var out []*Unit
+	var keys []int
 	for _, o := range units {
 		if !member[o] && reviewable(o) {
 			out = append(out, o)
+			keys = append(keys, rank(o))
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
-	return out
+	idx := make([]int, len(out))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(i, j int) bool { return keys[idx[i]] < keys[idx[j]] })
+	sorted := make([]*Unit, len(out))
+	for i, k := range idx {
+		sorted[i] = out[k]
+	}
+	return sorted
 }
 
 // shortName is the identifier other code uses for a unit's symbol:
@@ -175,19 +193,44 @@ func shortName(sym string) string {
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// mentions reports whether text contains name as a whole word (as the
+// regexp \bname\b would, with ASCII word characters).
 func mentions(text, name string) bool {
 	if len(name) < 3 || !identRe.MatchString(name) {
 		return false
 	}
-	return regexp.MustCompile(`\b` + name + `\b`).MatchString(text)
+	for off := 0; ; {
+		i := strings.Index(text[off:], name)
+		if i < 0 {
+			return false
+		}
+		i += off
+		end := i + len(name)
+		if (i == 0 || !isWordByte(text[i-1])) && (end == len(text) || !isWordByte(text[end])) {
+			return true
+		}
+		off = i + 1
+	}
 }
 
-type changed struct{ added, removed map[string]bool }
+func isWordByte(c byte) bool {
+	return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+// changed is a unit's text as buildContext compares it: added and removed
+// lines, the whole diff and the symbol's short name, computed once.
+type changed struct {
+	added, removed map[string]bool
+	// addedSeq is the added lines kept in added, in diff order, repeats
+	// included.
+	addedSeq   []string
+	diff, name string
+}
 
 // changedText collects a unit's added and removed lines, trimmed, leaving
 // out lines too short or generic to show that code moved.
 func changedText(u *Unit) changed {
-	c := changed{map[string]bool{}, map[string]bool{}}
+	c := changed{added: map[string]bool{}, removed: map[string]bool{}, diff: u.Diff(), name: shortName(u.Symbol)}
 	for _, h := range u.Hunks {
 		for _, l := range h.Lines {
 			if len(l) == 0 {
@@ -200,6 +243,7 @@ func changedText(u *Unit) changed {
 			switch l[0] {
 			case '+':
 				c.added[t] = true
+				c.addedSeq = append(c.addedSeq, t)
 			case '-':
 				c.removed[t] = true
 			}
@@ -220,6 +264,67 @@ func overlap(a, b map[string]bool) (int, string) {
 		}
 	}
 	return n, sample
+}
+
+// movedFrom reports whether u's added code moved from o: n of u's m
+// distinctive added lines (see boilerplate) were removed from o, forming a
+// run of minMovedLines in a row or movedShare of all m. Stock lines such as
+// `if err != nil {` or `return nil, err` match anywhere, so they count
+// toward neither.
+func movedFrom(u, o changed) (n, m int, sample string, ok bool) {
+	seen := map[string]bool{}
+	run, best := 0, 0
+	for _, l := range u.addedSeq {
+		if boilerplate(l) {
+			continue
+		}
+		if !seen[l] {
+			seen[l] = true
+			m++
+		}
+		if !o.removed[l] {
+			run = 0
+			continue
+		}
+		run++
+		best = max(best, run)
+	}
+	for l := range seen {
+		if o.removed[l] {
+			n++
+			if len(l) > len(sample) || (len(l) == len(sample) && l < sample) {
+				sample = l
+			}
+		}
+	}
+	ok = n >= minMovedLines && (best >= minMovedLines || float64(n) >= movedShare*float64(m))
+	return n, m, sample, ok
+}
+
+// stockWords are the identifiers of lines every function repeats: error
+// checks, returns of zero values, closing an else.
+var stockWords = map[string]bool{
+	"if": true, "else": true, "return": true, "err": true, "error": true, "nil": true, "null": true,
+	"None": true, "undefined": true, "true": true, "false": true, "True": true, "False": true,
+	"ok": true, "ctx": true, "break": true, "continue": true, "defer": true, "cancel": true,
+	"try": true, "catch": true, "except": true, "finally": true, "raise": true, "throw": true,
+	"pass": true, "self": true, "this": true, "e": true, "ex": true, "Exception": true,
+	"new": true, "void": true, "await": true, "async": true, "fmt": true, "Errorf": true,
+	"errors": true, "Is": true, "As": true, "string": true, "int": true, "bool": true,
+}
+
+var identWord = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// boilerplate reports whether a line holds nothing but stock words and
+// punctuation, so it matching a removed line says nothing about where it
+// came from.
+func boilerplate(l string) bool {
+	for _, w := range identWord.FindAllString(l, -1) {
+		if !stockWords[w] {
+			return false
+		}
+	}
+	return true
 }
 
 // baseDeclNames lists the declarations at the merge base of each modified

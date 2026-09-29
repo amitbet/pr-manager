@@ -295,9 +295,9 @@ export function initSettings(changed, langChanged) {
   const tools = $("#review_tools");
   tools.checked = saved("review_tools") ? saved("review_tools") === "1" : !!S.cfg?.review_tools;
   tools.onchange = () => save("review_tools", tools.checked ? "1" : "0");
-  const group = $("#wz_group");
-  group.checked = S.wz.group;
-  group.onchange = () => { S.wz.group = group.checked; save("wz_group", group.checked ? "1" : "0"); if (S.result) render(); };
+  const steps = $("#wz_steps");
+  steps.value = S.wz.steps;
+  steps.onchange = () => { S.wz.steps = steps.value; save("wz_steps", steps.value); if (S.result) render(); };
   const batch = $("#classify_batch");
   batch.checked = saved("classify_batch") ? saved("classify_batch") === "1" : S.cfg?.classify_batch !== false;
   batch.onchange = () => save("classify_batch", batch.checked ? "1" : "0");

@@ -154,7 +154,7 @@ export function issueFixButton(u, i, cls = "details-btn") {
 export function threadFixButton(u, t, cls = "details-btn") {
   if (t.fixed) return "";
   const sure = t.status === "valid";
-  const why = !t.trusted ? "Left by someone without write access. Read it first: its text goes to the fixer." : "The check did not confirm this comment";
+  const why = !t.trusted ? "Left by the PR author or someone without write access. Read it first: its text goes to the fixer." : "The check did not confirm this comment";
   return `<button class="${cls}" data-act="fix-thread" data-unit="${esc(u.id)}" data-thread="${esc(t.id)}" ${fixDisabled() || (sure ? "" : `title="${why}"`)}>${sure ? "Fix comment" : "Fix anyway"}</button>`;
 }
 

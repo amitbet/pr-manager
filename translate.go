@@ -88,8 +88,11 @@ func (t *triager) translate(ctx context.Context, r *PRResult, o options) (*trans
 	if err != nil {
 		return nil, err
 	}
-	// Finish and cache even if the reader moves on to another PR.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	// Finish and cache even if the reader moves on to another PR, but not
+	// past shutdown.
+	ctx, stop := t.detached(ctx)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	units, ov, err := triage.Translate(ctx, l, lang, texts, r.Overview)
 	if err != nil {

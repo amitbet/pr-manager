@@ -8,12 +8,29 @@ import { markTriaging } from "./jobs.js";
 const collapsedRepos = new Set(JSON.parse(localStorage.getItem("pr-manager.collapsedRepos") || "[]"));
 const saveCollapsedRepos = () => localStorage.setItem("pr-manager.collapsedRepos", JSON.stringify([...collapsedRepos]));
 
+// Hidden sidebar, remembered across reloads.
+const SIDE_KEY = "pr-manager.sidebarCollapsed";
+function setSideCollapsed(collapsed) {
+  document.documentElement.classList.toggle("side-collapsed", collapsed);
+  const btn = $("#side-btn");
+  const label = collapsed ? "Show the sidebar" : "Hide the sidebar";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("aria-expanded", String(!collapsed));
+}
+setSideCollapsed(localStorage.getItem(SIDE_KEY) === "1");
+
 let onPick = () => {};
 
 // initSidebar sets what happens when a PR is picked (its result key, and
 // the PR link or local path it was triaged from).
 export function initSidebar(pick) {
   onPick = pick;
+  $("#side-btn").addEventListener("click", () => {
+    const collapsed = !document.documentElement.classList.contains("side-collapsed");
+    setSideCollapsed(collapsed);
+    localStorage.setItem(SIDE_KEY, collapsed ? "1" : "0");
+  });
   $("#list").addEventListener("click", (e) => {
     const item = e.target.closest(".pr-item");
     if (item) { onPick(item.dataset.key, item.dataset.src); return; }

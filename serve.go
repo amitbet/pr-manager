@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/amitbet/pr-manager/codemap"
 	"github.com/amitbet/pr-manager/internal/activity"
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/llm"
 	"github.com/amitbet/pr-manager/triage"
 )
@@ -39,6 +39,9 @@ type PRResult struct {
 	PR         *triage.PRInfo `json:"pr"`
 	Classifier string         `json:"classifier"`
 	Summarizer string         `json:"summarizer"`
+	// PromptVersion is the triage.PromptVersion the result was reviewed
+	// with; empty for results from before it was saved.
+	PromptVersion string `json:"prompt_version,omitempty"`
 	// SummaryLang is set on results from before translation, reviewed in
 	// that language. Newer results are English; see translation.
 	SummaryLang string                `json:"summary_lang,omitempty"`
@@ -137,6 +140,14 @@ type triager struct {
 	trMu  sync.Mutex // guards trLocks
 	// trLocks has a lock per translation file, so one PR is translated once.
 	trLocks map[string]*sync.Mutex
+
+	// root is the parent of every job's context; shutdown cancels it, which
+	// kills the jobs' LLM CLI process groups, and waits for running.
+	root       context.Context
+	cancelRoot context.CancelFunc
+	running    sync.WaitGroup
+	closing    bool // guarded by mu
+	stopOnce   sync.Once
 }
 
 type job struct {
@@ -155,8 +166,13 @@ type job struct {
 	// Cached is when the result a triage job reused was made, if it
 	// reused one instead of running.
 	Cached *time.Time `json:"cached,omitempty"`
+	// CachedBy is the model that placed the reused result's units, and
+	// RunsWith the model a re-run would use, when they differ.
+	CachedBy string `json:"cached_by,omitempty"`
+	RunsWith string `json:"runs_with,omitempty"`
 
-	log *activity.Log
+	log  *activity.Log
+	done func() // untracks the job; nil once shutdown began
 }
 
 func newTriager(o options) (*triager, error) {
@@ -167,6 +183,7 @@ func newTriager(o options) (*triager, error) {
 		jobs:    map[string]*job{},
 		trLocks: map[string]*sync.Mutex{},
 	}
+	t.root, t.cancelRoot = context.WithCancel(context.Background())
 	d, err := newDismissals(o)
 	if err != nil {
 		return nil, err
@@ -269,7 +286,7 @@ func settingsHash(o options) string {
 	if o.summarizer != "off" {
 		classifier, classifyModel, fallback, fallbackModel, classifyEffort = "", "", "", "", ""
 	}
-	parts := []string{triage.PromptVersion, classifier, classifyModel, fallback, fallbackModel, o.summarizer, o.summaryModel, classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
+	parts := []string{triage.PromptVersion, classifier, classifyModel, fallback, fallbackModel, o.summarizer, o.summaryModel, classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapSettings(loadCodeMap(o.codemapDir))}
 	if o.classifyBatch > 0 && o.summarizer == "off" {
 		// Appended only when set, so existing keys stay valid.
 		parts = append(parts, fmt.Sprintf("batch=%d", o.classifyBatch))
@@ -283,16 +300,19 @@ func cacheKey(ref triage.PRRef, head string, o options) string {
 }
 
 // latestCached returns the newest cached result for this PR head from any
-// prompt, provider or code-map version. A PR that was already triaged is
-// only re-run when asked (force), not because the pipeline changed. Only
-// English results count: other languages are translated from them.
+// provider or code-map version, so a PR that was already triaged is only
+// re-run when asked (force), not because the model or map changed; the
+// job says when the model differs (see noteModel). Results from another
+// prompt version are not reused: a new version fixes what the reviews
+// missed. Only English results count: other languages are translated from
+// them.
 func (t *triager) latestCached(ref triage.PRRef, head string) (*PRResult, error) {
 	pattern := filepath.Join(t.results, fmt.Sprintf("%s__%.10s__*.json", ref.FileKey(), head))
 	paths, _ := filepath.Glob(pattern)
 	var best *PRResult
 	for _, p := range paths {
 		r, err := t.Load(strings.TrimSuffix(filepath.Base(p), ".json"))
-		if err == nil && r.SummaryLang == "" && (best == nil || r.CreatedAt.After(best.CreatedAt)) {
+		if err == nil && r.SummaryLang == "" && r.PromptVersion == triage.PromptVersion && (best == nil || r.CreatedAt.After(best.CreatedAt)) {
 			best = r
 		}
 	}
@@ -326,8 +346,8 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	if err := ensureCodeMap(ctx, o, ref, progress); err != nil {
 		return nil, err
 	}
-	key = cacheKey(ref, info.HeadOid, o) // a build changes the map version
-	policy, gitattrs, err := sourceConfig(src)
+	key = cacheKey(ref, info.HeadOid, o) // the first build turns the map on
+	policy, gitattrs, err := sourceConfig(src, false)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +357,7 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	}
 	pipe.Progress = progress
 	if m := loadCodeMap(o.codemapDir); m != nil {
-		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: ref.Repo}
+		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: codeMapRepo(m, ref)}
 	}
 	carry := t.carryFrom(ctx, key, info.BaseOid, o, jo.Force)
 	pipe.CarryFrom = carry.carryFrom()
@@ -360,9 +380,10 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 
 	r := &PRResult{
 		Key: key, PR: info, CreatedAt: time.Now(), DurationMS: time.Since(start).Milliseconds(),
-		Classifier: describe(o.classifier, o.classifyModel, o.classifyEffort), Summarizer: describe(o.summarizer, o.summaryModel, o.reviewEffort),
-		Counts: (&triage.Report{Units: units}).Counts(), Threads: threads,
+		PromptVersion: triage.PromptVersion,
+		Counts:        (&triage.Report{Units: units}).Counts(), Threads: threads,
 	}
+	r.Classifier, r.Summarizer = runBy(o)
 	r.Impact, r.Likelihood, r.Attention = (&triage.Report{Units: units}).Scores()
 	r.Carried = triage.CountCarried(units)
 	if pipe.CodeMap != nil {
@@ -371,16 +392,6 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	tiers := pipe.Presorter.Policy.Tiers
 	_, r.ReviewBudget, _ = tiers.Budget("")
 	r.Budgets = tiers.OrderedBudgets()
-	switch {
-	case o.summarizer != "off":
-		// The review call placed the units.
-		r.Classifier = r.Summarizer
-	case o.classifier == "openjev":
-		r.Classifier += " → " + describe(o.fallback, o.fallbackModel, o.classifyEffort)
-	}
-	if o.reviewTools && (o.summarizer == "codex" || o.summarizer == "claude-code") {
-		r.Summarizer += " +repo tools"
-	}
 	if pipe.Summarizer != nil {
 		if pipe.Progress != nil {
 			pipe.Progress("overview", 0, 1)
@@ -401,11 +412,7 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 		sort.SliceStable(us, func(i, j int) bool { return us[i].Line < us[j].Line })
 		r.Files = append(r.Files, resultFile{FileDiff: f, Units: us})
 	}
-	b, err := json.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(t.results, key+".json"), b, 0o644); err != nil {
+	if err := t.saveResult(r); err != nil {
 		return r, err
 	}
 	if pipe.Summarizer != nil {
@@ -414,14 +421,36 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 		// Opening the PR meanwhile waits on this call rather than starting
 		// another; a failure means it is translated when the PR is opened.
 		if !triage.IsEnglish(o.summaryLang) {
-			go func() {
-				if _, err := t.translate(context.WithoutCancel(ctx), r, o); err != nil {
-					log.Printf("translate %s to %s: %v", key, o.summaryLang, err)
-				}
-			}()
+			if done := t.track(); done != nil {
+				go func() {
+					defer done()
+					ctx, cancel := t.detached(ctx)
+					defer cancel()
+					if _, err := t.translate(ctx, r, o); err != nil {
+						log.Printf("translate %s to %s: %v", key, o.summaryLang, err)
+					}
+				}()
+			}
 		}
 	}
 	return r, nil
+}
+
+// runBy describes the models a run with o uses: the one that places the
+// units, and the one that reviews them.
+func runBy(o options) (classifier, summarizer string) {
+	classifier, summarizer = describe(o.classifier, o.classifyModel, o.classifyEffort), describe(o.summarizer, o.summaryModel, o.reviewEffort)
+	switch {
+	case o.summarizer != "off":
+		// The review call placed the units.
+		classifier = summarizer
+	case o.classifier == "openjev":
+		classifier += " → " + describe(o.fallback, o.fallbackModel, o.classifyEffort)
+	}
+	if o.reviewTools && (o.summarizer == "codex" || o.summarizer == "claude-code") {
+		summarizer += " +repo tools"
+	}
+	return classifier, summarizer
 }
 
 func describe(provider, model, effort string) string {
@@ -511,8 +540,12 @@ func (t *triager) newJob(kind, url string) (*job, context.Context, func(stage st
 	j := &job{ID: hex.EncodeToString(idb[:]), Kind: kind, URL: url, Started: time.Now(), Status: "running", log: activity.New()}
 	t.mu.Lock()
 	t.jobs[j.ID] = j
+	if !t.closing {
+		t.running.Add(1)
+		j.done = t.running.Done
+	}
 	t.mu.Unlock()
-	ctx := activity.With(context.Background(), j.log)
+	ctx := activity.With(t.root, j.log)
 	activity.Printf(ctx, "started %s", url)
 	return j, ctx, func(stage string, done, total int) {
 		t.mu.Lock()
@@ -536,7 +569,68 @@ func (t *triager) warn(ctx context.Context, jobID, msg string) {
 }
 
 // finish records the job's outcome in its log.
-func (j *job) finish(err error) { j.log.Close(err) }
+func (j *job) finish(err error) {
+	j.log.Close(err)
+	if j.done != nil {
+		j.done()
+	}
+}
+
+// track counts background work that shutdown waits for. It returns nil
+// once shutdown began; otherwise call the returned func when done.
+func (t *triager) track() func() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closing {
+		return nil
+	}
+	t.running.Add(1)
+	return t.running.Done
+}
+
+// detached is ctx's values without its cancellation, for work that outlives
+// the caller: it is cancelled on shutdown instead.
+func (t *triager) detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(t.root, cancel)
+	return ctx, func() { stop(); cancel() }
+}
+
+// shutdown cancels every job and waits up to timeout for them to return,
+// so the LLM CLIs they started are killed rather than left editing a
+// checkout after the app exits. It is safe to call more than once.
+func (t *triager) shutdown(timeout time.Duration) {
+	t.stopOnce.Do(func() {
+		t.mu.Lock()
+		t.closing = true
+		t.mu.Unlock()
+		t.cancelRoot()
+		done := make(chan struct{})
+		go func() {
+			t.running.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(timeout):
+			log.Printf("shutdown: jobs still running after %s", timeout)
+		}
+	})
+}
+
+// withRoot cancels each request's context on shutdown too, and has shutdown
+// wait for it, since handlers call LLMs as well.
+func (t *triager) withRoot(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if done := t.track(); done != nil {
+			defer done()
+		}
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		defer context.AfterFunc(t.root, cancel)()
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 // startIndex runs indexSources as a job; the job's Result is the summary.
 func (t *triager) startIndex(jo jobOptions) *job {
@@ -567,6 +661,10 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 	go func() {
 		r, err := t.Run(ctx, ref, jo, progress)
 		j.finish(err)
+		var now string
+		if err == nil {
+			now, _ = runBy(t.options(jo))
+		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		if err != nil {
@@ -576,6 +674,7 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 		}
 		j.Status, j.Key = "done", r.Key
 		j.markCached(r)
+		j.noteModel(r, now)
 		log.Printf("triage %s: %v (%s)", j.URL, r.Counts, r.Key)
 	}()
 	return j, nil
@@ -585,6 +684,17 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 func (j *job) markCached(r *PRResult) {
 	if r.CreatedAt.Before(j.Started) {
 		j.Cached = &r.CreatedAt
+	}
+}
+
+// noteModel records, on a job that reused a result, which model made it
+// and which one a re-run would use, when they differ.
+func (j *job) noteModel(r *PRResult, now string) {
+	if j.Cached == nil {
+		return
+	}
+	if now != r.Classifier {
+		j.CachedBy, j.RunsWith = r.Classifier, now
 	}
 }
 
@@ -631,14 +741,19 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
-func newServeHandler(o options) (http.Handler, error) {
+// shutdownWait bounds how long quitting waits for jobs to stop.
+const shutdownWait = 5 * time.Second
+
+// newServeHandler returns the UI and API handler and a func that stops its
+// jobs (see triager.shutdown), to call when the app quits.
+func newServeHandler(o options) (http.Handler, func(), error) {
 	t, err := newTriager(o)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rv, err := newReviews(o, t.fetcher)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	static, _ := fs.Sub(uiFS, "ui")
 	mux := http.NewServeMux()
@@ -787,10 +902,10 @@ func newServeHandler(o options) (http.Handler, error) {
 		}
 		res.PR.URL = url
 		res.PR.State = "OPEN"
-		if b, err := json.Marshal(res); err == nil {
-			if err = os.WriteFile(filepath.Join(t.results, res.Key+".json"), b, 0644); err != nil {
-				log.Printf("save published PR link: %v", err)
-			}
+		if _, err := t.updateResult(res.Key, func(r *PRResult) {
+			r.PR.URL, r.PR.State = url, "OPEN"
+		}); err != nil {
+			log.Printf("save published PR link: %v", err)
 		}
 		if ref, err := triage.ParsePRRef(url); err == nil {
 			localRef := triage.PRRef{Owner: "local", Repo: localPathID(res.PR.LocalPath)}
@@ -843,7 +958,7 @@ func newServeHandler(o options) (http.Handler, error) {
 		writeJSON(w, 200, threads)
 	})
 
-	return mux, nil
+	return t.withRoot(mux), func() { t.shutdown(shutdownWait) }, nil
 }
 
 // defaultAddr is a fixed port, so the UI's URL stays the same across
@@ -851,10 +966,11 @@ func newServeHandler(o options) (http.Handler, error) {
 const defaultAddr = "127.0.0.1:8765"
 
 func runServe(ctx context.Context, o options) error {
-	mux, err := newServeHandler(o)
+	mux, stopJobs, err := newServeHandler(o)
 	if err != nil {
 		return err
 	}
+	defer stopJobs()
 	ln, err := net.Listen("tcp", o.addr)
 	if err != nil && o.addr == defaultAddr {
 		log.Printf("%s is taken (%v); using another port", defaultAddr, err)
@@ -879,9 +995,12 @@ func runServe(ctx context.Context, o options) error {
 		}
 	}()
 	srv := &http.Server{Handler: mux}
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		log.Printf("shutting down")
+		stopJobs() // cancels in-flight requests too, so Shutdown doesn't wait on them
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
@@ -889,6 +1008,7 @@ func runServe(ctx context.Context, o options) error {
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-stopped // Serve returns as soon as Shutdown starts
 	return nil
 }
 
@@ -897,11 +1017,11 @@ func openBrowser(ctx context.Context, url string) error {
 	defer cancel()
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.CommandContext(ctx, "open", url).Run()
+		return proc.CommandContext(ctx, "open", url).Run()
 	case "windows":
-		return exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", url).Run()
+		return proc.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", url).Run()
 	default:
-		return exec.CommandContext(ctx, "xdg-open", url).Run()
+		return proc.CommandContext(ctx, "xdg-open", url).Run()
 	}
 }
 

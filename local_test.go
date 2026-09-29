@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amitbet/pr-manager/triage"
 )
@@ -90,6 +91,11 @@ func TestLocalRepoRef(t *testing.T) {
 		{"https://github.com/acme/widget.git", "", "acme", "widget"},
 		{"git@github.com:acme/widget.git", "", "acme", "widget"},
 		{"ssh://git@ghe.example.com/acme/widget.git", "ghe.example.com", "acme", "widget"},
+		{"https://gitlab.com/g/sub/r.git", "gitlab.com", "g/sub", "r"},
+		{"git@gitlab.com:g/sub/r.git", "gitlab.com", "g/sub", "r"},
+		{"https://bitbucket.corp.com/scm/proj/repo.git", "bitbucket.corp.com", "proj", "repo"},
+		{"https://dev.azure.com/org/proj/_git/repo", "dev.azure.com", "org/proj", "repo"},
+		{"git@ssh.dev.azure.com:v3/org/proj/repo", "dev.azure.com", "org/proj", "repo"},
 	} {
 		dir := t.TempDir()
 		gitTest(t, dir, "init")
@@ -260,5 +266,101 @@ func TestInspectLocalRev(t *testing.T) {
 	blob := gitTest(t, repo, "rev-parse", "HEAD:file.txt")
 	if _, err := inspectLocal(context.Background(), repo+"#"+blob); err == nil {
 		t.Fatal("a blob reviewed as a commit")
+	}
+}
+
+func TestSourceConfigTrust(t *testing.T) {
+	files := func(m map[string]string) triage.ContentFunc {
+		return func(path string) ([]byte, error) {
+			if s, ok := m[path]; ok {
+				return []byte(s), nil
+			}
+			return nil, os.ErrNotExist
+		}
+	}
+	src := &triage.Source{
+		BaseContent: files(map[string]string{".triage.yaml": "thresholds: {none: 0.9}\n"}),
+		Content: files(map[string]string{
+			".triage.yaml":   "thresholds: {none: 0.5}\n",
+			".gitattributes": "gen/** linguist-generated\n",
+		}),
+	}
+	p, attrs, err := sourceConfig(src, true)
+	if err != nil || p.Thresholds.None != 0.5 || len(attrs) != 1 {
+		t.Fatalf("trusted head: none=%v attrs=%v err=%v", p.Thresholds.None, attrs, err)
+	}
+	p, attrs, err = sourceConfig(src, false)
+	if err != nil || p.Thresholds.None != 0.9 || len(attrs) != 0 {
+		t.Fatalf("untrusted head: none=%v attrs=%v err=%v", p.Thresholds.None, attrs, err)
+	}
+	src.Content = files(map[string]string{".triage.yaml": "thresholds: [\n"})
+	if _, _, err := sourceConfig(src, true); err == nil {
+		t.Fatal("a broken trusted .triage.yaml is not reported")
+	}
+	if _, _, err := sourceConfig(src, false); err != nil {
+		t.Fatalf("a broken untrusted head .triage.yaml fails the triage: %v", err)
+	}
+}
+
+func TestShutdownCancelsJobs(t *testing.T) {
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, ctx, _ := tr.newJob("fix", "x")
+	stopped := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		j.finish(ctx.Err())
+		close(stopped)
+	}()
+	tr.shutdown(5 * time.Second)
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("shutdown returned before the job stopped")
+	}
+	if _, ctx, _ := tr.newJob("fix", "y"); ctx.Err() == nil {
+		t.Fatal("a job started after shutdown is not cancelled")
+	}
+	tr.shutdown(time.Second) // idempotent
+}
+
+func TestInspectRevShallowBoundary(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	gitTest(t, root, "init", "-b", "main", src)
+	gitTest(t, src, "config", "user.name", "Test")
+	gitTest(t, src, "config", "user.email", "test@example.com")
+	for i, body := range []string{"one\n", "one\ntwo\n"} {
+		if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitTest(t, src, "add", "-A")
+		gitTest(t, src, "commit", "-m", "c"+string(rune('0'+i)))
+	}
+	clone := filepath.Join(root, "clone")
+	gitTest(t, root, "clone", "--depth", "1", "file://"+filepath.ToSlash(src), clone)
+	head := gitTest(t, clone, "rev-parse", "HEAD")
+
+	_, err := inspectLocal(context.Background(), clone+"#"+head)
+	if err == nil || !strings.Contains(err.Error(), "shallow") || !strings.Contains(err.Error(), "--deepen") {
+		t.Fatalf("shallow boundary: %v", err)
+	}
+	revs, err := listRevs(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revs.Commits) != 0 {
+		t.Fatalf("boundary commit listed: %+v", revs.Commits)
+	}
+
+	gitTest(t, clone, "fetch", "--deepen=1")
+	c, err := inspectLocal(context.Background(), clone+"#"+head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.info.BaseRef == "empty tree" || !strings.Contains(c.raw, "+two") || strings.Contains(c.raw, "+one") {
+		t.Fatalf("deepened: %+v %s", c.info, c.raw)
 	}
 }

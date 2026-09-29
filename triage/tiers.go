@@ -22,6 +22,9 @@ type Issue struct {
 	// Capped is why the severity was lowered from Claimed, the reviewer's own.
 	Claimed string `json:"claimed_severity,omitempty"`
 	Capped  string `json:"capped,omitempty"`
+	// CriticRejected is the critic's reason for rejecting a medium or
+	// worse issue, which is then kept at low rather than dropped.
+	CriticRejected string `json:"critic_rejected,omitempty"`
 	// Dismissed is set when a person rejected the issue. A dismissed issue
 	// is kept and shown, but it stops counting: not in the unit's
 	// attention, not in what a clean review is worth, and not in the pin a
@@ -197,6 +200,14 @@ type Score struct {
 	PinBeforeWhy string `json:"pin_before_why,omitempty"`
 	Floor        Bucket `json:"floor,omitempty"`
 	FloorWhy     string `json:"floor_why,omitempty"`
+	// CodeFloor is the lowest bucket a unit whose change is more than
+	// comments and whitespace can go, set by changesCode and not by the
+	// model, so a comment that talks the model into "none" cannot put code
+	// there. Unlike Floor no budget's lift_floors lifts it, and it raises a
+	// pin that came from the classifier's bucket. Rule-placed units have
+	// none: a rule's none does not rest on the model's answer.
+	CodeFloor    Bucket `json:"code_floor,omitempty"`
+	CodeFloorWhy string `json:"code_floor_why,omitempty"`
 	// CommentPin is the pin an open, confirmed review comment of medium
 	// or worse sets (see ApplyThreads). It is kept apart from Pin so it
 	// goes away when the comment is resolved or fixed, and it overrides
@@ -219,7 +230,12 @@ func (s *Score) TotalAt(b Budget, attention int) int {
 func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string) {
 	t := s.TotalAt(b, attention)
 	if pin, why := s.pin(); pin != "" {
-		return pin, t, fmt.Sprintf("%s: %s (any budget)", pin, why)
+		why = fmt.Sprintf("%s: %s (any budget)", pin, why)
+		if s.CodeFloor != "" && s.CodeFloor.rank() > pin.rank() {
+			pin = s.CodeFloor
+			why = fmt.Sprintf("%s: %s (any budget; the classifier's %s)", pin, s.CodeFloorWhy, s.Pin)
+		}
+		return pin, t, why
 	}
 	bk, cut := BucketNone, fmt.Sprintf("< %d", b.Skim)
 	switch {
@@ -231,10 +247,15 @@ func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string
 	why := fmt.Sprintf("score %d = %s → %s (%s on %s)", t, s.arithmetic(b, attention), bk, cut, name)
 	if s.Floor != "" && s.Floor.rank() > bk.rank() {
 		if b.LiftFloors && s.Clean == 1 {
-			return bk, t, why + fmt.Sprintf("; %s lifted by the clean review", s.FloorWhy)
+			why += fmt.Sprintf("; %s lifted by the clean review", s.FloorWhy)
+		} else {
+			bk = s.Floor
+			why += fmt.Sprintf("; raised to %s: %s", bk, s.FloorWhy)
 		}
-		bk = s.Floor
-		why += fmt.Sprintf("; raised to %s: %s", bk, s.FloorWhy)
+	}
+	if s.CodeFloor != "" && s.CodeFloor.rank() > bk.rank() {
+		bk = s.CodeFloor
+		why += fmt.Sprintf("; raised to %s: %s (no budget lifts this)", bk, s.CodeFloorWhy)
 	}
 	return bk, t, why
 }
@@ -282,10 +303,17 @@ func (tp TierPolicy) prior(u *Unit, maxChars int) {
 	if w, ok := tp.KindWeights[d.ChangeKind]; ok {
 		s.Kind = w
 	}
-	switch d.Bucket {
-	case BucketHuman:
+	// The model's own answer can put code in none only through a rule
+	// (presort), never by itself: see CodeFloor. Its "none" does not lower
+	// the kind weight of such a unit either.
+	code := d.Source != "rule" && changesCode(u)
+	if code {
+		s.CodeFloor, s.CodeFloorWhy = BucketSkim, "the change is more than comments and whitespace, so only a rule can skip it"
+	}
+	switch {
+	case d.Bucket == BucketHuman:
 		s.Kind = max(s.Kind, 0.8)
-	case BucketNone:
+	case d.Bucket == BucketNone && !code:
 		s.Kind = min(s.Kind, 0.3)
 	}
 	s.Prior = int(math.Round(float64(s.Base) * s.Kind))
@@ -297,11 +325,23 @@ func (tp TierPolicy) prior(u *Unit, maxChars int) {
 		s.Pin, s.PinWhy = BucketHuman, d.Reason
 	case d.Confidence == 0:
 		s.Pin, s.PinWhy = BucketHuman, "no confident classification: "+d.Reason
+	case d.Bucket == BucketHuman && isTestPath(u.File):
+		// Test code scores no likelihood, so its score is 0 and only a
+		// floor would hold it, which a clean review lifts. A weakened test
+		// is the classifier's call: keep it.
+		s.Pin, s.PinWhy = BucketHuman, "the classifier asked for human review of test code, which is not scored"
 	case !u.Impact.Known():
 		// Without the map the score is mostly a guess: keep the classifier's call.
 		s.Pin, s.PinWhy = d.Bucket, "classifier's bucket, impact unknown ("+impactUnknown(u.Impact)+")"
 	case tp.CriticalImpact > 0 && u.Impact.Score >= tp.CriticalImpact:
 		s.Pin, s.PinWhy = BucketHuman, fmt.Sprintf("critical impact %d (%s)", u.Impact.Score, impactWhere(u.Impact))
+	}
+	// Text in the change written for the reviewer or the triage is the PR
+	// author steering the review: a person reads it.
+	if d.Source != "rule" && s.Pin != BucketHuman {
+		if said := reviewerDirectedText(u); len(said) > 0 {
+			s.Pin, s.PinWhy = BucketHuman, "added comments or strings address the reviewer or assert their own safety: \""+strings.Join(said, "\", \"")+"\""
+		}
 	}
 	switch {
 	case d.ChangeKind == "behavior":

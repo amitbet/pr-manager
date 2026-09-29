@@ -227,3 +227,29 @@ func TestTSTemplateHolesStayInDecl(t *testing.T) {
 		t.Errorf("decls = %s", got)
 	}
 }
+
+// Unterminated comments, regexes and templates must not run the lexer past
+// the end of the source.
+func TestTSLexTruncated(t *testing.T) {
+	for _, src := range []string{
+		"function f() { return <Foo /* todo",
+		"const s = `${/*",
+		"const s = `${/**",
+		"const r = /a\\",
+		"const x = <A extends /* ",
+	} {
+		ParseTS("src/x.tsx", src)
+		ParseTS("src/x.ts", src)
+	}
+	sample := `import React from 'react';
+/** Doc */
+export const Row = <T,>({ items }: { items: T[] }) => (
+  <Table<T> rows={items} /* note */ render={(r) => ` + "`${r.id /* id */}-${/x\\//.test(r.name)}`" + `} />
+);
+export class C { m() { return /[\]/]+/g.exec('a'); } }
+`
+	for i := 0; i <= len(sample); i++ {
+		ParseTS("src/x.tsx", sample[:i])
+		ParseTS("src/x.ts", sample[:i])
+	}
+}

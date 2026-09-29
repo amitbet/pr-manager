@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/amitbet/pr-manager/internal/activity"
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 // PRRef names a PR. Host is a GitHub Enterprise Server (or ghe.com) host;
@@ -151,7 +152,7 @@ func (f *PRFetcher) lock(slug string) func() {
 func run(ctx context.Context, dir, name string, args ...string) (out string, err error) {
 	_, done := activity.Command(ctx, dir, name, args...)
 	defer func() { done(err) }()
-	cmd := exec.Command(name, args...)
+	cmd := proc.Command(name, args...)
 	cmd.Dir = dir
 	b, err := cmd.Output()
 	if err != nil {
@@ -193,7 +194,7 @@ func GHError(err error, output []byte) error {
 }
 
 func ghVersion() string {
-	out, err := exec.Command("gh", "--version").Output()
+	out, err := proc.Command("gh", "--version").Output()
 	if err != nil {
 		return "unknown version"
 	}
@@ -368,7 +369,7 @@ func SubmitReview(ref PRRef, r Review) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("gh", "api", "--hostname", ref.HostName(), "--method", "POST",
+	cmd := proc.Command("gh", "api", "--hostname", ref.HostName(), "--method", "POST",
 		fmt.Sprintf("repos/%s/pulls/%d/reviews", ref.Slug(), ref.Number), "--input", "-")
 	cmd.Stdin = bytes.NewReader(b)
 	var stderr bytes.Buffer

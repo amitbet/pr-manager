@@ -21,8 +21,10 @@ import (
 // judged against rather than any one unit's lines:
 //
 //   - different settings (prompt version, models, review effort, review
-//     tools, lint, code-map build): the settings hash is part of the cache
-//     key, and only a run with the same one is looked at;
+//     tools, lint, code map on or off): the settings hash is part of the
+//     cache key, and only a run with the same one is looked at. A rebuilt
+//     map is not different settings (see codeMapSettings): no review
+//     reads the map, and what does is scored again;
 //   - a different merge base: after a rebase or a base-branch merge, every
 //     unit's context is a different piece of code.
 //

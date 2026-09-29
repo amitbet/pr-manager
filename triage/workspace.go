@@ -2,11 +2,11 @@ package triage
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/llm"
 )
 
@@ -27,6 +27,11 @@ func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 		if err != nil {
 			return nil, noop, err
 		}
+		// Resolve the temp dir (a symlink on macOS) so the path tools see
+		// from getcwd() is the one we relativize against.
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = r
+		}
 		if _, err := Git(src.Dir, "worktree", "add", "--detach", dir, src.Head); err != nil {
 			os.RemoveAll(dir)
 			return nil, noop, err
@@ -35,6 +40,13 @@ func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 		cleanup = func() {
 			_, _ = Git(src.Dir, "worktree", "remove", "--force", dir)
 			os.RemoveAll(dir)
+		}
+		// The PR head is untrusted: its agent files must not reach the
+		// reviewer as the project's instructions. A saved head directory
+		// (the user's own working tree) is left as it is.
+		if err := StripAgentFiles(dir); err != nil {
+			cleanup()
+			return nil, noop, err
 		}
 	default:
 		return nil, noop, nil
@@ -55,7 +67,7 @@ var (
 // goModCache is `go env GOMODCACHE`, or "" without Go or the directory.
 func goModCache() string {
 	modCacheOnce.Do(func() {
-		out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+		out, err := proc.Command("go", "env", "GOMODCACHE").Output()
 		if err != nil {
 			return
 		}

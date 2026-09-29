@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -155,12 +156,19 @@ func (p *LintPolicy) Set(spec string) error {
 
 func DefaultPolicy() Policy {
 	return Policy{
+		// Only files that are not compiled into the program or that nobody
+		// writes by hand: lockfiles, vendored and installed dependencies,
+		// minified bundles and test snapshots. A vendor/ or mocks/
+		// directory deeper in the tree is often app code (features/vendor/
+		// for a vendor form); vendor/** is Go's vendor directory at the
+		// root. Generated source (*.pb.go, *_mock.go, zz_generated*,
+		// *.Designer.cs) is not listed: a name is easy to pick for a
+		// hand-written file that ships, so it goes by its generated
+		// header, and only one the merge base already had (see
+		// Presorter.rule).
 		Generated: []string{
 			"go.sum", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "packages.lock.json",
-			"vendor/", "node_modules/",
-			"*.pb.go", "*_pb2.py", "*.pb.gw.go", "*_grpc.pb.go", "*.g.cs", "*.g.i.cs", "*.Designer.cs",
-			"*_mock.go", "mock_*.go", "mocks/",
-			"zz_generated*", "*.gen.go", "*_gen.go",
+			"vendor/**", "node_modules/",
 			"*.min.js", "*.snap",
 		},
 		ForceHuman: []string{
@@ -170,7 +178,13 @@ func DefaultPolicy() Policy {
 			".github/workflows/", "Makefile",
 			"*.tf", "*.tfvars",
 			"charts/", "**/values*.yaml", "**/crds/**", "*_types.go",
-			"go.mod",
+			// Dependency manifests and build files: they decide what
+			// code gets installed and run. Lockfiles follow them and
+			// stay generated.
+			"go.mod", "package.json", "*requirements*.txt", "requirements/", "constraints*.txt",
+			"pyproject.toml", "Pipfile", "Gemfile", "*.gemspec", "Cargo.toml",
+			"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle*", "*.csproj", "Directory.Packages.props",
+			"CMakeLists.txt",
 		},
 		Thresholds:         Thresholds{None: 0.9, Skim: 0.7},
 		Lint:               DefaultLintPolicy(),
@@ -341,6 +355,34 @@ func ParsePolicy(b []byte) (Policy, error) {
 	}
 	if _, _, err := p.Tiers.Budget(""); err != nil {
 		return p, fmt.Errorf("tiers.review_budget: %w", err)
+	}
+	return p, nil
+}
+
+// ParsePRPolicy builds the policy for a change whose head the operator
+// doesn't control, such as a PR. base is .triage.yaml at the merge base
+// (nil if absent) and is taken whole; head can only add force_human
+// patterns. Taking the head's file would let a PR mark its own files
+// generated, lower the thresholds or pick a looser budget. The same goes for
+// .gitattributes: read linguist-generated from the base only.
+func ParsePRPolicy(base, head []byte) (Policy, error) {
+	p := DefaultPolicy()
+	if len(base) > 0 {
+		var err error
+		if p, err = ParsePolicy(base); err != nil {
+			return p, err
+		}
+	}
+	// A head file that doesn't parse adds nothing; the base still applies.
+	var user struct {
+		ForceHuman []string `yaml:"force_human"`
+	}
+	if len(head) > 0 && yaml.Unmarshal(head, &user) == nil {
+		for _, pat := range user.ForceHuman {
+			if !slices.Contains(p.ForceHuman, pat) {
+				p.ForceHuman = append(p.ForceHuman, pat)
+			}
+		}
 	}
 	return p, nil
 }

@@ -169,6 +169,14 @@ function merge(fresh) {
   }
 }
 
+// syncDismiss copies the reason being typed into state before a re-render,
+// as long as the form on the page is still the one S.dismissing opens.
+export function syncDismiss() {
+  const input = document.getElementById("dismiss-why");
+  const d = S.dismissing;
+  if (input && d && !d.busy && input.form?.dataset.key === d.key) d.reason = input.value;
+}
+
 const url = () => `/api/results/${encodeURIComponent(S.result.key)}/dismissals`;
 
 export const actions = {
@@ -182,11 +190,12 @@ export const actions = {
     const d = S.dismissing;
     if (!d || d.busy) return false;
     const [kind, unit, idx] = d.key.split("|");
-    d.reason = el.querySelector("input[name=why]").value.trim();
+    const reason = el.querySelector("input[name=why]").value.trim();
+    d.reason = reason;
     d.busy = true;
     render();
     try {
-      merge(await postJSON(url(), { unit, kind, index: Number(idx), reason: d.reason }));
+      merge(await postJSON(url(), { unit, kind, index: Number(idx), reason }));
       S.dismissing = null;
     } catch (err) {
       d.busy = false;

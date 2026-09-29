@@ -1,6 +1,6 @@
 // Walkthrough tab: one step at a time, most important first, with the
-// explanation beside the code. A step is one unit, or one file's changes
-// (Settings → Walkthrough steps).
+// explanation beside the code. A step is one unit, one file's changes, or
+// related units (Settings → Walkthrough steps).
 import { trText, trDir } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
 import { S, render, allUnits, fileByPath } from "./state.js";
@@ -30,15 +30,41 @@ const STEP_LINES = 400;
 const changedLines = (u) => (u.hunks || []).reduce((n, h) => n + (h.lines || []).filter((l) => l[0] === "+" || l[0] === "-").length, 0);
 const firstLine = (u) => Math.min(Infinity, ...(u.hunks || []).map((h) => h.new_start));
 
-// A step is {f, members, lead}: units of one file in file order, and the
-// highest-ranked of them, which ranks the step and gives its bucket.
-// Grouping here is only how a person reads the PR. The reviewer model's
-// grouping (triage/group.go) is separate and only saves calls.
+// A step is {f, members, lead, why}: its units in reading order, the
+// highest-ranked of them, which ranks the step and gives its bucket and f,
+// and for related steps the kinds of link that joined them. Grouping here
+// is only how a person reads the PR. The reviewer model's grouping
+// (triage/group.go) is separate and only saves calls.
+//
+// steps runs on every render and key press, so the last answer is kept
+// until the result, the settings, a unit (replaced, or re-placed by a
+// budget or a dismissal) or its diff changes.
+let stepsMemo = null;
 function steps() {
-  const units = allUnits().map((x, i) => ({ ...x, i })).filter(({ u }) => S.wz.all || u.decision.bucket !== "none");
-  const groups = S.wz.group ? fileGroups(units) : units.map((x) => [x]);
-  return groups.map((members) => ({ f: members[0].f, members, lead: [...members].sort(byRank)[0] }))
-    .sort((a, b) => byRank(a.lead, b.lead));
+  const all = allUnits();
+  const sig = all.map(({ u }) => `${u.decision?.bucket}|${u.score?.total ?? 0}|${u.attention || 0}|${risk(u)}|${u.symbol || ""}`).join("\n");
+  const m = stepsMemo;
+  if (m && m.result === S.result && m.all === S.wz.all && m.mode === S.wz.steps && m.sig === sig && m.units.length === all.length
+    && all.every(({ u, f }, i) => u === m.units[i].u && f === m.units[i].f && u.hunks === m.units[i].hunks)) return m.st;
+  const units = all.map((x, i) => ({ ...x, i })).filter(({ u }) => S.wz.all || u.decision.bucket !== "none");
+  const groups = S.wz.steps === "file" ? fileGroups(units).map((members) => ({ members }))
+    : S.wz.steps === "related" ? relatedGroups(units)
+    : units.map((x) => ({ members: [x] }));
+  const st = groups.map(({ members, why }) => {
+    const lead = [...members].sort(byRank)[0];
+    return { f: lead.f, members: readingOrder(members, lead), lead, why };
+  }).sort((a, b) => byRank(a.lead, b.lead));
+  stepsMemo = { result: S.result, all: S.wz.all, mode: S.wz.steps, sig, units: all.map(({ u, f }) => ({ u, f, hunks: u.hunks })), st };
+  return st;
+}
+
+// readingOrder puts the lead's file first, then the other files in PR
+// order, each file's units top to bottom.
+function readingOrder(members, lead) {
+  const rank = (x) => x.f.path === lead.f.path ? -1 : x.i;
+  const fileRank = new Map();
+  for (const x of members) fileRank.set(x.f.path, Math.min(fileRank.get(x.f.path) ?? Infinity, rank(x)));
+  return [...members].sort((a, b) => fileRank.get(a.f.path) - fileRank.get(b.f.path) || firstLine(a.u) - firstLine(b.u) || a.i - b.i);
 }
 
 // fileGroups puts each file's units in one step. A file whose changes pass
@@ -61,6 +87,58 @@ function fileGroups(units) {
     out.push(run);
   }
   return out;
+}
+
+// STEP_UNITS caps a related step's unit count, like grouping.max_members
+// in triage/group.go: single-linkage merging chains without it.
+const STEP_UNITS = 8;
+// SMALL_PAIR is how small two changes in one file must be together, in
+// diff characters, before "same file" alone joins them (smallPairChars in
+// triage/group.go).
+const SMALL_PAIR = 1500;
+// WHY labels the links that join a related step.
+const WHY = { ref: "caller and callee", test: "code and its test", file: "small changes in one file" };
+
+const diffText = (u) => (u.hunks || []).flatMap((h) => h.lines || []).join("\n");
+
+// testFor matches triage/group.go: test is a test named after symbol sym,
+// e.g. TestRetryCaps for retryCaps.
+const testFor = (test, sym) => sym.length > 4 && /^(Test|Benchmark)/.test(test) && test.toLowerCase().includes(sym.toLowerCase());
+
+// relatedGroups joins units a reviewer reads together, with the links of
+// triage/group.go: units that name each other, a test named after the
+// symbol it exercises, and two small changes in one file. Merging is
+// greedy from the strongest link down and stops at STEP_LINES changed
+// lines and STEP_UNITS units.
+function relatedGroups(units) {
+  const text = units.map((x) => unitWords(x.u)), name = units.map((x) => shortName(x.u.symbol));
+  const links = [];
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const kinds = [];
+      let score = 0;
+      const ij = mentions(text[i].diff, name[j]), ji = mentions(text[j].diff, name[i]);
+      if (ij || ji) { score += (ij ? 4 : 0) + (ji ? 4 : 0); kinds.push("ref"); }
+      if (testFor(name[i], name[j]) || testFor(name[j], name[i])) { score += 3; kinds.push("test"); }
+      if (units[i].f.path === units[j].f.path && text[i].diffLen + text[j].diffLen < SMALL_PAIR) { score += 1; kinds.push("file"); }
+      if (score) links.push({ score, i, j, kinds });
+    }
+  }
+  links.sort((a, b) => b.score - a.score || a.i - b.i || a.j - b.j);
+  const owner = units.map((_, i) => i);
+  const groups = units.map((x, i) => ({ idx: [i], lines: changedLines(x.u), why: new Set() }));
+  for (const l of links) {
+    const a = owner[l.i], b = owner[l.j];
+    if (a === b) continue;
+    const ga = groups[a], gb = groups[b];
+    if (ga.lines + gb.lines > STEP_LINES || ga.idx.length + gb.idx.length > STEP_UNITS) continue;
+    ga.idx.push(...gb.idx);
+    ga.lines += gb.lines;
+    for (const k of [...gb.why, ...l.kinds]) ga.why.add(k);
+    for (const m of gb.idx) owner[m] = a;
+    groups[b] = null;
+  }
+  return groups.filter(Boolean).map((g) => ({ members: g.idx.map((i) => units[i]), why: [...g.why].map((k) => WHY[k]) }));
 }
 
 const has = (s, id) => s.members.some((x) => x.u.id === id);
@@ -106,8 +184,10 @@ export function showStep(id) {
   return true;
 }
 
+// scrollToUnit brings unit id into view: its review in a step of several,
+// else its first changed row.
 function scrollToUnit(id) {
-  const row = document.querySelector(`.wz-code tr[data-unit="${CSS.escape(id)}"]`);
+  const row = document.querySelector(`.wz-note[data-note="${CSS.escape(id)}"], .wz-code tr[data-unit="${CSS.escape(id)}"]`);
   if (row) { row.scrollIntoView({ block: "center" }); row.classList.add("flash"); }
 }
 
@@ -215,14 +295,83 @@ function explainHTML(f, u, shown) {
   return parts.join("");
 }
 
-// memberHTML is one unit's explanation inside a file step. A unit in a
-// lower bucket than the step is dimmed.
-function memberHTML(f, u, shown, bucket) {
-  const b = u.decision.bucket;
-  return `<div class="wz-member ${BRANK[b] > BRANK[bucket] ? "low" : ""}">
-    <div class="wz-mhead"><span class="pill ${b}">${LABEL[b]}</span>${u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="spacer"></span>${u.line ? `<button class="linkbtn" data-act="wz-unit" data-id="${esc(u.id)}">line ${u.line}</button>` : ""}</div>
-    <div class="wz-mline tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</div>
-    ${explainHTML(f, u, shown)}</div>`;
+// noteOpen is whether unit u's review is open in a grouped step: set by
+// hand, else open when it is the step's only unit, or for human review or
+// live issues, the reviews that ask something of the reader.
+const noteOpen = (u, alone) => S.wz.noteOpen.get(u.id) ?? (alone || u.decision.bucket === "human" || worstFirst(u.issues || []).length > 0);
+
+// noteHTML is one unit's review in a grouped step, placed beside its code.
+// Closed, it is one line: bucket, symbol, headline and issue count. A unit
+// in a lower bucket than the step is dimmed. The header is a div, not a
+// button, because the headline's EN toggle is a button and buttons don't
+// nest.
+function noteHTML(f, u, shown, bucket, alone) {
+  const b = u.decision.bucket, open = noteOpen(u, alone);
+  const live = worstFirst(u.issues || []);
+  const count = live.length ? `<span class="dz ${SEV_CLASS[live[0].severity] || "high"}">${live.length} issue${live.length > 1 ? "s" : ""}</span>`
+    : u.reviewed ? `<span class="wz-clean">✓ no issues</span>` : "";
+  return `<div class="wz-note wz-explain ${open ? "open" : ""} ${BRANK[b] > BRANK[bucket] ? "low" : ""}" data-note="${esc(u.id)}">
+    <div class="wz-note-h" data-act="wz-note" data-id="${esc(u.id)}"><button class="car" data-act="wz-note" data-id="${esc(u.id)}" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} review">${open ? "▾" : "▸"}</button><span class="pill ${b}">${LABEL[b]}</span>${u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}${count}<span class="h tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</span></div>
+    ${open ? `<div class="wz-note-b">${explainHTML(f, u, shown)}</div>` : ""}</div>`;
+}
+
+// splitAtUnits cuts a file's rows before each unit's first hunk, so each
+// unit's review can sit beside its code. hunks are the hunks rows was built
+// from, in its order: one "hh" row each. Unless the whole file shows, the
+// hunk's expand-above rows and the context they opened go with it; in the
+// whole file that context is the code between units, so it stays put.
+// Returns [{u, rows}], u null for rows before the first unit.
+function splitAtUnits(rows, hunks, units, whole) {
+  const owner = new Map(units.flatMap((u) => (u.hunks || []).map((h) => [h, u])));
+  const out = [{ u: null, rows: [] }], seen = new Set();
+  const above = (r) => (r.t === "exp" && (r.dir === "up" || r.dir === "fold-up")) || (r.t === "ctx" && r.x);
+  let k = 0;
+  for (const r of rows) {
+    if (r.t === "hh") {
+      const u = owner.get(hunks[k++]);
+      if (u && !seen.has(u.id)) {
+        seen.add(u.id);
+        const prev = out[out.length - 1].rows, moved = [];
+        while (!whole && prev.length && above(prev[prev.length - 1])) moved.unshift(prev.pop());
+        out.push({ u, rows: moved });
+      }
+    }
+    out[out.length - 1].rows.push(r);
+  }
+  return out.filter((c) => c.u || c.rows.length);
+}
+
+// markIssues flags the rows on a review issue's line and returns the set
+// of new-file lines shown, for "show line".
+function markIssues(rows, units) {
+  const issueLines = new Set(units.flatMap((x) => x.issues || []).map((x) => x.line).filter(Boolean));
+  const shown = new Set();
+  rows.forEach((r) => {
+    if (r.t === "del" || !r.n || r.other) return;
+    shown.add(r.n);
+    if (issueLines.has(r.n)) r.iss = true;
+  });
+  return shown;
+}
+
+const byHunkPos = (a, b) => a.new_start - b.new_start || a.old_start - b.old_start;
+
+// fileSectionHTML is one file of a grouped step: its bar, then a row for
+// each of the step's units in it, the unit's review beside its code. alone is whether
+// the step has only this one unit.
+function fileSectionHTML(f, units, bucket, alone) {
+  const whole = fullyExpanded(f);
+  const mine = units.flatMap((x) => x.hunks || []);
+  const rows = whole ? fileRows(f, { hunks: mine }) : stepRows(f, units);
+  const hunks = (whole ? (f.units || []).flatMap((x) => x.hunks || []) : mine).sort(byHunkPos);
+  const shown = markIssues(rows, units);
+  const fd = S.drafts.filter((d) => d.path === f.path).length;
+  const body = splitAtUnits(rows, hunks, units, whole).map((c) => `<div class="wz-seg">
+      <div class="wz-seg-note">${c.u ? noteHTML(f, c.u, shown, bucket, alone) : ""}</div>
+      <div class="wz-seg-code">${c.rows.length ? diffTable(f, c.rows, S.wz.view) : ""}</div></div>`).join("");
+  return `<section class="wz-code">
+    <div class="wz-codebar"><span class="path">${esc(f.path)}</span><span>${units.length} change${units.length > 1 ? "s" : ""}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
+    ${body}</section>`;
 }
 
 // newSide is the code a reader reads as the change: added and context
@@ -236,15 +385,32 @@ function shortName(sym) {
   const last = sym.trim().split(/\s+/).pop();
   return last.slice(last.lastIndexOf(".") + 1);
 }
-const mentions = (text, name) => name.length >= 3 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && new RegExp(`\\b${name}\\b`).test(text);
+// words holds a unit's identifiers. Since a name is one identifier, a
+// \b-bounded match of it is the same as it being one of the maximal word
+// runs of the text.
+const mentions = (words, name) => name.length >= 3 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && words.has(name);
+const words = (text) => new Set(text.match(/[A-Za-z0-9_]+/g));
+
+// unitWords is a unit's diff length and the words of its diff and of its
+// new side, read once per unit (again only if its hunks are replaced).
+const wordCache = new WeakMap();
+function unitWords(u) {
+  let c = wordCache.get(u);
+  if (!c || c.hunks !== u.hunks) {
+    const diff = diffText(u);
+    c = { hunks: u.hunks, diffLen: diff.length, diff: words(diff), newSide: words(newSide(u)) };
+    wordCache.set(u, c);
+  }
+  return c;
+}
 
 // uses is the changed units outside step s whose name s's new code
 // mentions: the types, helpers and callees it relies on. Matching is by
 // name, so it can miss indirect uses and over-match common names.
 function uses(s) {
   const mine = new Set(s.members.map((x) => x.u.id));
-  const text = s.members.map((x) => newSide(x.u)).join("\n");
-  return allUnits().filter(({ u }) => !mine.has(u.id) && mentions(text, shortName(u.symbol)));
+  const text = s.members.map((x) => unitWords(x.u).newSide);
+  return allUnits().filter(({ u }) => !mine.has(u.id) && text.some((w) => mentions(w, shortName(u.symbol))));
 }
 
 // usesHTML shows the definitions a step uses, collapsed to their name with
@@ -271,7 +437,7 @@ function progressHTML(st, i, toggle) {
   const ovDot = hasOverview(S.result) ? `<button class="wz-dot ov-dot ${intro ? "cur" : ""}" data-act="wz-intro" title="Overview of the PR">Overview</button>` : "";
   const dots = ovDot + st.map((s, j) => {
     const ok = stepDone(s);
-    const title = s.members.length > 1 ? `${j + 1}. ${s.f.path}\n${s.members.map(({ u }) => `· ${headline(u)}`).join("\n")}` : `${j + 1}. ${s.lead.u.id}\n${headline(s.lead.u)}`;
+    const title = s.members.length > 1 ? `${j + 1}. ${s.f.path}\n${s.members.map(({ u, f }) => `· ${f === s.f ? "" : `${f.path}: `}${headline(u)}`).join("\n")}` : `${j + 1}. ${s.lead.u.id}\n${headline(s.lead.u)}`;
     return `<button class="wz-dot ${s.lead.u.decision.bucket} ${ok ? "done" : ""} ${j === i && !S.wz.finished && !intro ? "cur" : ""}"
       data-act="wz-go" data-i="${j}" title="${esc(title)}">${ok ? "✓" : j + 1}</button>`;
   }).join("");
@@ -317,39 +483,45 @@ function stepRows(f, units) {
   });
 }
 
-function cardHTML(st, i) {
-  const s = st[i], { f } = s, u = s.lead.u;
-  const units = s.members.map((x) => x.u), group = units.length > 1;
-  const b = u.decision.bucket;
+// singleBodyHTML is a one-unit step: the explanation beside the code.
+function singleBodyHTML(s, st, i) {
+  const { f } = s, u = s.lead.u;
   // Expanded, the whole file shows, with other units' changes dimmed.
   const whole = fullyExpanded(f);
-  const rows = whole ? fileRows(f, { hunks: units.flatMap((x) => x.hunks || []) }) : stepRows(f, units);
-  const issueLines = new Set(units.flatMap((x) => x.issues || []).map((x) => x.line).filter(Boolean));
-  const shown = new Set();
-  rows.forEach((r) => {
-    if (r.t === "del" || !r.n || r.other) return;
-    shown.add(r.n);
-    if (issueLines.has(r.n)) r.iss = true;
-  });
-  const isDone = stepDone(s);
+  const rows = whole ? fileRows(f, { hunks: u.hunks || [] }) : stepRows(f, [u]);
+  const shown = markIssues(rows, [u]);
   const fd = S.drafts.filter((d) => d.path === f.path).length;
+  return `<div class="wz-body">
+        <section class="wz-explain">${explainHTML(f, u, shown)}</section>
+        <section class="wz-code">
+          <div class="wz-codebar"><b>Step ${i + 1} of ${st.length}</b><span>${esc(u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
+          ${diffTable(f, rows, S.wz.view)}
+          ${usesHTML(s, st)}
+        </section>
+      </div>`;
+}
+
+function cardHTML(st, i) {
+  const s = st[i], { f } = s, u = s.lead.u;
+  // With grouping on, every step uses the grouped layout, one unit or
+  // several, so the layout doesn't change from step to step.
+  const units = s.members.map((x) => x.u), group = units.length > 1, grouped = S.wz.steps !== "unit";
+  const b = u.decision.bucket;
+  const files = [...new Set(s.members.map((x) => x.f))];
+  const isDone = stepDone(s);
   return `
     <div class="wz-card ${b}">
       <div class="wz-head">
         <div class="wz-where"><span class="pill ${b}">${LABEL[b]}</span><b>Step ${i + 1} of ${st.length}</b> ·
           <span class="path">${f.old_path && f.old_path !== f.path ? esc(f.old_path) + " → " : ""}${esc(f.path)}${!group && u.line ? `:${u.line}` : ""}</span>
-          ${group ? `<span class="chip">${units.length} changes</span>` : u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="status chip">${esc(f.status)}</span></div>
+          ${group ? `<span class="chip">${units.length} changes${files.length > 1 ? ` in ${files.length} files` : ""}</span>` : u.symbol ? `<span class="sym">${esc(u.symbol)}</span>` : ""}<span class="status chip">${esc(f.status)}</span>${s.why?.length ? `<span class="chip">${esc(s.why.join(" · "))}</span>` : ""}</div>
         <div class="wz-headline tr" ${trDir(u, "headline", headline(u))}>${trText(u, "headline", headline(u))}</div>
         <div class="row">${impactPill(u.impact)}${likelihoodPill(u.likelihood)}${attentionPill(u)}${decisionChips(u)}</div>
       </div>
-      <div class="wz-body">
-        <section class="wz-explain">${group ? units.map((x) => memberHTML(f, x, shown, b)).join("") : explainHTML(f, u, shown)}</section>
-        <section class="wz-code">
-          <div class="wz-codebar"><b>Step ${i + 1} of ${st.length}</b><span>${esc(group ? `${units.length} changes` : u.id)}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
-          ${diffTable(f, rows, S.wz.view)}
-          ${usesHTML(s, st)}
-        </section>
-      </div>
+      ${grouped ? `<div class="wz-body seq">
+        ${files.map((ff) => fileSectionHTML(ff, s.members.filter((x) => x.f === ff).map((x) => x.u), b, !group)).join("")}
+        <section class="wz-code">${usesHTML(s, st)}</section>
+      </div>` : singleBodyHTML(s, st, i)}
       <div class="wz-nav">
         <button data-act="wz-prev" ${i === 0 && !hasOverview(S.result) ? "disabled" : ""}>← ${i === 0 ? "Overview" : "Previous"}</button>
         <button data-act="wz-next" ${i === st.length - 1 ? "disabled" : ""}>Next →</button>
@@ -364,7 +536,10 @@ function cardHTML(st, i) {
 export function walkHTML() {
   const st = steps();
   const nNone = allUnits().filter(({ u }) => u.decision.bucket === "none").length;
-  const toggle = nNone ? `<label><input type="checkbox" data-act="wz-all" ${S.wz.all ? "checked" : ""}> include ${nNone} no-review unit${nNone > 1 ? "s" : ""}</label>` : "";
+  // Grouped, no-review units join other steps rather than adding one each,
+  // so a count would not match the steps it adds.
+  const what = S.wz.steps === "unit" ? `${nNone} no-review unit${nNone > 1 ? "s" : ""}` : "no-review units";
+  const toggle = nNone ? `<label><input type="checkbox" data-act="wz-all" ${S.wz.all ? "checked" : ""}> include ${what}</label>` : "";
   if (!st.length) return `<div class="wz-top">${toggle}</div>${overviewHTML(S.result, true)}<div class="empty">Nothing in this PR needs review.</div>`;
   const i = current(st);
   return progressHTML(st, i, toggle) + (onIntro() ? introHTML(st, i) : S.wz.finished ? finishHTML(st) : cardHTML(st, i));
@@ -390,8 +565,12 @@ export const actions = {
   "wz-submit": () => { openPanel(); return false; },
   "wz-unit": (el) => { scrollToUnit(el.dataset.id); return false; },
   "wz-use": (el) => { const k = el.dataset.k; S.wz.usesOpen.has(k) ? S.wz.usesOpen.delete(k) : S.wz.usesOpen.add(k); },
+  "wz-note": (el) => { const n = el.closest(".wz-note"); if (n) S.wz.noteOpen.set(el.dataset.id, !n.classList.contains("open")); },
+  // The issue's own file section first: a related step can show the same
+  // line number in two files.
   "wz-line": (el) => {
-    const row = document.querySelector(`.wz-code tr[data-iss="${+el.dataset.line}"]`);
+    const sel = `tr[data-iss="${+el.dataset.line}"]`;
+    const row = el.closest(".wz-code")?.querySelector(sel) || document.querySelector(`.wz-code ${sel}`);
     if (row) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.add("flash"); }
     return false;
   },

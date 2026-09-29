@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -142,29 +141,26 @@ func (o *OpenAILLM) post(ctx context.Context, path string, payload map[string]an
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL()+path, bytes.NewReader(b))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if o.Auth != nil {
-		if err := o.Auth(ctx, httpReq); err != nil {
-			return nil, fmt.Errorf("%s auth: %w", o.Name(), err)
+	status, body, err := doRetry(ctx, o.client(), func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL()+path, bytes.NewReader(b))
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey())
-	}
-	resp, err := o.client().Do(httpReq)
+		httpReq.Header.Set("Content-Type", "application/json")
+		if o.Auth != nil {
+			if err := o.Auth(ctx, httpReq); err != nil {
+				return nil, fmt.Errorf("%s auth: %w", o.Name(), err)
+			}
+		} else {
+			httpReq.Header.Set("Authorization", "Bearer "+o.apiKey())
+		}
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%s request failed: %w", o.Name(), err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s API error: status %d, body: %s", o.Name(), resp.StatusCode, string(body))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("%s API error: status %d, body: %s", o.Name(), status, string(body))
 	}
 	return body, nil
 }

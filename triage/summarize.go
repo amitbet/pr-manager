@@ -2,6 +2,7 @@ package triage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,7 +14,8 @@ import (
 // so the bucket comes from the model that read the most.
 const analyzeSystem = `You review pull-request changes for a Go/Kubernetes codebase. For each change unit you decide who needs to look at it, say what it does, and review it for defects.
 
-First, triage the unit. ` + bucketRules + `
+First, triage the unit. ` + bucketRules + untrustedData + `
+
 Never call something unused or unreferenced unless you checked: its uses may be in the other changes of the PR shown after the diff, or elsewhere in the repository.
 Give change_kind, risk_signals, confidence, and reason: one short sentence on why this bucket (for "none", why behavior cannot change).
 
@@ -151,8 +153,10 @@ func (s *Summarizer) reviewFailed(u *Unit, err error) {
 }
 
 // setIssues decodes issues. Claims that rest on code the reviewer did not
-// see become things to check. A reply without an issues field was not a
-// review, so it cannot count as "nothing found".
+// see become things to check. A reply whose issues field is missing or not
+// a list (CLI replies are free text, so "issues": null or "none" happen)
+// was not a review, so it cannot count as "nothing found"; neither can a
+// non-empty list none of whose entries decode.
 func (s *Summarizer) setIssues(ctx context.Context, u *Unit, args map[string]any) {
 	s.setIssuesIn(ctx, u, args, s.prompt(u, ""))
 }
@@ -161,11 +165,21 @@ func (s *Summarizer) setIssues(ctx context.Context, u *Unit, args map[string]any
 // grouped review is the whole group's prompt: an issue in one member is
 // often only checkable against another.
 func (s *Summarizer) setIssuesIn(ctx context.Context, u *Unit, args map[string]any, context string) {
-	v, ok := args["issues"]
+	list, ok := args["issues"].([]any)
+	if !ok {
+		u.Issues, u.Reviewed = nil, false
+		s.reviewFailed(u, errors.New("review returned no issues list"))
+		return
+	}
 	var checks []string
-	u.Issues, checks = decodeIssues(v)
+	u.Issues, checks = decodeIssues(list)
+	if len(list) > 0 && len(u.Issues)+len(checks) == 0 {
+		u.Reviewed = false
+		s.reviewFailed(u, errors.New("review returned no readable issues"))
+		return
+	}
 	u.Issues = s.criticize(ctx, u, u.Issues, context)
-	u.Reviewed = ok
+	u.Reviewed = true
 	for _, c := range checks {
 		u.Focus = append(u.Focus, "unverified: "+c)
 	}

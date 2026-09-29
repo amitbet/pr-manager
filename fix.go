@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/amitbet/pr-manager/internal/activity"
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/llm"
 	"github.com/amitbet/pr-manager/triage"
 )
@@ -176,12 +178,19 @@ var commitTool = llm.ToolDefinition{
 }
 
 // commitLocal commits a checkout's working tree changes, with a message
-// the summarizer writes from the staged diff and the recent subjects.
+// the summarizer writes from the diff and the recent subjects. The changes
+// are staged in a scratch index and committed from it, so a failure at
+// any step leaves the checkout's own index as the user had it.
 func commitLocal(ctx context.Context, o options, dir string) error {
-	if _, err := triage.Git(dir, "add", "-A"); err != nil {
+	index, cleanup, err := scratchIndex(ctx, dir, true)
+	if err != nil {
 		return err
 	}
-	diff, err := triage.Git(dir, "diff", "--cached", "--no-color", "--no-ext-diff", "--stat", "-p")
+	defer cleanup()
+	if _, err := gitWithIndex(ctx, dir, index, "add", "-A"); err != nil {
+		return err
+	}
+	diff, err := gitWithIndex(ctx, dir, index, "diff", "--cached", "--no-color", "--no-ext-diff", "--stat", "-p")
 	if err != nil {
 		return err
 	}
@@ -202,8 +211,13 @@ func commitLocal(ctx context.Context, o options, dir string) error {
 	if strings.TrimSpace(msg) == "" {
 		return errors.New("write commit message: the summarizer returned none")
 	}
-	if _, err := triage.Git(dir, "commit", "-m", strings.TrimSpace(msg)); err != nil {
+	if _, err := gitWithIndex(ctx, dir, index, "commit", "-m", strings.TrimSpace(msg)); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	// Everything the user had staged is in the commit now; the checkout's
+	// index catches up with it without touching the files.
+	if _, err := triage.Git(dir, "reset", "-q"); err != nil {
+		return fmt.Errorf("commit: update the index: %w", err)
 	}
 	return nil
 }
@@ -342,6 +356,15 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	fixDir := old.LocalFixDir
 	fixBranch := old.LocalFixBranch
 	fixLocation := old.LocalFixLocation
+	// undo takes down a worktree or clone branch this run set up, when the
+	// run fails: nothing refers to it then, and it would pile up.
+	var undo func()
+	succeeded := false
+	defer func() {
+		if !succeeded && undo != nil {
+			undo()
+		}
+	}()
 	if fixDir == "" {
 		if old.PR.LocalPath == "" {
 			if _, _, err := t.fetcher.Fetch(ctx, ref); err != nil {
@@ -356,10 +379,14 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			fixLocation, fixDir, fixBranch = "branch", repoDir, old.PR.HeadRef
 		} else if fixLocation == "clone" {
 			fixDir = repoDir
-			fixBranch, err = checkoutCloneBranch(repoDir, old.PR, jobID)
+			prev, _ := triage.Git(repoDir, "symbolic-ref", "--quiet", "--short", "HEAD")
+			prev = strings.TrimSpace(prev)
+			created := false
+			fixBranch, created, err = checkoutCloneBranch(repoDir, old.PR, jobID)
 			if err != nil {
 				return nil, err
 			}
+			undo = func() { restoreClone(repoDir, prev, fixBranch, created) }
 		} else {
 			fixDir, err = filepath.Abs(filepath.Join(t.opts.cache, "fixes", jobID))
 			if err != nil {
@@ -368,10 +395,12 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			if err := os.MkdirAll(filepath.Dir(fixDir), 0o755); err != nil {
 				return nil, err
 			}
-			fixBranch, err = checkoutFixBranch(repoDir, fixDir, old.PR, jobID)
+			created := false
+			fixBranch, created, err = checkoutFixBranch(repoDir, fixDir, old.PR, jobID)
 			if err != nil {
 				return nil, err
 			}
+			undo = func() { removeFixWorktree(repoDir, fixDir, fixBranch, created) }
 		}
 	} else {
 		if fixLocation == "" {
@@ -408,8 +437,25 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			return nil, errors.New("fix worktree no longer contains the reviewed PR head")
 		}
 	}
+	// The fixer works in a checkout of code the PR controls: its agent
+	// files must not reach the fixer CLI as the project's instructions.
+	// Only a worktree or clone this app made is stripped; the tracked
+	// files get the skip-worktree bit, so the fix's diffs and commits
+	// don't delete them. In the current branch the checkout is the user's.
+	if fixLocation == "worktree" || (fixLocation == "clone" && old.PR.LocalPath == "") {
+		if err := triage.StripAgentFiles(fixDir); err != nil {
+			return nil, fmt.Errorf("remove agent files from the fix checkout: %w", err)
+		}
+	}
 
+	// A failed run points at the checkout it left its changes in, unless
+	// undo takes them away.
+	where := " (worktree: " + fixDir + ")"
+	if undo != nil {
+		where = ""
+	}
 	issues := fixTargets(old, req)
+	skip := untargeted(old, issues)
 	selected := map[string]bool{}
 	threads := map[string]bool{} // targeted review threads not yet addressed
 	for _, x := range issues {
@@ -435,7 +481,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		changed, err := fixRound(ctx, o, fixDir, current, issues)
 		if err != nil {
 			if applied == 0 || ctx.Err() != nil {
-				return nil, fmt.Errorf("round %d: %w (worktree: %s)", round, err, fixDir)
+				return nil, fmt.Errorf("round %d: %w%s", round, err, where)
 			}
 			stopped = fmt.Sprintf("fix round %d failed, so the fix stops at round %d: %v", round, applied, err)
 			break
@@ -454,8 +500,11 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			stopped = fmt.Sprintf("checking fix round %d failed: %v", round, err)
 			break
 		}
+		// A check reviews afresh, so what the user dismissed comes back
+		// undismissed until the repository's dismissals are applied.
+		t.dismissed.apply(next)
 		current, selected = next, reviewed
-		issues = remaining(next, reviewed, threads)
+		issues = remaining(next, reviewed, threads, skip)
 	}
 	if stopped != "" {
 		t.warn(ctx, jobID, stopped)
@@ -463,7 +512,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	progress("triage", 0, 0)
 	next, err := t.retriageFix(ctx, old, current, fixDir, o)
 	if err != nil {
-		return nil, fmt.Errorf("re-triage: %w (worktree: %s)", err, fixDir)
+		return nil, fmt.Errorf("re-triage: %w%s", err, where)
 	}
 	next.LocalFixDir = fixDir
 	if old.PR.SingleCommit {
@@ -487,6 +536,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	if err := t.saveFixResult(next); err != nil {
 		return nil, err
 	}
+	succeeded = true
 	return next, nil
 }
 
@@ -520,16 +570,47 @@ func unreviewed(r *PRResult, reviewed map[string]bool) error {
 	return nil
 }
 
+// issueScope identifies a claim across reviews, at any severity: a check
+// can find the same issue again ranked differently.
+func issueScope(unitID string, is triage.Issue) string {
+	return triage.IssueKey(unitID, triage.Issue{Title: is.Title, Evidence: is.Evidence})
+}
+
+// untargeted is the issues r had that the fix was not asked to work on:
+// the ones left out of one issue's or one thread's fix, and the dismissed
+// ones. A check that finds them again doesn't add them to the fix.
+func untargeted(r *PRResult, targets []targetedIssue) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range r.Files {
+		for _, u := range f.Units {
+			for _, issue := range u.Issues {
+				out[issueScope(u.ID, issue)] = true
+			}
+		}
+	}
+	for _, x := range targets {
+		if x.Comment == nil {
+			delete(out, issueScope(x.UnitID, x.Issue))
+		}
+	}
+	return out
+}
+
 // remaining is what the next round works on: the issues a check found in
 // the units it reviewed, and the targeted threads still not addressed.
-// Addressed threads are dropped from threads.
-func remaining(r *PRResult, reviewed, threads map[string]bool) []targetedIssue {
+// Of the issues, the dismissed ones and the ones in skip, which the fix
+// was not asked to work on, are left out: the rounds chase the targeted
+// issues and the ones the fix brought in. Addressed threads are dropped
+// from threads.
+func remaining(r *PRResult, reviewed, threads, skip map[string]bool) []targetedIssue {
 	var out []targetedIssue
 	for _, f := range r.Files {
 		for _, u := range f.Units {
 			if reviewed[u.ID] {
 				for _, issue := range u.Issues {
-					out = append(out, targetedIssue{u.ID, f.Path, issue, nil})
+					if !issue.Dismissed && !skip[issueScope(u.ID, issue)] {
+						out = append(out, targetedIssue{u.ID, f.Path, issue, nil})
+					}
 				}
 			}
 		}
@@ -584,38 +665,66 @@ func checkoutRev(pr *triage.PRInfo) (string, error) {
 	return name, err
 }
 
-func checkoutFixBranch(repoDir, fixDir string, pr *triage.PRInfo, jobID string) (string, error) {
+// checkoutFixBranch also says whether it created the branch.
+func checkoutFixBranch(repoDir, fixDir string, pr *triage.PRInfo, jobID string) (string, bool, error) {
 	name := strings.TrimSpace(pr.HeadRef)
 	if name != "" {
 		if _, err := triage.Git(repoDir, "check-ref-format", "--branch", name); err == nil {
 			if tip, err := triage.Git(repoDir, "rev-parse", "--verify", "refs/heads/"+name); err == nil && strings.TrimSpace(tip) == pr.HeadOid {
 				if _, err := triage.Git(repoDir, "worktree", "add", fixDir, name); err == nil {
-					return name, nil
+					return name, false, nil
 				}
 			}
 		}
 	}
 	branch := availableFixBranch(repoDir, pr, jobID)
 	if _, err := triage.Git(repoDir, "worktree", "add", "-b", branch, fixDir, pr.HeadOid); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return branch, nil
+	return branch, true, nil
+}
+
+// removeFixWorktree takes down a fix worktree a failed run added, and its
+// branch when the run created it: the branch only has what the run did.
+func removeFixWorktree(repoDir, fixDir, branch string, created bool) {
+	if _, err := triage.Git(repoDir, "worktree", "remove", "--force", fixDir); err != nil {
+		_ = os.RemoveAll(fixDir)
+	}
+	_, _ = triage.Git(repoDir, "worktree", "prune")
+	if created {
+		_, _ = triage.Git(repoDir, "branch", "-D", branch)
+	}
+}
+
+// restoreClone puts the cached clone back on prev after a failed run
+// switched it to branch. The clone had no changes when the run started,
+// so whatever it has now is the run's and is dropped.
+func restoreClone(repoDir, prev, branch string, created bool) {
+	_, _ = triage.Git(repoDir, "reset", "-q", "--hard")
+	_, _ = triage.Git(repoDir, "clean", "-q", "-fd")
+	if prev == "" || prev == branch {
+		return
+	}
+	if _, err := triage.Git(repoDir, "switch", "-q", prev); err == nil && created {
+		_, _ = triage.Git(repoDir, "branch", "-D", branch)
+	}
 }
 
 // checkoutCloneBranch uses the cached clone itself. Fetch creates it with
 // --no-checkout, so its first checkout needs --force to populate the files.
 // Any later local edits are kept; a new fix job cannot overwrite them.
-func checkoutCloneBranch(repoDir string, pr *triage.PRInfo, jobID string) (string, error) {
+// It also says whether it created the branch.
+func checkoutCloneBranch(repoDir string, pr *triage.PRInfo, jobID string) (string, bool, error) {
 	status, err := triage.Git(repoDir, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	empty, err := emptyCloneCheckout(repoDir)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if strings.TrimSpace(status) != "" && !empty {
-		return "", fmt.Errorf("cached clone has local changes at %s; open its existing fix result or choose a worktree", repoDir)
+		return "", false, fmt.Errorf("cached clone has local changes at %s; open its existing fix result or choose a worktree", repoDir)
 	}
 	force := []string{}
 	if empty {
@@ -627,7 +736,7 @@ func checkoutCloneBranch(repoDir string, pr *triage.PRInfo, jobID string) (strin
 			if tip, err := triage.Git(repoDir, "rev-parse", "--verify", "refs/heads/"+name); err == nil && strings.TrimSpace(tip) == pr.HeadOid {
 				args := append([]string{"switch"}, force...)
 				if _, err := triage.Git(repoDir, append(args, name)...); err == nil {
-					return name, nil
+					return name, false, nil
 				}
 			}
 		}
@@ -636,9 +745,9 @@ func checkoutCloneBranch(repoDir string, pr *triage.PRInfo, jobID string) (strin
 	args := append([]string{"switch"}, force...)
 	args = append(args, "-c", branch, pr.HeadOid)
 	if _, err := triage.Git(repoDir, args...); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return branch, nil
+	return branch, true, nil
 }
 
 func emptyCloneCheckout(repoDir string) (bool, error) {
@@ -714,13 +823,20 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+	// The files are read through symlinks only to targets in the checkout:
+	// a PR can add a link to a file outside it.
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
 	for _, path := range paths {
 		if !safeRepoPath(path) {
 			return "", fmt.Errorf("unsafe issue path %q", path)
 		}
-		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
+		content, err := readLocalFile(root, path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", err
+			fmt.Fprintf(&prompt, "\nCurrent file %s is not shown: %v\n", path, err)
+			continue
 		}
 		if len(content) > 48000 {
 			content = content[:48000]
@@ -759,11 +875,15 @@ func safeRepoPath(path string) bool {
 // apply --recount fixes the counts and searches for the exact position).
 // Deletes and moves can't be converted without the files' contents, so
 // they are rejected for the fixer to redo in git form rather than dropped.
+//
+// A plain unified diff, with ---/+++ lines and no diff --git line, gets
+// one: git apply takes either, but the patch is parsed as a git diff.
 func gitPatch(patch, dir string) (string, error) {
 	lines := strings.Split(patch, "\n")
 	var out []string
 	var fileLines []string // the updated file's current lines
 	from, delta := 0, 0    // search position and line shift in that file
+	header := false        // in a file's git headers, before its first hunk
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
 		switch {
@@ -774,10 +894,16 @@ func gitPatch(patch, dir string) (string, error) {
 			return "", fmt.Errorf("unsupported apply_patch directive %q; use a git diff with rename from/rename to", l)
 		case strings.HasPrefix(l, "*** Update File: "):
 			path := strings.TrimSpace(strings.TrimPrefix(l, "*** Update File: "))
-			fileLines, from, delta = nil, 0, 0
+			fileLines, from, delta, header = nil, 0, 0, true
 			if dir != "" && safeRepoPath(path) {
 				if b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path))); err == nil {
+					// A CRLF working tree (core.autocrlf) has lines git
+					// sees without the "\r"; eolPatch puts it back where
+					// git's copy has it.
 					fileLines = strings.Split(string(b), "\n")
+					for k := range fileLines {
+						fileLines[k] = strings.TrimSuffix(fileLines[k], "\r")
+					}
 				}
 			}
 			out = append(out, "diff --git a/"+path+" b/"+path)
@@ -786,6 +912,7 @@ func gitPatch(patch, dir string) (string, error) {
 			}
 		case strings.HasPrefix(l, "*** Add File: "):
 			path := strings.TrimSpace(strings.TrimPrefix(l, "*** Add File: "))
+			header = true
 			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "--- ") {
 				// The file's own headers and hunk follow; don't make
 				// another. A new file's old side is /dev/null whatever
@@ -803,6 +930,7 @@ func gitPatch(patch, dir string) (string, error) {
 			out = append(out, "diff --git a/"+path+" b/"+path, "new file mode 100644", "--- /dev/null", "+++ b/"+path, fmt.Sprintf("@@ -0,0 +1,%d @@", len(added)))
 			out = append(out, added...)
 		case (l == "@@" || strings.HasPrefix(l, "@@ ")) && !strings.HasPrefix(l, "@@ -"):
+			header = false
 			locator := strings.TrimSpace(strings.TrimPrefix(l, "@@"))
 			oldN, newN := 0, 0
 			firstOld, hasOld := "", false // the hunk's first old-side line
@@ -812,7 +940,7 @@ func gitPatch(patch, dir string) (string, error) {
 					break
 				}
 				if !hasOld && (strings.HasPrefix(b, " ") || strings.HasPrefix(b, "-")) {
-					firstOld, hasOld = b[1:], true
+					firstOld, hasOld = strings.TrimSuffix(b[1:], "\r"), true
 				}
 				switch {
 				case strings.HasPrefix(b, " "):
@@ -869,11 +997,121 @@ func gitPatch(patch, dir string) (string, error) {
 				out = append(out, lead)
 			}
 			from, delta = start-1+oldN, delta+newN-oldN
+		case !header && strings.HasPrefix(l, "--- ") && i+2 < len(lines) && strings.HasPrefix(lines[i+1], "+++ ") && strings.HasPrefix(lines[i+2], "@@"):
+			// A plain diff's file headers. Only a ---/+++ pair naming one
+			// file (or /dev/null) and followed by a hunk is taken for one:
+			// removing "-- x" and adding "++ y" looks the same.
+			a, b := plainPath(l, "a/"), plainPath(lines[i+1], "b/")
+			switch {
+			case a == "/dev/null" && b != "/dev/null":
+				out = append(out, "diff --git a/"+b+" b/"+b, "new file mode 100644", "--- /dev/null", "+++ b/"+b)
+			case b == "/dev/null" && a != "/dev/null":
+				out = append(out, "diff --git a/"+a+" b/"+a, "deleted file mode "+fileMode(dir, a), "--- a/"+a, "+++ /dev/null")
+			case a == b:
+				out = append(out, "diff --git a/"+a+" b/"+a, "--- a/"+a, "+++ b/"+a)
+			default:
+				out = append(out, l)
+				continue
+			}
+			i++
+			header = true
 		default:
+			if strings.HasPrefix(l, "diff --git ") {
+				header = true
+			} else if strings.HasPrefix(l, "@@") {
+				header = false
+			}
 			out = append(out, l)
 		}
 	}
 	return strings.Join(out, "\n"), nil
+}
+
+// plainPath is the path in a plain diff's "--- " or "+++ " line, without
+// the timestamp diff puts after a tab or the a/ or b/ prefix.
+func plainPath(line, prefix string) string {
+	p, _, _ := strings.Cut(line[4:], "\t")
+	p = strings.TrimSpace(p)
+	if p == "/dev/null" {
+		return p
+	}
+	return strings.TrimPrefix(p, prefix)
+}
+
+// fileMode is path's mode in dir's index, for a deletion git apply checks
+// against it; a file not there gets the regular one.
+func fileMode(dir, path string) string {
+	if dir != "" && safeRepoPath(path) {
+		if out, err := triage.Git(dir, "ls-files", "-s", "--", ":(literal)"+path); err == nil {
+			if mode, _, ok := strings.Cut(strings.TrimSpace(out), " "); ok && mode != "" {
+				return mode
+			}
+		}
+	}
+	return "100644"
+}
+
+// eolPatch gives the hunk lines of each file in patch the line endings of
+// the file as git apply compares it: git's copy, which for a CRLF working
+// tree under core.autocrlf has LF, but for a file committed with CRLF has
+// CRLF. Fixers write LF whatever the file has, and a CLI fixer reading an
+// autocrlf checkout can copy its "\r"s. A file git doesn't have yet, or
+// one that mixes endings, is left as the fixer wrote it.
+func eolPatch(patch, dir string) string {
+	lines := strings.Split(patch, "\n")
+	crlf := map[string]int{} // path: 1 CRLF, -1 LF, 0 leave
+	ending := 0
+	inHunk := false
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "diff --git "):
+			inHunk, ending = false, 0
+		case !inHunk && (strings.HasPrefix(l, "--- a/") || strings.HasPrefix(l, "+++ b/")):
+			path := l[6:]
+			e, ok := crlf[path]
+			if !ok {
+				e = indexEOL(dir, path)
+				crlf[path] = e
+			}
+			if e != 0 {
+				ending = e
+			}
+		case strings.HasPrefix(l, "@@"):
+			inHunk = true
+		case inHunk && ending != 0 && i < len(lines)-1 && (l == "" || l[0] == ' ' || l[0] == '-' || l[0] == '+'):
+			if l == "" {
+				l = " " // a blank context line the fixer left unprefixed
+			}
+			l = strings.TrimSuffix(l, "\r")
+			if ending > 0 {
+				l += "\r"
+			}
+			lines[i] = l
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// indexEOL says whether path is in dir's index with CRLF (1) or LF (-1)
+// line endings, or is not there or mixes them (0).
+func indexEOL(dir, path string) int {
+	if !safeRepoPath(path) {
+		return 0
+	}
+	blob, err := triage.Git(dir, "cat-file", "blob", ":"+path)
+	if err != nil {
+		return 0
+	}
+	n, cr := strings.Count(blob, "\n"), strings.Count(blob, "\r\n")
+	switch {
+	case n == 0:
+		return 0
+	case cr == 0:
+		return -1
+	case cr == n:
+		return 1
+	}
+	return 0
 }
 
 func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, error) {
@@ -893,6 +1131,15 @@ func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, e
 			return nil, fmt.Errorf("unsafe patch path %q", f.Path)
 		}
 	}
+	patch = eolPatch(patch, dir)
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+		if f.OldPath != f.Path {
+			paths = append(paths, f.OldPath)
+		}
+	}
+	snap := snapshotPaths(ctx, dir, paths)
 	for _, check := range []bool{true, false} {
 		// Models miscount hunk lengths; the hunk lines themselves say.
 		args := []string{"apply", "--recount"}
@@ -900,22 +1147,154 @@ func applyFixPatch(ctx context.Context, dir, patch string) ([]triage.FileDiff, e
 			args = append(args, "--check")
 		}
 		args = append(args, "-")
-		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd := proc.CommandContext(ctx, "git", args...)
 		cmd.Dir, cmd.Stdin = dir, strings.NewReader(patch)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+			snap.done()
 			return nil, fmt.Errorf("git apply: %w: %s", err, strings.TrimSpace(string(out)))
 		}
+	}
+	// The patch's hunk headers are the fixer's guess: --recount and the
+	// offsets git apply finds can put the change elsewhere. What changed is
+	// the diff of the files from before the patch to after it.
+	if real, err := snap.diff(ctx); err == nil {
+		return real, nil
 	}
 	return files, nil
 }
 
+// pathSnapshot is paths' content in dir at one moment, staged in a scratch
+// index, to diff against later.
+type pathSnapshot struct {
+	dir, index, tree string
+	paths            []string
+	done             func()
+}
+
+// snapshotPaths stages paths as they are now into a scratch index. A
+// snapshot that fails has no tree, and its diff fails.
+func snapshotPaths(ctx context.Context, dir string, paths []string) *pathSnapshot {
+	s := &pathSnapshot{dir: dir, done: func() {}}
+	index, done, err := scratchIndex(ctx, dir, false)
+	if err != nil {
+		return s
+	}
+	s.index, s.done = index, done
+	var present []string
+	for _, p := range paths {
+		s.paths = append(s.paths, ":(literal)"+p)
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			present = append(present, ":(literal)"+p)
+		}
+	}
+	if len(present) > 0 {
+		if _, err := gitWithIndex(ctx, dir, index, append([]string{"add", "-A", "-f", "--"}, present...)...); err != nil {
+			return s
+		}
+	}
+	tree, err := gitWithIndex(ctx, dir, index, "write-tree")
+	if err == nil {
+		s.tree = strings.TrimSpace(tree)
+	}
+	return s
+}
+
+// diff stages the snapshot's paths again and returns what changed in
+// them since, with no context lines, and removes the scratch index.
+func (s *pathSnapshot) diff(ctx context.Context) ([]triage.FileDiff, error) {
+	defer s.done()
+	if s.tree == "" {
+		return nil, errors.New("no snapshot")
+	}
+	var paths []string
+	for _, p := range s.paths {
+		if _, err := os.Lstat(filepath.Join(s.dir, filepath.FromSlash(strings.TrimPrefix(p, ":(literal)")))); err == nil {
+			paths = append(paths, p)
+		} else if out, _ := gitWithIndex(ctx, s.dir, s.index, "ls-files", "--", p); strings.TrimSpace(out) != "" {
+			paths = append(paths, p) // deleted since
+		}
+	}
+	if len(paths) > 0 {
+		if _, err := gitWithIndex(ctx, s.dir, s.index, append([]string{"add", "-A", "-f", "--"}, paths...)...); err != nil {
+			return nil, err
+		}
+	}
+	raw, err := gitWithIndex(ctx, s.dir, s.index, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-renames", "-U0", s.tree)
+	if err != nil {
+		return nil, err
+	}
+	return triage.ParseDiff(raw)
+}
+
+// scratchIndex makes an index file for git to use in dir in place of the
+// checkout's own, so staging files to diff them never changes what the
+// user has staged. With fromIndex set it starts as a copy of the
+// checkout's index, so it keeps the skip-worktree and assume-unchanged
+// bits and the stat cache; else, or when the checkout has no index yet,
+// it starts empty. The checkout's index is only read.
+func scratchIndex(ctx context.Context, dir string, fromIndex bool) (string, func(), error) {
+	tmp, err := os.CreateTemp("", "pr-manager-index-*")
+	if err != nil {
+		return "", nil, err
+	}
+	index := tmp.Name()
+	cleanup := func() { os.Remove(index) }
+	copied := false
+	if fromIndex {
+		copied, err = copyIndex(ctx, dir, tmp)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if !copied {
+		os.Remove(index) // git won't read an empty file as an index
+	}
+	return index, cleanup, nil
+}
+
+// copyIndex copies the index of the checkout in dir into w, reporting
+// false when there is none yet.
+func copyIndex(ctx context.Context, dir string, w io.Writer) (bool, error) {
+	out, err := triage.GitCtx(ctx, dir, "rev-parse", "--git-path", "index")
+	if err != nil {
+		return false, err
+	}
+	path := strings.TrimSpace(out)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	_, err = io.Copy(w, f)
+	return err == nil, err
+}
+
 // fixPipeline builds the triage pipeline over the fix checkout: its diff
-// against the PR base, with the repository's policy.
-func fixPipeline(original *PRResult, dir string, o options) (*triage.Source, *triage.Pipeline, error) {
-	_, _ = triage.Git(dir, "add", "-N", ".") // expose newly created files to git diff
+// against the PR base, with the repository's policy. New files are staged
+// for the diff in a scratch index: in the current branch the checkout is
+// the user's.
+func fixPipeline(ctx context.Context, original *PRResult, dir string, o options) (*triage.Source, *triage.Pipeline, error) {
+	index, cleanup, err := scratchIndex(ctx, dir, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cleanup()
+	if _, err := gitWithIndex(ctx, dir, index, "add", "-A"); err != nil {
+		return nil, nil, err
+	}
 	base := original.PR.BaseOid
-	raw, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", base)
+	raw, err := gitWithIndex(ctx, dir, index, "diff", "--cached", "--no-color", "--no-ext-diff", "-M", "-U5", base)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -928,7 +1307,7 @@ func fixPipeline(original *PRResult, dir string, o options) (*triage.Source, *tr
 		return []byte(s), err
 	}
 	src.Dir, src.Base, src.Head, src.Title = dir, base, original.PR.HeadOid, original.PR.Title
-	policy, attrs, err := sourceConfig(src)
+	policy, attrs, err := sourceConfig(src, original.PR.LocalPath != "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -954,7 +1333,7 @@ func unitsByID(r *PRResult) map[string]*triage.Unit {
 // and scores are not final, and retriageFix places the units once the
 // rounds are done.
 func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, dir string, o options, selected map[string]bool, changed []triage.FileDiff, targeted map[string]bool, round int) (*PRResult, map[string]bool, error) {
-	src, pipe, err := fixPipeline(original, dir, o)
+	src, pipe, err := fixPipeline(ctx, original, dir, o)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1008,12 +1387,12 @@ func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, di
 // only classifies what the fix changed, lints and scores. A unit whose
 // diff moved since last (a round whose check failed) is reviewed here.
 func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir string, o options) (*PRResult, error) {
-	src, pipe, err := fixPipeline(original, dir, o)
+	src, pipe, err := fixPipeline(ctx, original, dir, o)
 	if err != nil {
 		return nil, err
 	}
 	if m := loadCodeMap(o.codemapDir); m != nil {
-		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: original.PR.Repo}
+		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: codeMapRepo(m, original.PR.PRRef)}
 	}
 	if pipe.Classifier != nil {
 		pipe.Classifier = &carryClassifier{pipe.Classifier, unitsByID(original)}
@@ -1078,7 +1457,10 @@ func placeThreads(units []*triage.Unit, prior map[string]*triage.Unit, reviewed 
 	triage.AssignThreads(units, orphans)
 }
 
-// fixResult is previous with units in place of its review.
+// fixResult is previous with units in place of its review. The overview
+// and sequence diagram describe previous's units (the overview names its
+// worst issues), so they are dropped, to be written again when the result
+// is opened, unless the units came out as they were.
 func fixResult(previous *PRResult, src *triage.Source, units []*triage.Unit) *PRResult {
 	// Re-found issues and fixed comments change what the comments add.
 	tp := previous.tierPolicy()
@@ -1086,6 +1468,9 @@ func fixResult(previous *PRResult, src *triage.Source, units []*triage.Unit) *PR
 		tp.ApplyThreads(u)
 	}
 	next := *previous
+	if !sameUnits(resultUnitsWithHunks(previous), units) {
+		next.Overview, next.Sequence = nil, nil
+	}
 	next.Files = nil
 	next.CreatedAt = time.Now()
 	next.Counts = (&triage.Report{Units: units}).Counts()
@@ -1100,6 +1485,30 @@ func fixResult(previous *PRResult, src *triage.Source, units []*triage.Unit) *PR
 		next.Files = append(next.Files, resultFile{FileDiff: f, Units: us})
 	}
 	return &next
+}
+
+// sameUnits is whether b is a as saved: the same units with the same
+// diffs, review and threads.
+func sameUnits(a, b []*triage.Unit) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byID := map[string]*triage.Unit{}
+	for _, u := range a {
+		byID[u.ID] = u
+	}
+	for _, u := range b {
+		old := byID[u.ID]
+		if old == nil || !triage.SameDiff(old, u) {
+			return false
+		}
+		x, errX := json.Marshal(old)
+		y, errY := json.Marshal(u)
+		if errX != nil || errY != nil || string(x) != string(y) {
+			return false
+		}
+	}
+	return true
 }
 
 // keptDecisions places the units a check sees without asking the
@@ -1148,9 +1557,5 @@ func touchesPatch(u *triage.Unit, changed []triage.FileDiff) bool {
 }
 
 func (t *triager) saveFixResult(r *PRResult) error {
-	b, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(t.results, r.Key+".json"), b, 0o644)
+	return t.saveResult(r)
 }

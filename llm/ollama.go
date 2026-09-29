@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -79,22 +78,19 @@ func (o *OllamaLLM) Call(ctx context.Context, req LLMRequest) (*LLMResponse, err
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL()+"/api/chat", bytes.NewReader(b))
+	status, body, err := doRetry(ctx, o.client(), func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL()+"/api/chat", bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := o.client().Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("ollama API error: status %d, body: %s", resp.StatusCode, string(body))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("ollama API error: status %d, body: %s", status, string(body))
 	}
 	var out struct {
 		Message struct {

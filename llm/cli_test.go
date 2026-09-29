@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestStrictSchemaMakesOptionalNullable(t *testing.T) {
@@ -82,6 +85,12 @@ func main() {
 	_ = os.WriteFile(os.Getenv("PR_MANAGER_FAKE_CLI_ARGS"), args, 0600)
 	cwd, _ := os.Getwd()
 	_ = os.WriteFile(os.Getenv("PR_MANAGER_FAKE_CLI_ARGS")+".cwd", []byte(cwd), 0600)
+	for i, a := range os.Args {
+		if a == "--system-prompt-file" && i+1 < len(os.Args) {
+			b, _ := os.ReadFile(os.Args[i+1])
+			_ = os.WriteFile(os.Getenv("PR_MANAGER_FAKE_CLI_ARGS")+".system", b, 0600)
+		}
+	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
 	fmt.Println(os.Getenv("PR_MANAGER_FAKE_CLI_OUT"))
 }`
@@ -149,5 +158,253 @@ func TestClaudeCodeWorkspaceEnablesReadOnlyTools(t *testing.T) {
 	}
 	if strings.Contains(prompt, "do not run commands") {
 		t.Errorf("prompt still forbids reading: %q", prompt)
+	}
+}
+
+// A claude.cmd shim runs through cmd.exe, which ends the command line at
+// the first newline and expands % and ^: nothing multi-line or with cmd
+// syntax may be an argument.
+func TestClaudeCodeArgsSurviveCmdShim(t *testing.T) {
+	system := "You review code.\nLine two: 100% sure ^ | & < > !\r\nLine three."
+	tool := ToolDefinition{Name: "submit", Description: "Submit.", InputSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"why": map[string]any{"type": "string", "description": "Say why.\nUse 50% or less | <b> & ^ !"},
+		},
+	}}
+	bin, argsFile := fakeCLI(t, `{"is_error":false,"result":"","structured_output":{"why":"x"}}`)
+	c := &ClaudeCodeCLI{Binary: bin}
+	if _, err := c.Call(context.Background(), LLMRequest{
+		Messages: []ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: "hi"}},
+		Tools:    []ToolDefinition{tool}, ToolChoice: ToolChoiceRequired, Workspace: &Workspace{Dir: t.TempDir()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(argsFile)
+	var args []string
+	if err := json.Unmarshal(b, &args); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdUnsafe("claude.cmd", args); err != nil {
+		t.Errorf("args won't survive cmd.exe: %v", err)
+	}
+	for i, a := range args {
+		if a == "--system-prompt" {
+			t.Errorf("system prompt on the command line: %q", args[i+1])
+		}
+		if a == "--json-schema" {
+			var got map[string]any
+			if err := json.Unmarshal([]byte(args[i+1]), &got); err != nil {
+				t.Fatalf("schema: %v", err)
+			}
+			want, _ := json.Marshal(tool.InputSchema)
+			if g, _ := json.Marshal(got); string(g) != string(want) {
+				t.Errorf("schema = %s, want %s", g, want)
+			}
+		}
+	}
+	if got, _ := os.ReadFile(argsFile + ".system"); string(got) != system {
+		t.Errorf("--system-prompt-file held %q, want %q", got, system)
+	}
+	if !slices.Contains(args, "--setting-sources") || args[slices.Index(args, "--setting-sources")+1] != "user" {
+		t.Errorf("project settings and CLAUDE.md not skipped: %q", args)
+	}
+}
+
+func TestCmdUnsafe(t *testing.T) {
+	if err := cmdUnsafe(`C:\npm\claude.CMD`, []string{"-p", "a\nb"}); err == nil {
+		t.Error("newline passed to a .cmd shim")
+	}
+	if err := cmdUnsafe(`C:\npm\claude.bat`, []string{"100%"}); err == nil {
+		t.Error("% passed to a .bat shim")
+	}
+	if err := cmdUnsafe(`C:\bin\claude.exe`, []string{"a\nb%"}); err != nil {
+		t.Errorf("an .exe gets its args verbatim: %v", err)
+	}
+}
+
+func TestCodexSkipsProjectDocs(t *testing.T) {
+	bin, argsFile := fakeCLI(t, `{"type":"item.completed","item":{"type":"agent_message","text":"{\"a\":1}"}}`)
+	c := &CodexCLI{Binary: bin}
+	tool := ToolDefinition{Name: "submit", Description: "Submit.", InputSchema: map[string]any{"type": "object"}}
+	if _, err := c.Call(context.Background(), LLMRequest{
+		Messages: []ChatMessage{{Role: "system", Content: "a\nb"}, {Role: "user", Content: "hi"}},
+		Tools:    []ToolDefinition{tool}, ToolChoice: ToolChoiceRequired, Workspace: &Workspace{Dir: t.TempDir()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(argsFile)
+	var args []string
+	if err := json.Unmarshal(b, &args); err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.Index(args, "project_doc_max_bytes=0"); i < 1 || args[i-1] != "--config" {
+		t.Errorf("AGENTS.md not skipped: %q", args)
+	}
+	if err := cmdUnsafe("codex.cmd", args); err != nil {
+		t.Errorf("args won't survive cmd.exe: %v", err)
+	}
+}
+
+func TestStructuredResponseNull(t *testing.T) {
+	if _, err := structuredResponse(ToolDefinition{Name: "submit"}, "null", nil, Usage{}); err == nil {
+		t.Fatal("want an error for a null answer")
+	}
+}
+
+// A grandchild holding the CLI's output pipes open must not keep runCLI
+// waiting past its context.
+func TestRunCLIKillsGrandchildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := runCLI(ctx, "sh", []string{"-c", "sleep 30 & sleep 30"}, t.TempDir(), "", nil); err == nil {
+		t.Fatal("want a timeout error")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("runCLI returned after %v", d)
+	}
+}
+
+// Logging in after the first check shows up once the cache is forgotten
+// (Catalogs with refresh) or the negative result is older than subsRetry.
+func TestHasSubscriptionRechecks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	forgetSubscriptions()
+	defer forgetSubscriptions()
+	if HasSubscription("codex") {
+		t.Fatal("codex found without a codex binary")
+	}
+	script := "#!/bin/sh\necho 'Logged in using ChatGPT'\n"
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasSubscription("codex") {
+		t.Fatal("a negative result is kept for subsRetry")
+	}
+	forgetSubscriptions()
+	if !HasSubscription("codex") {
+		t.Fatal("codex login not seen after forgetSubscriptions")
+	}
+	forgetSubscriptions()
+	if err := os.Remove(filepath.Join(dir, "codex")); err != nil {
+		t.Fatal(err)
+	}
+	if HasSubscription("codex") {
+		t.Fatal("codex found without a codex binary")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ageSubscription("codex")
+	if !HasSubscription("codex") {
+		t.Fatal("codex login not seen after subsRetry")
+	}
+}
+
+// ageSubscription makes provider's negative result older than subsRetry.
+func ageSubscription(provider string) {
+	subsMu.Lock()
+	if st := subs[provider]; st != nil {
+		st.at = time.Now().Add(-subsRetry)
+	}
+	subsMu.Unlock()
+}
+
+// Each provider is cached on its own: a found subscription survives a
+// later failing probe of either CLI, and checking one CLI never runs the
+// other.
+func TestHasSubscriptionPerProvider(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/bin")
+	log := filepath.Join(dir, "calls")
+	write := func(name, script string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho "+name+" >> '"+log+"'\n"+script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := func() string {
+		b, _ := os.ReadFile(log)
+		os.Remove(log)
+		return strings.TrimSpace(string(b))
+	}
+	forgetSubscriptions()
+	defer forgetSubscriptions()
+	write("claude", `echo '{"loggedIn":true,"authMethod":"claude.ai"}'`+"\n")
+	write("codex", "exit 1\n")
+	if !HasSubscription("claude-code") {
+		t.Fatal("claude subscription not found")
+	}
+	if c := calls(); c != "claude" {
+		t.Errorf("probes = %q, want claude only", c)
+	}
+	if HasSubscription("codex") {
+		t.Fatal("codex found though its probe fails")
+	}
+	calls()
+	ageSubscription("codex")
+	write("claude", "exit 1\n") // a transient failure
+	if HasSubscription("codex") || !HasSubscription("claude-code") {
+		t.Fatal("want codex missing and claude kept")
+	}
+	if c := calls(); c != "codex" {
+		t.Errorf("probes = %q, want codex only", c)
+	}
+}
+
+// A slow probe of one CLI runs once for all its callers and doesn't hold
+// up the other.
+func TestHasSubscriptionConcurrent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/bin")
+	log := filepath.Join(dir, "calls")
+	claude := "#!/bin/sh\necho claude >> '" + log + "'\nsleep 1\necho '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(claude), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\necho 'Logged in using ChatGPT'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	forgetSubscriptions()
+	defer forgetSubscriptions()
+	var wg sync.WaitGroup
+	results := make([]bool, 4)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = HasSubscription("claude-code")
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	if !HasSubscription("codex") {
+		t.Error("codex subscription not found")
+	}
+	if d := time.Since(start); d > 700*time.Millisecond {
+		t.Errorf("codex waited %v for the claude probe", d)
+	}
+	wg.Wait()
+	for i, ok := range results {
+		if !ok {
+			t.Errorf("caller %d: claude subscription not found", i)
+		}
+	}
+	if b, _ := os.ReadFile(log); strings.Count(string(b), "claude") != 1 {
+		t.Errorf("claude probed %d times, want once", strings.Count(string(b), "claude"))
 	}
 }

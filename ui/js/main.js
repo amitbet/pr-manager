@@ -23,7 +23,7 @@ import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
 import { actions as enActions } from "./entext.js";
 import { loadOverview, actions as overviewActions } from "./overview.js";
-import { issuesHTML, actions as issueActions } from "./issues.js";
+import { issuesHTML, syncDismiss, actions as issueActions } from "./issues.js";
 import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeydown } from "./sequence.js";
 import * as budget from "./budget.js";
 
@@ -125,28 +125,65 @@ const tabsHTML = () => `<div class="tabs">${TABS.map((t) => {
   <span class="spacer"></span>${S.tab === "review" ? `<span class="seg mode" title="How to review">${MODES.map(([m, l]) =>
     `<button class="${S.mode === m ? "on" : ""}" data-act="mode" data-mode="${m}">${l}</button>`).join("")}</span>` : ""}</div>`;
 
+// Any render can come from something the reader didn't do (an LLM call
+// returning, a timer), so it must not take what they are typing: the
+// fields are copied into state first, and the one being typed in gets
+// its focus, caret and scroll back once the page is rebuilt. The review
+// summary in the panel keeps its text itself, on every keystroke.
+const typing = (el) => el?.id && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.selectionStart != null));
+
+function keepTyping(draw) {
+  const a = document.activeElement;
+  const was = typing(a) && { id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd, dir: a.selectionDirection, top: a.scrollTop };
+  draw();
+  if (!was) return false;
+  // A field under the same id with other text is another one (a composer
+  // opened on another line, the dismiss form of another claim).
+  const b = document.getElementById(was.id);
+  if (!b || b.value !== was.value) return false;
+  if (b !== a) {
+    b.focus({ preventScroll: true });
+    b.setSelectionRange(was.start, was.end, was.dir);
+    b.scrollTop = was.top;
+  }
+  return true;
+}
+
 onRender(() => {
   const r = S.result;
   if (!r) return;
-  const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
-  updateReviewButton();
-  $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + fixBanner() + tabsHTML() + tab.html();
-  $("#main").classList.toggle("translating", !!r.translating);
-  tab.mount?.();
-  focusComposer();
-  if (panelOpen()) renderPanel();
+  syncComposer();
+  syncDismiss();
+  const kept = keepTyping(() => {
+    const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
+    updateReviewButton();
+    $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + fixBanner() + tabsHTML() + tab.html();
+    $("#main").classList.toggle("translating", !!r.translating);
+    tab.mount?.();
+    if (panelOpen()) renderPanel();
+  });
+  if (!kept) focusComposer();
 });
 
+// showing counts showKey calls, so one overtaken by a later click stops
+// at its next await instead of showing its PR over the later one.
+let showing = 0;
+
 async function showKey(key) {
+  const call = ++showing;
   const r = await api(`/api/results/${encodeURIComponent(key)}`);
+  if (call !== showing) return;
   budget.apply(r, S.cfg);
   r.overview_loading = !r.overview; // loadOverview below writes it
+  prepare(r); // before S.result, so no render sees it unprepared
   S.result = r;
+  S.drafts = []; // the previous PR's, until this one's arrive
   Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false, seqView: "after" });
   S.tm.zoom = [];
   loadProgress();
-  S.drafts = await api(`${prBase()}/drafts`).catch(() => []);
-  prepare(r);
+  const drafts = await api(`${prBase()}/drafts`).catch(() => []);
+  if (call !== showing || S.result !== r) return;
+  S.drafts = drafts;
   syncURL();
   $("#url").value = localSrc(r.pr) || r.pr.url;
   closePanel();

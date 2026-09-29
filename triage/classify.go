@@ -178,7 +178,7 @@ const (
 
 // PromptVersion changes whenever the classify or analyze prompts do, so
 // cached results from older prompts aren't reused.
-const PromptVersion = "12"
+const PromptVersion = "13"
 
 // bucketRules defines the buckets. The classifier and the reviewer place
 // units by the same rules.
@@ -199,7 +199,7 @@ const classifySystem = `You triage pull-request changes for a Go/Kubernetes code
 
 ` + bucketRules + `
 
-You only see one unit. Never argue that something is unused or unreferenced: its uses may be in the other units of the PR, which are listed after the diff.`
+You only see one unit. Never argue that something is unused or unreferenced: its uses may be in the other units of the PR, which are listed after the diff.` + untrustedData
 
 var triageTool = llm.ToolDefinition{
 	Name:        "submit_triage",

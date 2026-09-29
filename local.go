@@ -6,31 +6,27 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/amitbet/pr-manager/codemap"
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/triage"
 )
 
-var scpRemote = regexp.MustCompile(`^(?:[^@]+@)?([^:]+):([^/]+)/(.+?)(?:\.git)?$`)
-
+// localRepoRef names the checkout's repo from its origin remote. Owner is
+// the whole namespace (GitLab group/subgroup, Azure DevOps org/project)
+// and Repo the last segment; a checkout without a readable remote is
+// local/<directory>.
 func localRepoRef(dir string) triage.PRRef {
 	remote, err := triage.Git(dir, "remote", "get-url", "origin")
 	if err == nil {
 		s := strings.TrimSpace(remote)
-		if u, e := url.Parse(s); e == nil && u.Host != "" {
-			parts := strings.SplitN(strings.Trim(strings.TrimSuffix(u.Path, ".git"), "/"), "/", 2)
-			if len(parts) == 2 {
-				return triage.PRRef{Host: triage.NormalizeHost(u.Host), Owner: parts[0], Repo: parts[1]}
-			}
-		}
-		if m := scpRemote.FindStringSubmatch(s); m != nil {
-			return triage.PRRef{Host: triage.NormalizeHost(m[1]), Owner: m[2], Repo: strings.TrimSuffix(m[3], ".git")}
+		if host, owner, repo, ok := codemap.ParseRemote(s); ok {
+			return triage.PRRef{Host: triage.NormalizeHost(host), Owner: owner, Repo: repo}
 		}
 		if host, owner, repo, err := triage.ParseRepo(s); err == nil {
 			return triage.PRRef{Host: host, Owner: owner, Repo: repo}
@@ -52,7 +48,7 @@ func localBase(dir string) (string, string, error) {
 }
 
 func gitWithIndex(ctx context.Context, dir, index string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := proc.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
 	out, err := cmd.Output()
@@ -231,13 +227,31 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 // emptyTree writes git's empty tree in dir and returns it, the base of a
 // root commit. A repository doesn't always store it.
 func emptyTree(ctx context.Context, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "mktree") // stdin is empty
+	cmd := proc.CommandContext(ctx, "git", "mktree") // stdin is empty
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git mktree: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// missingParent returns the first parent recorded in commit's object, for
+// a commit whose parent git can't resolve: a shallow clone's boundary keeps
+// its parent lines even though .git/shallow hides them from rev-parse. It
+// returns "" for a true root commit.
+func missingParent(dir, commit string) string {
+	raw, err := triage.Git(dir, "cat-file", "commit", commit)
+	if err != nil {
+		return ""
+	}
+	header, _, _ := strings.Cut(raw, "\n\n")
+	for _, line := range strings.Split(header, "\n") {
+		if p, ok := strings.CutPrefix(line, "parent "); ok && len(p) >= 10 {
+			return p
+		}
+	}
+	return ""
 }
 
 // inspectRev reads rev in the checkout at dir, as committed: a local or
@@ -288,6 +302,12 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 			base = strings.TrimSpace(p)
 			info.BaseRef = base[:10]
 		} else {
+			// A shallow clone's boundary commits have parents git doesn't
+			// have; diffing those against the empty tree would review the
+			// whole repository as new code.
+			if parent := missingParent(dir, head); parent != "" {
+				return nil, fmt.Errorf("the parent of commit %s (%s) isn't in this shallow clone; run git fetch --deepen=1 in %s", head[:10], parent[:10], dir)
+			}
 			if empty, err = emptyTree(ctx, dir); err != nil {
 				return nil, err
 			}
@@ -400,7 +420,7 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 			return r, nil
 		}
 	}
-	policy, attrs, err := sourceConfig(s.src)
+	policy, attrs, err := sourceConfig(s.src, true)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +430,7 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	}
 	pipe.Progress = progress
 	if m := loadCodeMap(o.codemapDir); m != nil {
-		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: s.info.Repo}
+		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: codeMapRepo(m, s.info.PRRef)}
 	}
 	// A local branch moves the same way a PR does: a commit or a save
 	// changes a few units and leaves the rest as they were.
@@ -420,27 +440,32 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 }
 
 func ensureLocalCodeMap(ctx context.Context, o options, info *triage.PRInfo, progress func(string, int, int)) error {
-	if o.codemapDir == "" || o.codemapDir == "off" || codeMapHas(loadCodeMap(o.codemapDir), info.Repo) {
-		return nil
-	}
-	codeMapBuildMu.Lock()
-	defer codeMapBuildMu.Unlock()
-	if codeMapHas(loadCodeMap(o.codemapDir), info.Repo) {
+	if o.codemapDir == "" || o.codemapDir == "off" {
 		return nil
 	}
 	ws, err := workspaceDir(o)
 	if err != nil {
 		return err
 	}
+	if codeMapHas(loadCodeMap(o.codemapDir), ws, info.PRRef) {
+		return nil
+	}
+	codeMapBuildMu.Lock()
+	defer codeMapBuildMu.Unlock()
+	if codeMapHas(loadCodeMap(o.codemapDir), ws, info.PRRef) {
+		return nil
+	}
 	progress("codemap", 0, 0)
-	if err := addRepo(ctx, ws, info.Host, info.Owner, info.Repo, map[string]string{info.Repo: info.LocalPath}); err != nil {
+	local := map[string]checkout{checkoutKey(info.PRRef): {Ref: info.PRRef, Dir: info.LocalPath}}
+	name, err := addRepo(ctx, ws, info.PRRef, local)
+	if err != nil {
+		return skipUnlinked(err)
+	}
+	if err := buildCodeMap(ctx, o, ws, name); err != nil {
 		return err
 	}
-	if err := buildCodeMap(ctx, o, ws, info.Repo); err != nil {
-		return err
-	}
-	if !codeMapHas(reloadCodeMap(o.codemapDir), info.Repo) {
-		return fmt.Errorf("code map did not include %s", info.Repo)
+	if !codeMapHas(reloadCodeMap(o.codemapDir), ws, info.PRRef) {
+		return fmt.Errorf("code map did not include %s", name)
 	}
 	return nil
 }
@@ -512,7 +537,7 @@ func publishLocal(r *PRResult) (string, error) {
 	if _, err := triage.Git(p.LocalPath, "push", "-u", "origin", p.HeadRef); err != nil {
 		return "", err
 	}
-	cmd := exec.Command("gh", "pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill")
+	cmd := proc.Command("gh", "pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill")
 	cmd.Dir = p.LocalPath
 	out, err := cmd.Output()
 	if err != nil {

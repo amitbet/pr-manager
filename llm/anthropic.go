@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -208,30 +207,26 @@ func (a *AnthropicLLM) post(ctx context.Context, req LLMRequest) (int, []byte, e
 	if err != nil {
 		return 0, nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
-	if err != nil {
-		return 0, nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if a.Platform != nil {
-		if err := a.Platform.Auth(ctx, httpReq, b); err != nil {
-			return 0, nil, fmt.Errorf("%s auth: %w", a.Name(), err)
+	return doRetry(ctx, a.client(), func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		httpReq.Header.Set("anthropic-version", "2023-06-01")
-		if key := a.apiKey(); key != "" {
-			httpReq.Header.Set("x-api-key", key)
+		httpReq.Header.Set("Content-Type", "application/json")
+		if a.Platform != nil {
+			if err := a.Platform.Auth(ctx, httpReq, b); err != nil {
+				return nil, fmt.Errorf("%s auth: %w", a.Name(), err)
+			}
 		} else {
-			httpReq.Header.Set("Authorization", "Bearer "+a.authToken())
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+			if key := a.apiKey(); key != "" {
+				httpReq.Header.Set("x-api-key", key)
+			} else {
+				httpReq.Header.Set("Authorization", "Bearer "+a.authToken())
+			}
 		}
-	}
-	resp, err := a.client().Do(httpReq)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, body, err
+		return httpReq, nil
+	})
 }
 
 func parseAnthropicResponse(body []byte) (*LLMResponse, error) {

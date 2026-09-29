@@ -14,26 +14,64 @@ import (
 // was holding in human review should fall back to where it belongs.
 //
 // Two keys are derived from every issue. Key identifies this issue: the
-// unit it is on and the code it quotes, not the model's wording, which
-// changes between runs. Pattern identifies the kind of claim, from the
-// words of its title with the code and the noise taken out. Only Key is
-// matched today; Pattern is stored so the same records can later answer
-// "this reviewer has been told three times that unchecked writes to a
-// buffer are fine here" without asking anyone to label anything twice.
+// unit it is on, the code it quotes and its severity, not the model's
+// wording, which changes between runs. Pattern identifies the kind of
+// claim, from the words of its title with the code and the noise taken
+// out. Only Key is matched today; Pattern is stored so the same records
+// can later answer "this reviewer has been told three times that
+// unchecked writes to a buffer are fine here" without asking anyone to
+// label anything twice.
 
 // IssueKey identifies one review issue across re-runs of the same PR and
 // across the pushes that follow. The quoted evidence anchors it to the
 // code, so a reworded title is still the same issue; without evidence the
-// title has to stand in.
+// title has to stand in. The severity is part of the key so that two
+// claims about the same line stay apart: dismissing a low note that quotes
+// `return err` must not also silence a critical one quoting it. Matching
+// (issueKeys) lets a dismissal cover the same claim at its own severity or
+// lower, so a re-rating by the critic only brings it back if it got worse.
 func IssueKey(unit string, is Issue) string {
-	anchor := normalizeCode(is.Evidence)
-	if anchor == "" {
-		anchor = normalizeWords(is.Title)
+	return digest("issue", unit, issueAnchor(is), is.Severity)
+}
+
+// legacyIssueKey is the key earlier versions stored, without the severity.
+// Those records still match, at any severity, since what was dismissed at
+// which severity is not recoverable from the key alone.
+func legacyIssueKey(unit string, is Issue) string {
+	return digest("issue", unit, issueAnchor(is))
+}
+
+func issueAnchor(is Issue) string {
+	if anchor := normalizeCode(is.Evidence); anchor != "" {
+		return anchor
 	}
-	// The severity is left out on purpose: the critic re-rates it on every
-	// run, and a dismissal must survive the same claim coming back at a
-	// different severity. It also keeps keys saved by earlier versions valid.
-	return digest("issue", unit, anchor)
+	return normalizeWords(is.Title)
+}
+
+// severityOrder ranks severities from least to most severe.
+var severityOrder = []string{"low", "medium", "high", "critical"}
+
+// issueKeys are the keys under which a dismissal covers is: the claim at
+// its own severity or any worse one, then the legacy key. A severity
+// outside the known ones only matches itself.
+func issueKeys(unit string, is Issue) []string {
+	var keys []string
+	at := -1
+	for i, s := range severityOrder {
+		if s == is.Severity {
+			at = i
+		}
+	}
+	if at < 0 {
+		keys = append(keys, IssueKey(unit, is))
+	} else {
+		for _, s := range severityOrder[at:] {
+			x := is
+			x.Severity = s
+			keys = append(keys, IssueKey(unit, x))
+		}
+	}
+	return append(keys, legacyIssueKey(unit, is))
 }
 
 // LintKey identifies one static-analysis finding. The rule and the line's
@@ -98,12 +136,13 @@ func ApplyDismissed(units []*Unit, tp TierPolicy, dismissed Dismissed) int {
 	n := 0
 	for _, u := range units {
 		for i := range u.Issues {
-			key := IssueKey(u.ID, u.Issues[i])
-			why, ok := dismissed(key)
-			u.Issues[i].Dismissed, u.Issues[i].DismissedWhy, u.Issues[i].DismissKey = ok, why, ""
-			if ok {
-				u.Issues[i].DismissKey = key
-				n++
+			u.Issues[i].Dismissed, u.Issues[i].DismissedWhy, u.Issues[i].DismissKey = false, "", ""
+			for _, key := range issueKeys(u.ID, u.Issues[i]) {
+				if why, ok := dismissed(key); ok {
+					u.Issues[i].Dismissed, u.Issues[i].DismissedWhy, u.Issues[i].DismissKey = true, why, key
+					n++
+					break
+				}
 			}
 		}
 		for i := range u.Lint {

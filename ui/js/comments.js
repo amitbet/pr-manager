@@ -29,7 +29,13 @@ export function threadRow(f, anchors, cols) {
   return html ? `<tr class="thread"><td colspan="${cols}">${html}</td></tr>` : "";
 }
 
+// shown is the composer the page's textarea was rendered for. syncComposer
+// copies only into that one, so a composer opened in its place (or none,
+// after a save or cancel) never takes the previous one's text.
+let shown = null;
+
 function composerHTML(c) {
+  shown = c;
   return `<div class="composer">
     <textarea id="composer-text" placeholder="Leave a comment (saved as a pending review comment)">${esc(c.body || "")}</textarea>
     <div class="actions"><span class="hint">⌘/Ctrl+Enter to save · stays pending until you submit the review</span>
@@ -49,7 +55,7 @@ export function issueDraftButton(f, u, i) {
 // syncComposer copies the composer's text into state before a re-render.
 export function syncComposer() {
   const ta = $("#composer-text");
-  if (ta && S.composer) S.composer.body = ta.value;
+  if (ta && S.composer && S.composer === shown) S.composer.body = ta.value;
 }
 
 // focusComposer puts the cursor at the end of an open composer after a render.

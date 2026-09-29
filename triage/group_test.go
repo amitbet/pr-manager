@@ -312,6 +312,53 @@ func TestAnalyzeFailureLeavesUnitHuman(t *testing.T) {
 	}
 }
 
+// A CLI reply is parsed out of free text with no schema behind it, so an
+// issues field that is not a list of issues is a failed review, never a
+// clean one.
+func TestAnalyzeMalformedIssuesIsAFailedReview(t *testing.T) {
+	triage := map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r", "headline": "h", "summary": "s"}
+	for name, issues := range map[string]any{"null": nil, "string": "none", "object": map[string]any{}, "unreadable entries": []any{"nil deref", 3}} {
+		a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
+		f := &fakeLLM{fn: func(q llm.LLMRequest) (*llm.LLMResponse, error) {
+			return toolResp(q.Tools[0].Name, with(triage, map[string]any{"issues": issues})), nil
+		}}
+		s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
+		s.Analyze(context.Background(), a)
+		if d := a.Decision; a.Reviewed || d.Bucket != BucketHuman || !d.Failed {
+			t.Errorf("%s: decision = %+v, reviewed = %v, want a failed human", name, d, a.Reviewed)
+		}
+	}
+	// An empty list is a review that found nothing.
+	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() {")
+	f := &fakeLLM{fn: func(q llm.LLMRequest) (*llm.LLMResponse, error) {
+		return toolResp(q.Tools[0].Name, with(triage, map[string]any{"issues": []any{}})), nil
+	}}
+	(&Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}).Analyze(context.Background(), a)
+	if !a.Reviewed || a.Decision.Failed {
+		t.Errorf("empty list: decision = %+v, reviewed = %v, want reviewed", a.Decision, a.Reviewed)
+	}
+}
+
+func TestAnalyzeGroupMalformedIssuesFailsThatMember(t *testing.T) {
+	a := unit("a.go:retryCaps", "a.go", "retryCaps", "func retryCaps() { maxRetries() }")
+	b := unit("b.go:maxRetries", "b.go", "maxRetries", "func maxRetries() int {")
+	triage := map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r", "headline": "h", "summary": "s", "focus": []any{}}
+	f := &fakeLLM{fn: func(q llm.LLMRequest) (*llm.LLMResponse, error) {
+		return toolResp(q.Tools[0].Name, map[string]any{"units": []any{
+			with(triage, map[string]any{"id": a.ID, "issues": nil}),
+			with(triage, map[string]any{"id": b.ID, "issues": []any{}}),
+		}}), nil
+	}}
+	s := &Summarizer{LLM: f, Critic: f, Policy: DefaultPolicy()}
+	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a, b}})
+	if a.Reviewed || !a.Decision.Failed || a.Decision.Bucket != BucketHuman {
+		t.Errorf("null issues: decision = %+v, reviewed = %v, want a failed human", a.Decision, a.Reviewed)
+	}
+	if !b.Reviewed || b.Decision.Failed {
+		t.Errorf("empty issues: decision = %+v, reviewed = %v, want reviewed", b.Decision, b.Reviewed)
+	}
+}
+
 func TestGroupingMemberCapBoundsGroupSize(t *testing.T) {
 	// A chain of pairwise links: each unit names the next. Single-linkage
 	// would pull all of them into one group without a member cap.

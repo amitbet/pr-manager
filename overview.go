@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -39,8 +36,11 @@ func (t *triager) overview(ctx context.Context, key string, jo jobOptions) (*tri
 	if err != nil {
 		return nil, err
 	}
-	// Finish and save even if the reader moves on to another PR.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	// Finish and save even if the reader moves on to another PR, but not
+	// past shutdown.
+	ctx, stop := t.detached(ctx)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	if len(r.PR.Commits) == 0 {
 		dir := r.PR.LocalPath
@@ -49,14 +49,18 @@ func (t *triager) overview(ctx context.Context, key string, jo jobOptions) (*tri
 		}
 		r.PR.Commits = triage.CommitMessages(ctx, dir, r.PR.BaseOid, r.PR.HeadOid)
 	}
-	if r.Overview, err = triage.WriteOverview(ctx, l, r.PR, resultUnits(r)); err != nil {
-		return nil, err
-	}
-	b, err := json.Marshal(r)
+	ov, err := triage.WriteOverview(ctx, l, r.PR, resultUnits(r))
 	if err != nil {
 		return nil, err
 	}
-	return r.Overview, os.WriteFile(filepath.Join(t.results, key+".json"), b, 0o644)
+	commits := r.PR.Commits
+	_, err = t.updateResult(key, func(r *PRResult) {
+		r.Overview = ov
+		if len(r.PR.Commits) == 0 {
+			r.PR.Commits = commits
+		}
+	})
+	return ov, err
 }
 
 // sequence returns a result's sequence diagram, writing it if the result
@@ -71,8 +75,13 @@ func (t *triager) sequence(ctx context.Context, key string, jo jobOptions) (*tri
 // background, so the triage does not wait for it: at low effort it takes
 // longer than the overview (27-33s against 17s on an 11-unit PR).
 func (t *triager) sequenceAfter(key string, o options) {
+	done := t.track()
+	if done == nil {
+		return
+	}
 	go func() {
-		if _, err := t.writeSequence(context.Background(), key, o); err != nil {
+		defer done()
+		if _, err := t.writeSequence(t.root, key, o); err != nil {
 			log.Printf("sequence %s: %v", key, err)
 		}
 	}()
@@ -100,24 +109,18 @@ func (t *triager) writeSequence(ctx context.Context, key string, o options) (*tr
 	if err != nil {
 		return nil, err
 	}
-	// Finish and save even if the reader moves on to another PR.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	// Finish and save even if the reader moves on to another PR, but not
+	// past shutdown.
+	ctx, stop := t.detached(ctx)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	sq, err := triage.WriteSequence(ctx, l, r.PR, resultUnits(r))
 	if err != nil {
 		return nil, err
 	}
-	// Read it again: the call is long enough for a thread refresh or a fix
-	// to have saved the result in the meantime.
-	if again, err := t.Load(key); err == nil {
-		r = again
-	}
-	r.Sequence = sq
-	b, err := json.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	return sq, os.WriteFile(filepath.Join(t.results, key+".json"), b, 0o644)
+	_, err = t.updateResult(key, func(r *PRResult) { r.Sequence = sq })
+	return sq, err
 }
 
 // resultUnits are a result's units as the triage had them. Unit.Hunks is

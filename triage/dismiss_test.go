@@ -83,7 +83,7 @@ func TestFailedReviewPinDoesNotLift(t *testing.T) {
 
 func TestIssueKeyIgnoresRewording(t *testing.T) {
 	a := Issue{Title: "Retry loop can spin forever", Evidence: "\tfor {", Severity: "medium"}
-	b := Issue{Title: "Loop never terminates on error", Evidence: "for {", Severity: "high"}
+	b := Issue{Title: "Loop never terminates on error", Evidence: "for {", Severity: "medium"}
 	if IssueKey("a.go:F", a) != IssueKey("a.go:F", b) {
 		t.Error("the same quoted line is the same issue however the model words it")
 	}
@@ -108,5 +108,47 @@ func TestLintKeyAndDismissal(t *testing.T) {
 	}
 	if lintContext(u) != "" {
 		t.Error("a dismissed finding should not go back into the review prompt")
+	}
+}
+
+func TestDismissingLowLeavesCriticalOnSameLine(t *testing.T) {
+	tp := DefaultTierPolicy()
+	low := Issue{Severity: "low", Title: "Error is not wrapped", Evidence: "return err"}
+	crit := Issue{Severity: "critical", Title: "Transaction left open on error", Evidence: "\treturn err", Scenario: "the lock is never released"}
+	u := reviewedUnit(t, tp, low, crit)
+	lowKey := IssueKey(u.ID, low)
+	if lowKey == IssueKey(u.ID, crit) {
+		t.Fatal("two claims on one line at different severities should not share a key")
+	}
+	n := ApplyDismissed([]*Unit{u}, tp, func(k string) (string, bool) { return "style nit", k == lowKey })
+	if n != 1 || !u.Issues[0].Dismissed || u.Issues[1].Dismissed {
+		t.Fatalf("dismissed %d: low %v critical %v, want only the low one", n, u.Issues[0].Dismissed, u.Issues[1].Dismissed)
+	}
+	if u.Decision.Bucket != BucketHuman {
+		t.Errorf("bucket %s: the critical issue still stands", u.Decision.Bucket)
+	}
+}
+
+func TestDismissalCoversRewordedClaimAtSameOrLowerSeverity(t *testing.T) {
+	dismissed := Issue{Severity: "high", Title: "Nil map write panics", Evidence: "m[k] = v"}
+	key := IssueKey("a.go:F", dismissed)
+	lookup := func(k string) (string, bool) { return "initialised by the caller", k == key }
+	for sev, want := range map[string]bool{"low": true, "medium": true, "high": true, "critical": false} {
+		u := &Unit{ID: "a.go:F", Issues: []Issue{{Severity: sev, Title: "Writing to a nil map", Evidence: "m[k] = v"}}}
+		ApplyDismissed([]*Unit{u}, DefaultTierPolicy(), lookup)
+		if got := u.Issues[0]; got.Dismissed != want || (want && got.DismissKey != key) {
+			t.Errorf("%s: dismissed %v key %q, want %v", sev, got.Dismissed, got.DismissKey, want)
+		}
+	}
+}
+
+func TestLegacyIssueKeyStillMatches(t *testing.T) {
+	is := Issue{Severity: "medium", Title: "Retry loop can spin forever", Evidence: "for {"}
+	// The key earlier versions wrote: unit and anchor only.
+	old := digest("issue", "a.go:F", "for {")
+	u := &Unit{ID: "a.go:F", Issues: []Issue{is}}
+	ApplyDismissed([]*Unit{u}, DefaultTierPolicy(), func(k string) (string, bool) { return "fine", k == old })
+	if !u.Issues[0].Dismissed || u.Issues[0].DismissKey != old {
+		t.Errorf("a dismissal saved before severities were keyed should still apply: %+v", u.Issues[0])
 	}
 }

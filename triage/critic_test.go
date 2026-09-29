@@ -35,10 +35,14 @@ func TestCriticFiltersAndRatesReviewIssues(t *testing.T) {
 		map[string]any{"title": "real bug", "severity": "low", "failure_scenario": "empty input fails"},
 		map[string]any{"title": "unverified by critic", "severity": "medium", "failure_scenario": "x"},
 	}})
-	if called != 3 || !u.Reviewed || len(u.Issues) != 2 {
+	if called != 3 || !u.Reviewed || len(u.Issues) != 3 {
 		t.Fatalf("calls=%d reviewed=%v issues=%+v", called, u.Reviewed, u.Issues)
 	}
-	if u.Issues[0].Title != "real bug" || u.Issues[0].Severity != "high" || u.Issues[1].Title != "unverified by critic" || u.Issues[1].Severity != "medium" {
+	// A rejected critical claim stays visible, at low, with the reason.
+	if is := u.Issues[0]; is.Title != "false alarm" || is.Severity != "low" || is.Claimed != "critical" || is.CriticRejected != "covered by another change" {
+		t.Errorf("rejected issue = %+v", is)
+	}
+	if u.Issues[1].Title != "real bug" || u.Issues[1].Severity != "high" || u.Issues[2].Title != "unverified by critic" || u.Issues[2].Severity != "medium" {
 		t.Errorf("issues = %+v", u.Issues)
 	}
 }

@@ -327,6 +327,17 @@ func TestGoBoilerplate(t *testing.T) {
 		{mk("imports", `-	"os"`, `+	"strings" // for Cut`), true},
 		{mk("imports", `+	_ "net/http/pprof"`), false},
 		{mk("imports", `+import . "x"`), false},
+		// Reordering and regrouping cancel out; pure additions and removals are fine.
+		{mk("imports", `-	"os"`, `-	"fmt"`, `+	"fmt"`, "+", `+	"os"`), true},
+		{mk("imports", `-	"github.com/a/log"`), true},
+		{mk("imports", `-	"os"`, `+	log "github.com/a/log"`), true},
+		// A name moved to another package: its uses still compile.
+		{mk("imports", `-	"crypto/rand"`, `+	rand "math/rand"`), false},
+		{mk("imports", `-	foo "x/v1"`, `+	foo "x/v2"`), false},
+		{mk("imports", `-	"github.com/a/log"`, `+	"github.com/b/log"`), false},
+		{mk("imports", `-	"github.com/x/y/v2"`, `+	"github.com/x/y/v3"`), false},
+		{mk("imports", `-	"gopkg.in/yaml.v2"`, `+	"github.com/goccy/go-yaml"`), false},
+		{mk("imports", `-import "crypto/rand"`, `+import "math/rand"`), false},
 		{mk("", "+package snapshot", "+"), true},
 		{mk("", "+package snapshot", "+var x = 1"), false},
 		{mk("Retry", `+	"fmt"`), false},

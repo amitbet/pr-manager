@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -98,11 +100,12 @@ func listRevs(path string) (*revList, error) {
 	if err != nil {
 		return out, nil // a repository without commits
 	}
+	boundary := shallowCommits(dir)
 	for _, rec := range strings.Split(log, "\x1e") {
 		head, stat, _ := strings.Cut(rec, "\n")
 		f := strings.Split(head, "\x00")
-		if len(f) != 5 {
-			continue
+		if len(f) != 5 || boundary[f[0]] {
+			continue // a shallow boundary's parent is missing, so it can't be reviewed
 		}
 		c := revCommit{Oid: f[0], Merge: len(strings.Fields(f[1])) > 1, Date: f[2], Author: f[3], Title: f[4]}
 		for _, m := range shortstat.FindAllStringSubmatch(stat, -1) {
@@ -119,4 +122,26 @@ func listRevs(path string) (*revList, error) {
 		out.Commits = append(out.Commits, c)
 	}
 	return out, nil
+}
+
+// shallowCommits returns the boundary commits of a shallow clone at dir,
+// those whose parents weren't fetched; none for a full clone.
+func shallowCommits(dir string) map[string]bool {
+	path, err := triage.Git(dir, "rev-parse", "--git-path", "shallow")
+	if err != nil {
+		return nil
+	}
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, oid := range strings.Fields(string(raw)) {
+		out[oid] = true
+	}
+	return out
 }

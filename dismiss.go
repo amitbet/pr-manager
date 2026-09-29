@@ -52,12 +52,14 @@ func newDismissals(o options) (*dismissals, error) {
 
 // repoKey names the file a repository's dismissals live in. Local
 // checkouts land under owner "local", so they get a file of their own
-// without a special case.
+// without a special case. Path separators in a part (a GitLab subgroup,
+// an Azure DevOps org/project) are escaped, so each repo keeps its own
+// file; parts without them are as they always were.
 func repoKey(ref triage.PRRef) string {
 	parts := []string{}
 	for _, p := range []string{ref.Host, ref.Owner, ref.Repo} {
-		if p = strings.TrimSpace(p); p != "" && !strings.ContainsAny(p, `/\`) && !strings.Contains(p, "..") {
-			parts = append(parts, p)
+		if p = strings.TrimSpace(p); p != "" && p != "." && p != ".." {
+			parts = append(parts, pathPart(p))
 		}
 	}
 	if len(parts) == 0 {

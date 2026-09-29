@@ -504,8 +504,21 @@ func (e *emitter) run() {
 		dirNodes[n.Repo+"/"+n.Dir] = append(dirNodes[n.Repo+"/"+n.Dir], i)
 	}
 	dirKeys := sortedKeys(dirsOut)
-	// deepest first so children are final before parents aggregate them
-	sort.Slice(dirKeys, func(a, b int) bool { return strings.Count(dirKeys[a], "/") > strings.Count(dirKeys[b], "/") })
+	// Deepest first so children are final before parents aggregate them.
+	// Depth counts the dir's own path segments (the repo root is 0), not
+	// slashes in the key: "repo/" and "repo/a" both have one.
+	depth := func(key string) int {
+		if p := dirsOut[key].rec.Path; p != "" {
+			return strings.Count(p, "/") + 1
+		}
+		return 0
+	}
+	sort.SliceStable(dirKeys, func(a, b int) bool {
+		if da, db := depth(dirKeys[a]), depth(dirKeys[b]); da != db {
+			return da > db
+		}
+		return dirKeys[a] < dirKeys[b]
+	})
 	for _, key := range dirKeys {
 		d := dirsOut[key]
 		if !d.hasGraph {
@@ -688,11 +701,11 @@ func writeOutput(outDir string, e *emitter, cfg *Config, stats map[string]any) e
 		Likelihood: cfg.Likelihood, HistoryDays: cfg.History.Days,
 	}
 	for name, g := range e.w.graphs {
-		cat := ""
+		cat, remote := "", ""
 		if ri := e.w.repos[name]; ri != nil {
-			cat = ri.Category
+			cat, remote = ri.Category, repoRemote(ri.Root)
 		}
-		meta.Repos[name] = codemap.RepoMeta{Commit: g.Commit, Dirty: g.Dirty, Category: cat}
+		meta.Repos[name] = codemap.RepoMeta{Commit: g.Commit, Dirty: g.Dirty, Category: cat, Remote: remote}
 	}
 	for _, r := range cfg.rules {
 		meta.Reasons[r.ID] = r.Reason

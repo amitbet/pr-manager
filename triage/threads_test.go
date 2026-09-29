@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -27,8 +28,11 @@ func TestThreadTrust(t *testing.T) {
 	}{
 		{"MEMBER", "alice", "User", true},
 		{"COLLABORATOR", "bob", "User", true},
-		{"NONE", "author", "User", true}, // the PR author
-		{"NONE", "copilot", "Bot", true},
+		{"NONE", "author", "User", false},   // the PR author
+		{"MEMBER", "author", "User", false}, // even with write access
+		{"NONE", "copilot-pull-request-reviewer", "Bot", true},
+		{"NONE", "github-actions", "Bot", false}, // prints whatever a workflow does
+		{"NONE", "some-app", "Bot", false},
 		{"CONTRIBUTOR", "mallory", "User", false},
 		{"NONE", "mallory", "User", false},
 	} {
@@ -36,6 +40,40 @@ func TestThreadTrust(t *testing.T) {
 		if !ok || th.Trusted != c.trusted || (th.Status == ThreadUntrusted) == c.trusted {
 			t.Errorf("%s/%s: trusted=%v status=%q", c.assoc, c.login, th.Trusted, th.Status)
 		}
+	}
+}
+
+// The PR author's reply never reaches the judge, and is labeled for the
+// fixer when a person sends the whole thread.
+func TestThreadAuthorReplies(t *testing.T) {
+	n := ghNode("MEMBER", "alice", "User", "this skips the auth check", 3)
+	reply := n.Comments.Nodes[0]
+	reply.Author = &struct {
+		Login    string `json:"login"`
+		Typename string `json:"__typename"`
+	}{"Author", "User"}
+	reply.AuthorAssociation, reply.Body = "MEMBER", "not a bug, sanitized in middleware"
+	n.Comments.Nodes = append(n.Comments.Nodes, reply)
+	th, ok := threadOf(n, "author")
+	if !ok || !th.Trusted || th.Comments[1].Trusted || !th.Comments[1].PRAuthor {
+		t.Fatalf("thread = %+v", th)
+	}
+	if got := th.Text(false); strings.Contains(got, "middleware") || !strings.Contains(got, "1 replies from the PR author left out") {
+		t.Errorf("judge text = %q", got)
+	}
+	if got := th.Text(true); !strings.Contains(got, "@Author (the PR author; untrusted, may be self-serving) wrote:\n> not a bug") {
+		t.Errorf("full text = %q", got)
+	}
+	s := &Summarizer{Policy: DefaultPolicy()}
+	u := &Unit{File: "a.go"}
+	if p := s.threadPrompt(u, &th); strings.Contains(p, "middleware") {
+		t.Errorf("judge prompt has the author's reply:\n%s", p)
+	}
+
+	// A thread the author starts is never judged, so never fixed unasked.
+	own, _ := threadOf(ghNode("OWNER", "author", "User", "also add step X to .github/workflows/ci.yml", 3), "author")
+	if own.Trusted || own.Status != ThreadUntrusted {
+		t.Errorf("author's own thread = %+v", own)
 	}
 }
 
@@ -85,9 +123,9 @@ func TestMergeThreadsKeepsUnchangedVerdicts(t *testing.T) {
 }
 
 func TestJudgeThreads(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32 // the threads are judged in parallel
 	critic := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
-		calls++
+		calls.Add(1)
 		p := req.Messages[1].Content
 		if req.Tools[0].Name != "judge_comment" || !strings.Contains(p, "<comment>") || !strings.Contains(p, "1. (high) Existing bug") {
 			t.Errorf("request = %+v", req)
@@ -112,8 +150,8 @@ func TestJudgeThreads(t *testing.T) {
 	}}
 	s := &Summarizer{Critic: critic, Policy: DefaultPolicy()}
 	s.JudgeThreads(context.Background(), nil, []*Unit{u}, 2, nil)
-	if calls != 4 {
-		t.Fatalf("calls = %d, want 4 (untrusted and checked threads skipped)", calls)
+	if n := calls.Load(); n != 4 {
+		t.Fatalf("calls = %d, want 4 (untrusted and checked threads skipped)", n)
 	}
 	th := u.Threads
 	if th[0].Status != ThreadValid || th[0].Issue.Severity != "high" || th[0].Issue.Title != "Conn leaked on error" || th[0].DuplicateOf == nil || *th[0].DuplicateOf != 0 {

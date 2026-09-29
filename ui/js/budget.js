@@ -25,7 +25,11 @@ export function place(u, b) {
   const total = Math.max(att, lowered);
   // A comment pin wins over any other pin but human (Score.pin in Go).
   const [pin, pinWhy] = s.comment_pin && s.pin !== "human" ? [s.comment_pin, s.comment_pin_why] : [s.pin, s.pin_why];
-  if (pin) return { bucket: pin, total, why: `${pin}: ${pinWhy} (any budget)` };
+  if (pin) {
+    // The code floor raises a pin from the classifier's bucket (Score.Place).
+    if (s.code_floor && RANK[s.code_floor] > RANK[pin]) return { bucket: s.code_floor, total, why: `${s.code_floor}: ${s.code_floor_why} (any budget; the classifier's ${s.pin})` };
+    return { bucket: pin, total, why: `${pin}: ${pinWhy} (any budget)` };
+  }
   let bucket = "none", cut = `< ${b.skim}`;
   if (total >= b.human) [bucket, cut] = ["human", `≥ ${b.human}`];
   else if (total >= b.skim) [bucket, cut] = ["skim", `≥ ${b.skim}`];
@@ -35,9 +39,16 @@ export function place(u, b) {
   if (att > lowered) x = `review attention ${att} (over ${x})`;
   let why = `score ${total} = ${x} → ${bucket} (${cut} on ${b.name})`;
   if (s.floor && RANK[s.floor] > RANK[bucket]) {
-    if (b.lift_floors && s.clean === 1) return { bucket, total, why: `${why}; ${s.floor_why} lifted by the clean review` };
-    bucket = s.floor;
-    why += `; raised to ${bucket}: ${s.floor_why}`;
+    if (b.lift_floors && s.clean === 1) why += `; ${s.floor_why} lifted by the clean review`;
+    else {
+      bucket = s.floor;
+      why += `; raised to ${bucket}: ${s.floor_why}`;
+    }
+  }
+  // No budget lifts the code floor.
+  if (s.code_floor && RANK[s.code_floor] > RANK[bucket]) {
+    bucket = s.code_floor;
+    why += `; raised to ${bucket}: ${s.code_floor_why} (no budget lifts this)`;
   }
   return { bucket, total, why };
 }

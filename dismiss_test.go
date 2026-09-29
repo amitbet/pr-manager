@@ -140,4 +140,12 @@ func TestRepoKeyRejectsPathTricks(t *testing.T) {
 	if got := repoKey(triage.PRRef{Host: "ghe.example.com", Owner: "acme", Repo: "web"}); got != "ghe.example.com__acme__web" {
 		t.Errorf("repoKey = %q", got)
 	}
+	if got := repoKey(triage.PRRef{Owner: "acme", Repo: "web"}); got != "acme__web" {
+		t.Errorf("repoKey = %q", got)
+	}
+	a := repoKey(triage.PRRef{Host: "gitlab.com", Owner: "g/sub", Repo: "a"})
+	b := repoKey(triage.PRRef{Host: "gitlab.com", Owner: "g/sub", Repo: "b"})
+	if a == b || strings.ContainsAny(a+b, `/\`) {
+		t.Errorf("subgroup repos share or escape their file: %q %q", a, b)
+	}
 }

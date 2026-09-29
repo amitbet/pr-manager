@@ -139,7 +139,7 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 	}
 	if isTestPath(f.Path) {
 		// Defects in tests don't reach production; weakened tests are the
-		// classifier's call (test edits stay human).
+		// classifier's call (tiers pins the ones it sent to human).
 		lk.Level = "low"
 		lk.Notes = []string{"not scored: test code"}
 		return lk

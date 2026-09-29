@@ -139,3 +139,39 @@ func TestCarriedThreadsDropDuplicateLinksOnReReviewedUnits(t *testing.T) {
 		t.Error("no plan means no threads")
 	}
 }
+
+// A result from another prompt version is not reused for the same head;
+// one from the current version is, whatever model made it.
+func TestLatestCachedSkipsOlderPromptVersions(t *testing.T) {
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := triage.PRRef{Owner: "acme", Repo: "web", Number: 7}
+	saveRun(t, tr, "acme__web__7__head000000__old", "base", "head000000", time.Minute)
+	if _, err := tr.latestCached(ref, "head000000"); err == nil {
+		t.Fatal("a result from before prompt versions was reused")
+	}
+	cur := saveRun(t, tr, "acme__web__7__head000000__cur", "base", "head000000", time.Hour)
+	cur.PromptVersion, cur.Classifier = triage.PromptVersion, "codex/gpt"
+	if err := tr.saveResult(cur); err != nil {
+		t.Fatal(err)
+	}
+	got, err := tr.latestCached(ref, "head000000")
+	if err != nil || got.Key != cur.Key {
+		t.Fatalf("latestCached = %v, %v; want %s", got, err, cur.Key)
+	}
+
+	j := &job{Started: time.Now()}
+	j.markCached(got)
+	j.noteModel(got, "claude-code/sonnet")
+	if j.CachedBy != "codex/gpt" || j.RunsWith != "claude-code/sonnet" {
+		t.Errorf("job says cached by %q, runs with %q", j.CachedBy, j.RunsWith)
+	}
+	j = &job{Started: time.Now()}
+	j.markCached(got)
+	j.noteModel(got, "codex/gpt")
+	if j.CachedBy != "" || j.RunsWith != "" {
+		t.Errorf("same model named as different: %q, %q", j.CachedBy, j.RunsWith)
+	}
+}

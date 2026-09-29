@@ -128,6 +128,9 @@ type RepoMeta struct {
 	Commit   string `json:"commit"`
 	Dirty    bool   `json:"dirty"`
 	Category string `json:"category"`
+	// Remote is the repo's identity from its origin remote (RepoID),
+	// empty for a checkout without one or a map built before it was kept.
+	Remote string `json:"remote,omitempty"`
 }
 
 type Weights struct {

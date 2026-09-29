@@ -65,7 +65,7 @@ func TestReviewContextMovedAndNewCode(t *testing.T) {
 	}
 	// The modified function existed before and nothing moved into it.
 	old := byID["store/client.go:(*Client).GetRecord"].ReviewContext
-	if strings.Contains(old, "does not exist at the merge base") || strings.Contains(old, "that code moved") {
+	if strings.Contains(old, "does not exist at the merge base") || strings.Contains(old, "code that moved") {
 		t.Errorf("GetRecord notes:\n%s", old)
 	}
 	// Everything fits: the other file's diff is there, nothing is hidden.
@@ -123,7 +123,7 @@ func TestReviewPromptShowsTheRestOfThePR(t *testing.T) {
 	}
 	units := unitsByID(p.Run(context.Background(), src))
 	pr := prompts["Declaration: (*Client).fetchFromServer"]
-	if !strings.Contains(pr, "Other changes in the same PR") || !strings.Contains(pr, "that code moved") || strings.Contains(pr, "(not shown)") {
+	if !strings.Contains(pr, "Other changes in the same PR") || !strings.Contains(pr, "code that moved") || strings.Contains(pr, "(not shown)") {
 		t.Errorf("review prompt:\n%s", pr)
 	}
 	for _, s := range systems {
@@ -174,5 +174,46 @@ func TestReviewWorkspaceWorktree(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(ws.Dir); !os.IsNotExist(err) {
 		t.Errorf("worktree left behind: %v", err)
+	}
+}
+
+func movedUnit(id string, lines ...string) *Unit {
+	return &Unit{ID: id, File: id, Status: StatusModified, Hunks: []Hunk{{Header: "@@ -1 +1 @@", Lines: lines}}}
+}
+
+// Error checks and zero-value returns are in every function; sharing them
+// does not make the added code moved.
+func TestMovedNeedsMoreThanBoilerplate(t *testing.T) {
+	stock := []string{"if err != nil {", "return nil, err", "return false, err", "} else if err != nil {"}
+	var added, removed []string
+	for _, l := range stock {
+		added, removed = append(added, "+\t"+l), append(removed, "-\t"+l)
+	}
+	added = append(added, "+\tresult := chargeCard(ctx, card, amount)", "+\tledger.Record(result.ID, amount)")
+	a, b := movedUnit("a.go:New", added...), movedUnit("b.go:Old", removed...)
+	setReviewContext([]*Unit{a, b}, nil, DefaultReviewContextChars)
+	if strings.Contains(a.ReviewContext, "code that moved") {
+		t.Errorf("boilerplate counted as moved:\n%s", a.ReviewContext)
+	}
+
+	// Three distinctive lines in a row did move, and the note gives the share.
+	moved := []string{"conn, err := dial(ctx, addr)", "resp, err := conn.Get(ctx, key)", "cache.Put(key, resp, ttl)"}
+	added, removed = nil, nil
+	for _, l := range moved {
+		added, removed = append(added, "+\t"+l), append(removed, "-\t"+l)
+	}
+	added = append(added, "+\tmetrics.Inc(\"fetch_total\")", "+\tlog.Printf(\"fetched %s\", key)")
+	a, b = movedUnit("a.go:New", added...), movedUnit("b.go:Old", removed...)
+	setReviewContext([]*Unit{a, b}, nil, DefaultReviewContextChars)
+	if !strings.Contains(a.ReviewContext, "3 of the 5 distinctive added lines here match lines removed from b.go:Old") || !strings.Contains(a.ReviewContext, "the other 2 are new") {
+		t.Errorf("moved note:\n%s", a.ReviewContext)
+	}
+
+	// Scattered matches count only as most of the added code.
+	added = []string{"+\t" + moved[0], "+\tregisterHandler(ctx, 1)", "+\t" + moved[1], "+\tregisterHandler(ctx, 2)", "+\t" + moved[2], "+\tregisterHandler(ctx, 3)"}
+	a, b = movedUnit("a.go:New", added...), movedUnit("b.go:Old", removed...)
+	setReviewContext([]*Unit{a, b}, nil, DefaultReviewContextChars)
+	if strings.Contains(a.ReviewContext, "code that moved") {
+		t.Errorf("3 scattered lines of 6 counted as moved:\n%s", a.ReviewContext)
 	}
 }

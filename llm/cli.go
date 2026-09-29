@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amitbet/pr-manager/internal/activity"
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 // Coding-agent subscriptions: instead of an API key, spawn the locally
@@ -74,6 +75,9 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 		"--ignore-user-config", "--ignore-rules", "-s", "read-only",
 		"--model", c.ModelID(), "--output-schema", schemaPath,
 	}
+	// No AGENTS.md or AGENTS.override.md from the workspace, the untrusted
+	// PR head, as project instructions.
+	args = append(args, "--config", "project_doc_max_bytes=0")
 	if effort := codexEffort(c.Effort); effort != "" {
 		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", effort))
 	}
@@ -214,11 +218,21 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	if ws := req.Workspace; ws != nil {
 		tools, cwd = readOnlyTools, ws.Dir
 	}
+	// Anything long or multi-line goes in a file, not on the command line:
+	// an npm install is claude.cmd on Windows, run through cmd.exe, which
+	// ends the command at the first newline and expands % and ^.
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
+		return nil, err
+	}
+	// The workspace is the untrusted PR head: --setting-sources user keeps
+	// its .claude/settings*.json and every CLAUDE.md, CLAUDE.local.md and
+	// .claude/rules in it (nested ones included) out of the session.
 	args := []string{
-		"-p", "--output-format", "json", "--json-schema", string(schema),
+		"-p", "--output-format", "json", "--json-schema", cmdSafeJSON(schema),
 		"--model", c.ModelID(), "--tools", tools, "--disable-slash-commands",
 		"--strict-mcp-config", "--permission-mode", "dontAsk",
-		"--no-session-persistence", "--settings", `{"disableAllHooks":true}`,
+		"--no-session-persistence", "--setting-sources", "user", "--settings", settingsPath,
 	}
 	if ws := req.Workspace; ws != nil {
 		// dontAsk denies anything not allowed up front.
@@ -228,7 +242,11 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		}
 	}
 	if system != "" {
-		args = append(args, "--system-prompt", system)
+		systemPath := filepath.Join(dir, "system.txt")
+		if err := os.WriteFile(systemPath, []byte(system), 0o600); err != nil {
+			return nil, err
+		}
+		args = append(args, "--system-prompt-file", systemPath)
 	}
 	// Haiku has no effort setting.
 	if e := c.Effort; e != "" && e != "none" && !strings.Contains(c.ModelID(), "haiku") {
@@ -302,6 +320,32 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, canRead bool) (string, s
 	return strings.Join(system, "\n\n"), sb.String()
 }
 
+// cmdSafeJSON is JSON with the characters cmd.exe treats specially outside
+// quotes (%, ^, |, !, and the <, >, & encoding/json already escapes)
+// written as \u escapes. They can only occur inside JSON strings, where the
+// escape means the same, so the value is unchanged and survives a .cmd shim.
+func cmdSafeJSON(b []byte) string {
+	return cmdJSONEscaper.Replace(string(b))
+}
+
+var cmdJSONEscaper = strings.NewReplacer("%", `\u0025`, "^", `\u005e`, "|", `\u007c`, "!", `\u0021`, "<", `\u003c`, ">", `\u003e`, "&", `\u0026`)
+
+// cmdUnsafe reports an argument cmd.exe would cut or rewrite when bin is a
+// .cmd or .bat shim, which Go runs through cmd.exe: a line break ends the
+// command there, and %, ^, &, |, <, > and ! are cmd syntax whenever the
+// quoting cmd.exe tracks gets out of step with the C runtime's.
+func cmdUnsafe(bin string, args []string) error {
+	if ext := strings.ToLower(filepath.Ext(bin)); ext != ".cmd" && ext != ".bat" {
+		return nil
+	}
+	for _, a := range args {
+		if strings.ContainsAny(a, "\r\n%^&|<>!") {
+			return fmt.Errorf("argument %q can't pass through %s; install the native binary", truncate(a, 60), filepath.Base(bin))
+		}
+	}
+	return nil
+}
+
 // structuredResponse turns the CLI's JSON answer into a call to tool. Nulls
 // are dropped so fields strictSchema made nullable look omitted, as they do
 // from the API providers.
@@ -310,6 +354,9 @@ func structuredResponse(tool ToolDefinition, text string, args map[string]any, u
 		if err := json.Unmarshal([]byte(extractJSON(text)), &args); err != nil {
 			return nil, fmt.Errorf("no JSON answer: %q", truncate(text, 200))
 		}
+	}
+	if args == nil { // the answer was null
+		return nil, fmt.Errorf("no JSON answer: %q", truncate(text, 200))
 	}
 	return &LLMResponse{
 		ToolCalls:  []ToolCall{{Name: tool.Name, Arguments: dropNulls(args).(map[string]any)}},
@@ -413,7 +460,13 @@ func nullable(p map[string]any) map[string]any {
 func runCLI(ctx context.Context, bin string, args []string, dir, prompt string, format func(string) string, unset ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, cliTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
+	if path, err := exec.LookPath(bin); err == nil {
+		if err := cmdUnsafe(path, args); err != nil {
+			return nil, err
+		}
+	}
+	cmd := proc.CommandContext(ctx, bin, args...)
+	ownGroup(cmd)
 	cmd.Dir = dir
 	cmd.Env = cliEnv(unset...)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -466,49 +519,108 @@ func orDefault(s, def string) string {
 	return s
 }
 
+// subState is what is known of one provider's subscription.
+type subState struct {
+	have bool
+	at   time.Time // of the last probe that found none
+	// probing is open while a probe of the provider runs; callers wait
+	// on it rather than probe too.
+	probing chan struct{}
+}
+
 var (
-	subsOnce sync.Once
-	subsHave map[string]bool
+	subsMu sync.Mutex
+	subs   = map[string]*subState{}
 )
+
+// subsRetry is how long a missing subscription is believed: the user may log
+// in while the app runs.
+const subsRetry = 30 * time.Second
 
 // HasSubscription reports whether provider ("codex" or "claude-code") is
 // installed on this machine and logged in with a subscription rather than an
-// API key. The CLIs are probed once per process.
+// API key. Each provider is cached on its own: a subscription found is
+// remembered until forgetSubscriptions; a missing one is probed again after
+// subsRetry. Only one probe of a provider runs at a time, without holding
+// up callers asking about the other.
 func HasSubscription(provider string) bool {
-	subsOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		var wg sync.WaitGroup
-		var codex, claude bool
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			// "Logged in using ChatGPT" vs "Logged in using an API key".
-			out, err := probe(ctx, "codex", "login", "status")
-			codex = err == nil && strings.Contains(out, "ChatGPT")
-		}()
-		go func() {
-			defer wg.Done()
-			out, err := probe(ctx, "claude", "auth", "status")
-			var st struct {
-				LoggedIn         bool   `json:"loggedIn"`
-				AuthMethod       string `json:"authMethod"`
-				SubscriptionType string `json:"subscriptionType"`
+	subsMu.Lock()
+	var st *subState
+	for {
+		st = subs[provider]
+		if st == nil {
+			st = &subState{}
+			subs[provider] = st
+		}
+		if st.have {
+			subsMu.Unlock()
+			return true
+		}
+		if st.probing == nil {
+			if !st.at.IsZero() && time.Since(st.at) < subsRetry {
+				subsMu.Unlock()
+				return false
 			}
-			claude = err == nil && json.Unmarshal([]byte(extractJSON(out)), &st) == nil &&
-				st.LoggedIn && (st.AuthMethod == "claude.ai" || st.SubscriptionType != "")
-		}()
-		wg.Wait()
-		subsHave = map[string]bool{"codex": codex, "claude-code": claude}
-	})
-	return subsHave[provider]
+			break
+		}
+		wait := st.probing
+		subsMu.Unlock()
+		<-wait
+		subsMu.Lock()
+	}
+	done := make(chan struct{})
+	st.probing = done
+	subsMu.Unlock()
+
+	have := probeSubscription(provider)
+
+	subsMu.Lock()
+	defer subsMu.Unlock()
+	st.probing = nil
+	close(done)
+	if have {
+		st.have = true
+	} else {
+		st.at = time.Now()
+	}
+	return have
+}
+
+// forgetSubscriptions makes the next HasSubscription probe the CLIs again.
+// A probe already running reports to its callers but isn't kept.
+func forgetSubscriptions() {
+	subsMu.Lock()
+	subs = map[string]*subState{}
+	subsMu.Unlock()
+}
+
+func probeSubscription(provider string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	switch provider {
+	case "codex":
+		// "Logged in using ChatGPT" vs "Logged in using an API key".
+		out, err := probe(ctx, "codex", "login", "status")
+		return err == nil && strings.Contains(out, "ChatGPT")
+	case "claude-code":
+		out, err := probe(ctx, "claude", "auth", "status")
+		var st struct {
+			LoggedIn         bool   `json:"loggedIn"`
+			AuthMethod       string `json:"authMethod"`
+			SubscriptionType string `json:"subscriptionType"`
+		}
+		return err == nil && json.Unmarshal([]byte(extractJSON(out)), &st) == nil &&
+			st.LoggedIn && (st.AuthMethod == "claude.ai" || st.SubscriptionType != "")
+	}
+	return false
 }
 
 func probe(ctx context.Context, bin string, args ...string) (string, error) {
 	if _, err := exec.LookPath(bin); err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := proc.CommandContext(ctx, bin, args...)
+	ownGroup(cmd)
 	cmd.Env = cliEnv("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 	out, err := cmd.CombinedOutput()
 	return string(out), err

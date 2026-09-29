@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 type Commit struct {
@@ -43,7 +45,7 @@ func Log(dir, rev string, since time.Time, limit int) ([]Commit, error) {
 		args = append(args, "-n", strconv.Itoa(limit))
 	}
 	args = append(args, rev, "--")
-	out, err := exec.Command("git", args...).Output()
+	out, err := proc.Command("git", args...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("git log in %s: %w: %s", dir, err, strings.TrimSpace(string(ee.Stderr)))
@@ -82,7 +84,7 @@ func Parse(out string) []Commit {
 
 // Authors returns the distinct author emails of base..head.
 func Authors(dir, base, head string) ([]string, error) {
-	out, err := exec.Command("git", "-C", dir, "log", "--no-merges", "--format=%ae", base+".."+head).Output()
+	out, err := proc.Command("git", "-C", dir, "log", "--no-merges", "--format=%ae", base+".."+head).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git log %s..%s: %w", base, head, err)
 	}
@@ -99,12 +101,12 @@ func Authors(dir, base, head string) ([]string, error) {
 
 // IsAncestor reports whether commit a is an ancestor of (or is) b.
 func IsAncestor(dir, a, b string) bool {
-	return exec.Command("git", "-C", dir, "merge-base", "--is-ancestor", a, b).Run() == nil
+	return proc.Command("git", "-C", dir, "merge-base", "--is-ancestor", a, b).Run() == nil
 }
 
 // HeadTime is the commit time of rev.
 func HeadTime(dir, rev string) (time.Time, error) {
-	out, err := exec.Command("git", "-C", dir, "show", "-s", "--format=%ct", rev).Output()
+	out, err := proc.Command("git", "-C", dir, "show", "-s", "--format=%ct", rev).Output()
 	if err != nil {
 		return time.Time{}, err
 	}

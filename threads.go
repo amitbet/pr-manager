@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/amitbet/pr-manager/llm"
 	"github.com/amitbet/pr-manager/triage"
@@ -59,29 +60,105 @@ func (t *triager) refreshThreads(ctx context.Context, info *triage.PRInfo, units
 }
 
 // withThreads refreshes a saved result's threads and saves it: comments
-// come and go while the PR head, and so the cached triage, stays.
+// come and go while the PR head, and so the cached triage, stays. The
+// refresh can take minutes, so only the threads and what they place are
+// put on the result as saved by then.
 func (t *triager) withThreads(ctx context.Context, r *PRResult, o options, progress func(string, int, int)) *PRResult {
 	units := resultUnits(r)
-	st := t.refreshThreads(ctx, r.PR, units, o, r.tierPolicy(), progress)
+	tp := r.tierPolicy()
+	st := t.refreshThreads(ctx, r.PR, units, o, tp, progress)
 	if st == nil {
 		return r
 	}
-	r.Threads = st
-	rep := &triage.Report{Units: units}
-	r.Counts = rep.Counts()
-	r.Impact, r.Likelihood, r.Attention = rep.Scores()
-	if err := t.saveResult(r); err != nil {
-		log.Printf("save review threads %s: %v", r.Key, err)
+	threads := map[string][]triage.Thread{}
+	for _, u := range units {
+		threads[u.ID] = u.Threads
 	}
-	return r
+	setThreads := func(r *PRResult) {
+		units := resultUnits(r)
+		for _, u := range units {
+			if th, ok := threads[u.ID]; ok {
+				u.Threads = th
+				tp.ApplyThreads(u)
+			}
+		}
+		r.Threads = st
+		rep := &triage.Report{Units: units}
+		r.Counts = rep.Counts()
+		r.Impact, r.Likelihood, r.Attention = rep.Scores()
+	}
+	saved, err := t.updateResult(r.Key, setThreads)
+	if err != nil {
+		log.Printf("save review threads %s: %v", r.Key, err)
+		setThreads(r)
+		return r
+	}
+	return saved
 }
 
+// resultLock is the lock of one saved result. Every write of a result
+// holds it, so writers that run at once (the overview, the sequence, a
+// thread refresh) each keep what the others saved.
+func (t *triager) resultLock(key string) *sync.Mutex {
+	t.trMu.Lock()
+	defer t.trMu.Unlock()
+	mu := t.trLocks["result:"+key]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		t.trLocks["result:"+key] = mu
+	}
+	return mu
+}
+
+// updateResult reads the saved result again under its lock, lets set put
+// what the caller computed on it, and saves it. The slow part (a model
+// call) belongs before it, outside the lock.
+func (t *triager) updateResult(key string, set func(*PRResult)) (*PRResult, error) {
+	mu := t.resultLock(key)
+	mu.Lock()
+	defer mu.Unlock()
+	r, err := t.Load(key)
+	if err != nil {
+		return nil, err
+	}
+	set(r)
+	return r, t.writeResult(r)
+}
+
+// saveResult saves a whole result, as when a triage writes a new one.
 func (t *triager) saveResult(r *PRResult) error {
+	mu := t.resultLock(r.Key)
+	mu.Lock()
+	defer mu.Unlock()
+	return t.writeResult(r)
+}
+
+// writeResult writes through a temporary file renamed over the result, so
+// a concurrent Load never reads half of one. The caller holds its lock.
+func (t *triager) writeResult(r *PRResult) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(t.results, r.Key+".json"), b, 0o644)
+	p := filepath.Join(t.results, r.Key+".json")
+	tmp, err := os.CreateTemp(t.results, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(b)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), p)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // threadJudge is the reviewer that checks comments: the summarizer's

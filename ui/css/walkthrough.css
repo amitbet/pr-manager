@@ -18,7 +18,7 @@
 .wz-card { --wz-nav-h: 52px; border: 1px solid var(--border); border-top: 6px solid var(--border); border-radius: 10px; background: var(--bg); }
 /* Step bar: fixed to the bottom of the window beside the sidebar, every
    button always present, so nothing moves between clicks or on scroll. */
-.wz-nav { position: fixed; left: 280px; right: 0; bottom: 0; z-index: 15; height: var(--wz-nav-h); display: flex; gap: 8px; align-items: center; padding: 0 24px; background: var(--bg2); border-top: 1px solid var(--border); box-shadow: 0 -4px 12px rgba(0,0,0,.08); }
+.wz-nav { position: fixed; left: var(--side-w); right: 0; bottom: 0; z-index: 15; height: var(--wz-nav-h); display: flex; gap: 8px; align-items: center; padding: 0 24px; background: var(--bg2); border-top: 1px solid var(--border); box-shadow: 0 -4px 12px rgba(0,0,0,.08); }
 .wz-nav button { padding: 6px 14px; }
 .wz-nav .keys { margin-left: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .wz-reviewed { display: inline-flex; gap: 6px; align-items: center; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-weight: 600; cursor: pointer; user-select: none; }
@@ -68,14 +68,30 @@
 .wz-code tr.other td { opacity: .5; }
 .wz-code tr.other td.add, .wz-code tr.other td.del { background: transparent; }
 .wz-codebar .expand-all { font-size: 12px; padding: 0 8px; }
-/* File steps: one block per unit in the explanation, lower buckets dimmed. */
-.wz-member { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border); }
-.wz-member:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
-.wz-member.low { opacity: .7; }
-.wz-member.low:hover { opacity: 1; }
-.wz-mhead { display: flex; gap: 8px; align-items: center; font-size: 13px; }
-.wz-mhead .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); overflow-wrap: anywhere; }
-.wz-mline { margin: 6px 0 12px; font-size: 17px; line-height: 1.35; font-weight: 650; }
+/* Grouped steps: a row per unit, its review beside its code, pinned while
+   the code scrolls past (under the step dots and the file bar). */
+.wz-body.seq { --wz-codebar-h: 38px; grid-template-columns: minmax(0, 1fr); }
+.wz-body.seq > .wz-code + .wz-code { border-top: 1px solid var(--border); }
+.wz-codebar .path { font-family: var(--mono); font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+.wz-seg { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); }
+.wz-seg + .wz-seg { border-top: 1px solid var(--border); }
+.wz-seg-note { background: var(--bg2); border-right: 1px solid var(--border); }
+.wz-seg-code { min-width: 0; }
+.wz-note { position: sticky; top: calc(54px + var(--wz-steps-h) + var(--wz-codebar-h)); max-height: calc(100vh - 54px - var(--wz-steps-h) - var(--wz-codebar-h) - var(--wz-nav-h)); overflow: auto; padding: 0; border-right: 0; }
+@media (max-width: 1400px) {
+  .wz-seg { grid-template-columns: minmax(0, 1fr); }
+  .wz-seg-note { border-right: 0; border-bottom: 1px solid var(--border); }
+  .wz-note { position: static; max-height: none; }
+}
+.wz-note.low:not(.open) { opacity: .7; }
+.wz-note.low:hover { opacity: 1; }
+.wz-note-h { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 10px 22px 8px 14px; font-size: 14px; cursor: pointer; }
+.wz-note-h .car { flex: none; width: 14px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.wz-note-h .pill, .wz-note-h .dz, .wz-note-h .wz-clean, .wz-note-h .tr-en { flex: none; }
+.wz-note-h .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); overflow-wrap: anywhere; }
+.wz-note-h .h { flex: 1 1 100%; padding-left: 22px; font-size: 16px; line-height: 1.35; font-weight: 650; }
+.wz-note-h .wz-clean { font-size: 13px; }
+.wz-note-b { padding: 6px 22px 18px; }
 /* Changed definitions the step uses, collapsed to one line each. */
 .wz-uses { border-top: 1px solid var(--border); }
 .wz-uses-bar { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 8px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }

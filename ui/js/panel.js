@@ -3,7 +3,16 @@
 import { $, esc, postJSON } from "./util.js";
 import { S, prBase, render } from "./state.js";
 
-let RV = { event: "COMMENT", body: "", msg: "", err: false, payload: null, busy: false };
+// The review being written is kept per PR (prBase, so it outlives a
+// re-triage of the same PR): one PR's summary and verdict never show, or
+// get submitted, on another.
+const reviews = new Map();
+const fresh = () => ({ event: "COMMENT", body: "", msg: "", err: false, payload: null, busy: false });
+function review() {
+  const k = prBase();
+  if (!reviews.has(k)) reviews.set(k, fresh());
+  return reviews.get(k);
+}
 let onJump = () => {};
 
 export const panelOpen = () => !$("#panel").hidden;
@@ -11,7 +20,7 @@ export const closePanel = () => { $("#panel").hidden = true; };
 
 export function openPanel() {
   $("#panel").hidden = false;
-  RV.msg = ""; RV.payload = null;
+  Object.assign(review(), { msg: "", payload: null });
   renderPanel();
 }
 
@@ -33,6 +42,7 @@ export function renderPanel() {
   const ds = S.drafts;
   const dry = S.cfg?.review_dry_run;
   const local = !!S.result.pr.local_path;
+  const RV = review();
   p.innerHTML = `
     <h3>${local ? "Review notes" : "Submit review"}${!local && dry ? ` <span class="chip">dry run: nothing is posted</span>` : ""}</h3>
     ${local ? `<p class="hint">Create the PR when the branch is ready. Pending comments are saved here.</p>` : ""}
@@ -63,20 +73,24 @@ export function renderPanel() {
   });
 }
 
+// submitReview posts the review of the PR on screen. The PR can change
+// while it is in flight; the answer goes to the review it was sent from.
 async function submitReview() {
-  RV = { ...RV, busy: true, msg: "", err: false, payload: null };
+  const base = prBase();
+  const RV = review();
+  const here = () => S.result && prBase() === base;
+  Object.assign(RV, { busy: true, msg: "", err: false, payload: null });
   renderPanel();
   try {
-    const res = await postJSON(`${prBase()}/review`, { event: RV.event, body: RV.body, commit_id: S.result.pr.head_oid });
+    const res = await postJSON(`${base}/review`, { event: RV.event, body: RV.body, commit_id: S.result.pr.head_oid });
     if (res.dry_run) {
-      RV = { ...RV, busy: false, msg: "Dry run: this is what would be sent to GitHub. Your drafts are kept.", payload: res.payload };
+      Object.assign(RV, { busy: false, msg: "Dry run: this is what would be sent to GitHub. Your drafts are kept.", payload: res.payload });
     } else {
-      S.drafts = [];
-      RV = { event: "COMMENT", body: "", busy: false, err: false, payload: null, msg: `Posted: <a href="${esc(res.html_url)}" target="_blank" rel="noopener">${esc(res.html_url)}</a>` };
-      render();
+      Object.assign(RV, fresh(), { msg: `Posted: <a href="${esc(res.html_url)}" target="_blank" rel="noopener">${esc(res.html_url)}</a>` });
+      if (here()) { S.drafts = []; render(); }
     }
   } catch (e) {
-    RV = { ...RV, busy: false, err: true, msg: esc(e.message) };
+    Object.assign(RV, { busy: false, err: true, msg: esc(e.message) });
   }
-  renderPanel();
+  if (here() && panelOpen()) renderPanel();
 }

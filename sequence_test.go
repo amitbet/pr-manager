@@ -107,3 +107,80 @@ func TestCapEffort(t *testing.T) {
 		}
 	}
 }
+
+// blockingLLM answers only once its context is done.
+type blockingLLM struct{ started chan struct{} }
+
+func (b *blockingLLM) Call(ctx context.Context, _ llm.LLMRequest) (*llm.LLMResponse, error) {
+	b.started <- struct{}{}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (b *blockingLLM) ModelID() string { return "fake" }
+func (b *blockingLLM) Name() string    { return "fake" }
+
+// The overview, sequence and translation calls outlive the request that
+// asked for them, but not shutdown: it cancels them, and waits for the
+// sequence written in the background.
+func TestShutdownCancelsBackgroundLLMCalls(t *testing.T) {
+	fake := &blockingLLM{started: make(chan struct{}, 4)}
+	oldO, oldT := newOverviewer, newTranslator
+	newOverviewer = func(options) (llm.LLMTool, error) { return fake, nil }
+	newTranslator = func(options) (llm.LLMTool, error) { return fake, nil }
+	defer func() { newOverviewer, newTranslator = oldO, oldT }()
+
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &triage.Unit{ID: "a.go", File: "a.go", Headline: "Adds retries", Summary: "Retries Fetch."}
+	r := &PRResult{Key: "k1", PR: &triage.PRInfo{Title: "Retry", Commits: []string{"retry"}}, Files: []resultFile{{Units: []resultUnit{{Unit: u, Hunks: []triage.Hunk{{NewStart: 1, NewLines: 3}}}}}}}
+	if err := tr.saveResult(r); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each request's context is already done: the calls must not stop
+	// for that.
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	cancelReq()
+	errs := make(chan error, 2)
+	go func() { _, err := tr.overview(reqCtx, "k1", jobOptions{}); errs <- err }()
+	lang := "Hebrew"
+	go func() { _, err := tr.translation(reqCtx, r, jobOptions{SummaryLang: &lang}); errs <- err }()
+	sequenceDone := make(chan struct{})
+	tr.sequenceAfter("k1", options{})
+	go func() {
+		tr.running.Wait()
+		close(sequenceDone)
+	}()
+	for range 3 {
+		select {
+		case <-fake.started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a call did not start")
+		}
+	}
+
+	// Returning well before the timeout means shutdown's wait saw the
+	// background sequence stop.
+	start := time.Now()
+	tr.shutdown(5 * time.Second)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("shutdown took %s", d)
+	}
+	select {
+	case <-sequenceDone:
+	case <-time.After(time.Second):
+		t.Fatal("the background sequence call is still running")
+	}
+	for range 2 {
+		select {
+		case err := <-errs:
+			if err == nil {
+				t.Error("a cancelled call succeeded")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("shutdown left an overview or translation call running")
+		}
+	}
+}

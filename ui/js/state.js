@@ -1,6 +1,14 @@
 // App state, shared by every component. Components change S and call
 // render(); main.js owns the actual page render.
 
+// wzSteps is what a walkthrough step holds (Settings → Walkthrough steps):
+// "unit", "file" or "related". pr-manager.wz_group=1 is the old "file".
+function wzSteps() {
+  const v = localStorage.getItem("pr-manager.wz_steps");
+  if (v === "unit" || v === "file" || v === "related") return v;
+  return localStorage.getItem("pr-manager.wz_group") === "1" ? "file" : "unit";
+}
+
 export const S = {
   result: null,
   cfg: null,
@@ -27,7 +35,7 @@ export const S = {
   seqView: "after",       // the Sequence tab: the flow before | after the PR
   mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | classic
   // group: a step is one file's changes (Settings → Walkthrough); usesOpen: "step|unit" of opened definitions.
-  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified", group: localStorage.getItem("pr-manager.wz_group") === "1", usesOpen: new Set() },
+  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified", steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map() },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both
   trees: {},              // treemap data by repo ("all" = workspace)
 };

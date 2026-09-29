@@ -57,7 +57,12 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg .info:hover, .settings-dlg .info:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
 .settings-dlg .info .tip { display: none; position: fixed; z-index: 10; width: 340px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--fg); box-shadow: 0 4px 12px rgba(0,0,0,.2); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: 0; text-transform: none; cursor: auto; }
 .settings-dlg .info:hover .tip, .settings-dlg .info:focus .tip { display: block; }
-.layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 54px); }
+/* Sidebar width; 0 when hidden with the header's sidebar button (js/sidebar.js). */
+:root { --side-w: 280px; }
+:root.side-collapsed { --side-w: 0px; }
+:root.side-collapsed aside { display: none; }
+:root.side-collapsed .layout { grid-template-columns: 1fr; }
+.layout { display: grid; grid-template-columns: var(--side-w) 1fr; min-height: calc(100vh - 54px); }
 aside { border-right: 1px solid var(--border); background: var(--bg2); overflow-y: auto; max-height: calc(100vh - 54px); position: sticky; top: 54px; }
 aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 12px 6px; }
 .repo-head { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid var(--border); background: var(--bg3); padding: 7px 12px; font-size: 13px; font-weight: 600; position: sticky; top: 0; z-index: 1; }

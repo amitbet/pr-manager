@@ -18,7 +18,9 @@ async function triage(ask, force = false) {
     refreshJobs();
     watchJob(job.id, ask && ((j) => {
       const when = new Date(j.cached).toLocaleString();
-      if (!confirm(`This ${isPath ? "state" : "commit"} was already triaged (${when}). Run it again?\n\nCancel opens the saved result.`)) return true;
+      // A saved result from another model is offered, but named as such.
+      const model = j.cached_by ? `\n\nThe saved result was made with ${j.cached_by}; your settings now use ${j.runs_with}.` : "";
+      if (!confirm(`This ${isPath ? "state" : "commit"} was already triaged (${when}). Run it again?${model}\n\nOK runs it again; Cancel opens the saved result.`)) return true;
       triage(false, true);
       return false;
     }));

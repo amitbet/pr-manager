@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/amitbet/pr-manager/internal/proc"
 )
 
 // LintFinding is one static-analysis result on a line this PR adds.
@@ -184,7 +186,7 @@ func (l *Linter) run(ctx context.Context, dir string, t linter, paths []string) 
 	defer cancel()
 
 	try := func(args []string) ([]LintFinding, error) {
-		cmd := exec.CommandContext(ctx, t.name, args...)
+		cmd := proc.CommandContext(ctx, t.name, args...)
 		cmd.Dir = dir
 		// A linter that needs the network or a writable home is not worth
 		// waiting for; keep the environment as it is otherwise.
@@ -434,18 +436,42 @@ func indexByte(b []byte, c byte) int {
 }
 
 // relSlash makes a tool's path repo-relative with forward slashes, since
-// linters report absolute paths and we match against diff paths.
+// linters report absolute paths and we match against diff paths. Tools
+// that build paths from getcwd() report the resolved form of a symlinked
+// dir (macOS temp dirs live under /var, a link to /private/var), so both
+// sides are tried resolved as well as as given.
 func relSlash(dir, p string) string {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return ""
 	}
 	if dir != "" && filepath.IsAbs(p) {
-		if rel, err := filepath.Rel(dir, p); err == nil {
-			p = rel
-		}
+		p = relTo(dir, p)
 	}
 	return filepath.ToSlash(strings.TrimPrefix(p, "./"))
+}
+
+// relTo is p relative to dir when p is inside dir under any spelling of
+// either path, else the plain filepath.Rel answer (or p itself).
+func relTo(dir, p string) string {
+	dirs, ps := []string{dir}, []string{p}
+	if r, err := filepath.EvalSymlinks(dir); err == nil && r != dir {
+		dirs = append(dirs, r)
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil && r != p {
+		ps = append(ps, r)
+	}
+	for _, d := range dirs {
+		for _, q := range ps {
+			if rel, err := filepath.Rel(d, q); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return rel
+			}
+		}
+	}
+	if rel, err := filepath.Rel(dir, p); err == nil {
+		return rel
+	}
+	return p
 }
 
 func matching(paths, exts []string) []string {
