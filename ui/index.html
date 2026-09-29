@@ -73,7 +73,7 @@
     <section>
       <h4>Summary language</h4>
       <select id="summary_lang" aria-label="summary language"></select>
-      <p class="hint">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated when you open one; the translation is cached. Code, paths and quoted evidence stay as they are.</p>
+      <p class="hint">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated at the end of the triage, so both are kept and the EN button switches between them; a PR triaged in another language is translated when you open it. Translations are cached. Code, paths and quoted evidence stay as they are.</p>
     </section>
     <section>
       <h4>Review budget</h4>
@@ -85,6 +85,11 @@
       <h4>Review tools</h4>
       <label class="check"><input type="checkbox" id="review_tools"> let the reviewer read the repo at the PR head and the Go module cache</label>
       <p class="hint">codex and claude-code summarizers only. Slower, but catches claims about code outside the diff. Applies to the next triage.</p>
+    </section>
+    <section>
+      <h4>Incremental review</h4>
+      <label class="check"><input type="checkbox" id="incremental"> after a push, keep the review of units that did not change</label>
+      <p class="hint">A unit keeps its review when its own diff is unchanged and so are the units it was judged against: its callers and callees, the other changes in its file, and any unit code moved between. Everything else runs on the whole diff, so the buckets are as fresh as a full run's. A rebase, a different model, a different review setting or a rebuilt code map carries nothing, and neither does re-running a PR with Force.</p>
     </section>
     <section>
       <h4>Static analysis</h4>

@@ -48,9 +48,13 @@ type PRResult struct {
 	// Overview is nil for results from before overviews, and when it
 	// could not be written; see overview.
 	Overview *triage.Overview `json:"overview,omitempty"`
-	// Sequence is the changed call flow, written the first time the
-	// Sequence tab is opened; see sequence.
+	// Sequence is the changed call flow, written in the background once
+	// the result is saved, or when a result without one is opened; see
+	// sequence.
 	Sequence *triage.Sequence `json:"sequence,omitempty"`
+	// Carried is what this run kept from an earlier run of the same PR
+	// (nil when it reviewed everything itself); see incremental.go.
+	Carried *triage.CarryStats `json:"carried,omitempty"`
 	// Threads is when the PR's review threads were last loaded onto the
 	// units and what was left out; nil for local changes and results
 	// from before threads.
@@ -171,6 +175,7 @@ type jobOptions struct {
 	SummaryModel  string  `json:"summary_model"`
 	ReviewTools   *bool   `json:"review_tools"`
 	Lint          *string `json:"lint"`
+	Incremental   *bool   `json:"incremental"`
 	SummaryLang   *string `json:"summary_lang"`
 	CodeRoot      *string `json:"code_root"`
 	Org           *string `json:"org"`
@@ -199,6 +204,9 @@ func (t *triager) options(jo jobOptions) options {
 	if jo.Lint != nil {
 		o.lint, o.lintSet = strings.TrimSpace(*jo.Lint), true
 	}
+	if jo.Incremental != nil {
+		o.incremental = *jo.Incremental
+	}
 	if jo.SummaryLang != nil {
 		o.summaryLang = strings.TrimSpace(*jo.SummaryLang)
 	}
@@ -214,14 +222,23 @@ func (t *triager) options(jo jobOptions) options {
 	return resolveProviders(o)
 }
 
-func cacheKey(ref triage.PRRef, head string, o options) string {
+// settingsHash is the part of a cache key that depends only on how a run
+// is configured: the prompt version, the providers and models, the review
+// settings and the code-map build. It is kept apart from the change being
+// triaged because two runs of the same PR can only reuse each other's
+// reviews when this matches (see incremental.go).
+func settingsHash(o options) string {
 	lint := ""
 	if o.lintSet {
 		lint = o.lint
 	}
 	parts := []string{triage.PromptVersion, o.classifier, o.classifyModel, o.fallback, o.fallbackModel, o.summarizer, o.summaryModel, o.classifyEffort, o.reviewEffort, fmt.Sprint(o.reviewTools), lint, codeMapVersion(loadCodeMap(o.codemapDir))}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
-	return fmt.Sprintf("%s__%.10s__%x", ref.FileKey(), head, h[:4])
+	return fmt.Sprintf("%x", h[:4])
+}
+
+func cacheKey(ref triage.PRRef, head string, o options) string {
+	return fmt.Sprintf("%s__%.10s__%s", ref.FileKey(), head, settingsHash(o))
 }
 
 // latestCached returns the newest cached result for this PR head from any
@@ -281,14 +298,21 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	if m := loadCodeMap(o.codemapDir); m != nil {
 		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: ref.Repo}
 	}
-	return t.runSource(ctx, key, info, src, pipe, o)
+	carry := t.carryFrom(ctx, key, info.BaseOid, o, jo.Force)
+	pipe.CarryFrom = carry.carryFrom()
+	return t.runSource(ctx, key, info, src, pipe, o, carry)
 }
 
-func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo, src *triage.Source, pipe *triage.Pipeline, o options) (*PRResult, error) {
+func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo, src *triage.Source, pipe *triage.Pipeline, o options, carry *carryPlan) (*PRResult, error) {
 	start := time.Now()
 	units := pipe.Run(ctx, src)
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// The earlier run's verdicts, so the refresh only sends the comments
+	// whose text changed to the model.
+	if prior := carry.threads(units); len(prior) > 0 {
+		triage.AssignThreads(units, prior)
 	}
 	// Before the overview, so confirmed comments are in it.
 	threads := t.refreshThreads(ctx, info, units, o, pipe.Presorter.Policy.Tiers, pipe.Progress)
@@ -299,6 +323,7 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 		Counts: (&triage.Report{Units: units}).Counts(), Threads: threads,
 	}
 	r.Impact, r.Likelihood, r.Attention = (&triage.Report{Units: units}).Scores()
+	r.Carried = triage.CountCarried(units)
 	if pipe.CodeMap != nil {
 		r.CodeMap = codeMapVersion(pipe.CodeMap.Map)
 	}
@@ -335,7 +360,24 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	if err != nil {
 		return nil, err
 	}
-	return r, os.WriteFile(filepath.Join(t.results, key+".json"), b, 0o644)
+	if err := os.WriteFile(filepath.Join(t.results, key+".json"), b, 0o644); err != nil {
+		return r, err
+	}
+	if pipe.Summarizer != nil {
+		t.sequenceAfter(key, o)
+		// The summary language is written with the English, so the PR opens
+		// in it without waiting. A failure only means it is translated when
+		// the PR is opened instead.
+		if !triage.IsEnglish(o.summaryLang) {
+			if pipe.Progress != nil {
+				pipe.Progress("translate", 0, 1)
+			}
+			if _, err := t.translate(ctx, r, o); err != nil {
+				log.Printf("translate %s to %s: %v", key, o.summaryLang, err)
+			}
+		}
+	}
+	return r, nil
 }
 
 func describe(provider, model, effort string) string {
@@ -557,6 +599,7 @@ func newServeHandler(o options) (http.Handler, error) {
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
 			"lint":           !o.lintSet || strings.ToLower(o.lint) != "off",
+			"incremental":    o.incremental,
 			"linters":        triage.KnownLinters(),
 			"summary_lang":   o.summaryLang,
 			"review_budget":  orDefault(o.reviewBudget, triage.DefaultBudget),

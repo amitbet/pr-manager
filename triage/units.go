@@ -54,6 +54,10 @@ type Unit struct {
 	Lint []LintFinding `json:"lint,omitempty"`
 	// Score is how the bucket was picked (nil for units never classified).
 	Score *Score `json:"score,omitempty"`
+	// CarriedFrom is set when the unit kept the review an earlier run of
+	// the same change earned, because neither its diff nor anything it was
+	// judged against moved. It names that run (see PlanCarryOver).
+	CarriedFrom string `json:"carried_from,omitempty"`
 }
 
 func (u *Unit) Diff() string {

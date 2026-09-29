@@ -69,6 +69,17 @@ const actions = {
   },
 };
 
+// carriedLine says how much of this run came from the previous push. The
+// numbers are the point of it: a reader should be able to see that the
+// review they are reading is mostly not new, and how much of it is.
+function carriedLine(r) {
+  const c = r.carried;
+  if (!c?.reused) return "";
+  const total = c.reused + c.reviewed;
+  return `<div class="meta carried-line" title="A unit keeps its review when its own diff, and the units it was judged against (callers, callees, file-mates, code that moved between them), are unchanged. Everything else — units, static analysis, impact, likelihood, classification and scoring — was redone on the whole diff.">
+    Incremental: <b>${c.reused}</b> of ${total} reviewed unit${total === 1 ? "" : "s"} kept from <code>${esc(c.from.slice(0, 8))}</code>, ${c.reviewed} reviewed again</div>`;
+}
+
 function prHeadHTML(r) {
   const pr = r.pr;
   const local = !!pr.local_path;
@@ -86,6 +97,7 @@ function prHeadHTML(r) {
         ${likelihoodPill(r.likelihood, "max likelihood")}
         <span class="dz ${attLevel(r.attention)}" title="highest review attention">max attention ${r.attention}</span>
         ${r.codemap ? `<span title="code map build">map ${esc(r.codemap)}</span>` : ""}</div>` : ""}
+      ${carriedLine(r)}
       ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}</div>` : ""}
     </div>`;
 }
@@ -119,7 +131,7 @@ async function showKey(key) {
   budget.apply(r, S.cfg);
   r.overview_loading = !r.overview; // loadOverview below writes it
   S.result = r;
-  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false });
+  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false, seqView: "after" });
   S.tm.zoom = [];
   loadProgress();
   S.drafts = await api(`${prBase()}/drafts`).catch(() => []);
@@ -132,6 +144,7 @@ async function showKey(key) {
   loadList();
   // The translation takes the overview along, so it waits for one being written.
   loadOverview().finally(() => { if (S.result === r) translate(); });
+  loadSequence(); // before the tab is opened, so it is not waited for there
 }
 
 // openResult shows a result, or the log of the triage that is replacing it

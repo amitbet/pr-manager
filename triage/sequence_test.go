@@ -102,3 +102,50 @@ func TestSeqIDKeepsIdentifiersSimple(t *testing.T) {
 		}
 	}
 }
+
+func TestViewSplitsBeforeAndAfter(t *testing.T) {
+	units := []*Unit{{ID: "u1"}}
+	sq := decodeSequence(map[string]any{
+		"participants": []any{
+			map[string]any{"id": "A", "label": "a"},
+			map[string]any{"id": "B", "label": "b"},
+			map[string]any{"id": "Old", "label": "old cache"},
+			map[string]any{"id": "New", "label": "new cache"},
+		},
+		"steps": []any{
+			map[string]any{"from": "A", "to": "B", "text": "request", "change": "none"},
+			map[string]any{"from": "B", "to": "Old", "text": "read old cache", "change": "removed", "unit": "u1"},
+			map[string]any{"from": "B", "to": "New", "text": "read new cache", "change": "added", "unit": "u1"},
+			map[string]any{"from": "B", "to": "A", "text": "reply", "kind": "return", "change": "none"},
+		},
+	}, units)
+
+	before, after := sq.View(true), sq.View(false)
+	texts := func(v *Sequence) (out []string) {
+		for _, s := range v.Steps {
+			if s.Removed {
+				t.Errorf("a view should not keep Removed: %+v", s)
+			}
+			mark := ""
+			if s.Changed {
+				mark = "*"
+			}
+			out = append(out, mark+s.Text)
+		}
+		return out
+	}
+	if got := strings.Join(texts(before), ","); got != "request,*read old cache,reply" {
+		t.Errorf("before = %s", got)
+	}
+	if got := strings.Join(texts(after), ","); got != "request,*read new cache,reply" {
+		t.Errorf("after = %s", got)
+	}
+	for _, a := range before.Participants {
+		if a.ID == "New" {
+			t.Error("the column only the PR adds should not be drawn before it")
+		}
+	}
+	if m := sq.Mermaid(); strings.Contains(m, "old cache") {
+		t.Errorf("Mermaid should draw the flow after the PR:\n%s", m)
+	}
+}

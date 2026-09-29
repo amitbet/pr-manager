@@ -126,3 +126,41 @@ func TestOverviewWrittenOnceAndTranslated(t *testing.T) {
 		t.Errorf("translation: %+v %v", got, err)
 	}
 }
+
+// A triage translates the result it just made; opening the saved result
+// then finds that translation instead of making another.
+func TestTranslationAtTriageIsFoundOnOpen(t *testing.T) {
+	fake := &countingLLM{}
+	old := newTranslator
+	newTranslator = func(options) (llm.LLMTool, error) { return fake, nil }
+	defer func() { newTranslator = old }()
+
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &triage.Unit{ID: "a.go", File: "a.go", Headline: "Adds retries", Summary: "Retries Fetch.",
+		Focus: []string{"backoff"}, Issues: []triage.Issue{{Title: "No cap", Detail: "Retries forever."}}}
+	r := &PRResult{Key: "k1", PR: &triage.PRInfo{Title: "Retry"}, Budgets: triage.DefaultTierPolicy().OrderedBudgets(),
+		Overview: &triage.Overview{Why: "Flaky links.", How: []string{"Retries Fetch"}},
+		Files: []resultFile{{Units: []resultUnit{{Unit: u}}}}}
+	b, _ := json.Marshal(r)
+	if err := os.WriteFile(filepath.Join(tr.results, "k1.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.translate(context.Background(), r, options{summaryLang: "Hebrew"}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := tr.Load("k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := "Hebrew"
+	got, err := tr.translation(context.Background(), saved, jobOptions{SummaryLang: &s})
+	if err != nil || got.Units["a.go"].Summary != "he:Retries Fetch." || got.Overview.Why != "he:Flaky links." {
+		t.Fatalf("translation: %+v %v", got, err)
+	}
+	if fake.calls != 1 {
+		t.Errorf("calls = %d, want the open to reuse the triage's translation", fake.calls)
+	}
+}

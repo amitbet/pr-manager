@@ -57,7 +57,10 @@ var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 // it once and caching it under results/translations. English is never
 // translated.
 func (t *triager) translation(ctx context.Context, r *PRResult, jo jobOptions) (*translation, error) {
-	o := t.options(jo)
+	return t.translate(ctx, r, t.options(jo))
+}
+
+func (t *triager) translate(ctx context.Context, r *PRResult, o options) (*translation, error) {
 	lang := o.summaryLang
 	if triage.IsEnglish(lang) || strings.EqualFold(lang, r.SummaryLang) {
 		return &translation{Units: map[string]triage.UnitText{}}, nil

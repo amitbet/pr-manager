@@ -133,3 +133,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .tr-en { margin-inline-start: 6px; padding: 0 5px; vertical-align: 1px; font: 600 10px/15px var(--mono); letter-spacing: .03em; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; opacity: .7; }
 .tr-en:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .tr-en.on { opacity: 1; color: #fff; background: var(--accent); border-color: var(--accent); }
+
+/* Incremental review: what this run kept from the previous push. */
+.carried-line { margin-top: 6px; }
+.chip.carried { opacity: .85; }

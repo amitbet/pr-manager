@@ -26,6 +26,11 @@ type Pipeline struct {
 	// ReviewFilter, when set, limits the review stage to selected units.
 	// Classification and scoring still cover the full diff.
 	ReviewFilter func(*Unit) bool
+	// CarryFrom, when set, is asked once the units are built which of
+	// them may keep the review an earlier run of the same change earned
+	// (see PlanCarryOver). Everything else still runs on the whole diff:
+	// only the review calls are saved.
+	CarryFrom func(fresh []*Unit) *ReviewCarry
 	// Progress, if set, is called as units finish in each LLM stage.
 	Progress func(stage string, done, total int)
 	// Warn, if set, gets problems that only degrade the run.
@@ -76,10 +81,19 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	rest := p.Presorter.Presort(units, src)
 	setRelated(units)
 
+	sum := p.summarizer()
+
+	// Asked after the presort, because a rule-skipped unit is not shown to
+	// a reviewer and so cannot cost another unit its review. Pointless
+	// without a reviewer: there would be no review stage to skip.
+	var carry *ReviewCarry
+	if p.CarryFrom != nil && sum != nil {
+		carry = p.CarryFrom(units)
+	}
+
 	// The repository at the PR head is checked out once and shared: the
 	// linters read it, and a reviewer whose provider supports tools reads
 	// it too. It is removed when the run ends.
-	sum := p.summarizer()
 	wantTools := sum != nil && sum.Tools && llm.SupportsWorkspace(sum.LLM)
 	var ws *llm.Workspace
 	if p.Lint.on() || wantTools {
@@ -138,9 +152,17 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 			// Without a workspace the review still runs, just without tools.
 			sum.workspace = ws
 		}
-		var toSummarize []*Unit
+		var toSummarize, carried []*Unit
 		prev := map[*Unit]Bucket{}
 		for _, u := range units {
+			// A unit whose diff and surroundings did not move keeps the
+			// answer an earlier run already paid for.
+			if old := carry.reuse(u); old != nil {
+				prev[u] = u.Decision.Bucket
+				applyCarried(u, old, carry.From)
+				carried = append(carried, u)
+				continue
+			}
 			// Units placed in human before review get review notes, the
 			// rest a summary and a second opinion.
 			if (p.ReviewFilter != nil && p.ReviewFilter(u)) || (p.ReviewFilter == nil && tiers.reviewable(u)) {
@@ -155,7 +177,7 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		groups := reviewGroups(toSummarize, p.Presorter.Policy.Grouping)
 		setGroupContext(groups, units, src.BaseContent, p.Presorter.Policy.ReviewContextChars)
 		runStage(ctx, p, "summarize", limit, groups, (*ReviewGroup).ID, sum.SummarizeGroup)
-		for _, u := range toSummarize {
+		for _, u := range append(toSummarize, carried...) {
 			tiers.afterReview(u, prev[u])
 		}
 	}

@@ -15,7 +15,11 @@ import (
 // belongs to. Rendering is ours, so a step can be clicked through to the
 // change that made it, and a malformed reply cannot produce a broken
 // diagram — only a smaller one.
+//
+// One list of steps holds both sides of the PR: a Removed step exists only
+// before it and a Changed step only after it, so View can draw either.
 type Sequence struct {
+	Version      int        `json:"version,omitempty"` // SequenceVersion when written
 	Title        string     `json:"title"`
 	Participants []SeqActor `json:"participants"`
 	Steps        []SeqStep  `json:"steps"`
@@ -32,16 +36,24 @@ type SeqActor struct {
 	Kind  string `json:"kind,omitempty"`
 }
 
-// SeqStep is one arrow. Changed marks the steps this PR is responsible
-// for, and Unit points at the change unit a reader should open.
+// SeqStep is one arrow. Changed marks a step this PR adds or alters (its
+// new form), Removed one it deletes or replaces (its old form); a step
+// with neither is the same on both sides. Unit points at the change unit
+// a reader should open.
 type SeqStep struct {
 	From    string `json:"from"`
 	To      string `json:"to"`
 	Text    string `json:"text"`
 	Kind    string `json:"kind,omitempty"` // call | return | note
 	Changed bool   `json:"changed,omitempty"`
+	Removed bool   `json:"removed,omitempty"`
 	Unit    string `json:"unit,omitempty"`
 }
+
+// SequenceVersion is bumped when a saved diagram can no longer be drawn
+// the way the UI expects; an older one is written again. 2 added the
+// steps from before the PR.
+const SequenceVersion = 2
 
 const sequenceSystem = `You draw the call flow a pull request changes, for a reviewer who has not read the diff yet.
 
@@ -49,8 +61,9 @@ You get the PR title and description and every change unit with its id, its head
 
 - title: at most 10 words naming the flow, e.g. "Snapshot write during WAL replay".
 - participants: 2 to 8 columns, in the order the flow reaches them. Use the real names from the code (a type, a service, a file, an external system), not roles like "System". id is a short identifier with no spaces; label is what to show.
-- steps: 3 to 24 arrows in order. from and to are participant ids. text is at most 10 words saying what happens, naming the function where it helps. kind is call for a request, return for a reply or result, note for something that happens inside one participant (from and to are then the same).
-- Set changed=true on the steps this PR adds or alters, and put the id of the change unit responsible in unit, copied exactly from the list. Leave unit empty when no single unit owns the step. Unchanged steps are what gives the changed ones their context, so include them.
+- steps: 3 to 32 arrows in order. from and to are participant ids. text is at most 10 words saying what happens, naming the function where it helps. kind is call for a request, return for a reply or result, note for something that happens inside one participant (from and to are then the same).
+- change says how the PR touches a step: added for a step the PR adds or alters, in its new form; removed for a step the PR deletes or replaces, in its old form; none for a step that is the same before and after. A step the PR alters appears twice, its removed old form right before its added new form. Leaving out the added steps must give the flow as it was before the PR, and leaving out the removed ones the flow after it, so both read as a whole flow.
+- On added and removed steps, put the id of the change unit responsible in unit, copied exactly from the list. Leave unit empty when no single unit owns the step. Unchanged steps are what gives the others their context, so include them.
 - note: one short line on what a reviewer should watch in this flow, or empty.
 - problem: fill this in instead of the rest when the PR has no call flow to draw (a docs change, a formatting pass, unrelated edits across the repo). Say so in one line.
 
@@ -78,18 +91,18 @@ var sequenceTool = llm.ToolDefinition{
 			},
 			"steps": map[string]any{
 				"type":        "array",
-				"description": "3-24 arrows in order.",
+				"description": "3-32 arrows in order, both sides of the PR in one list.",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"from":    map[string]any{"type": "string", "description": "Participant id."},
-						"to":      map[string]any{"type": "string", "description": "Participant id; same as from for a note."},
-						"text":    map[string]any{"type": "string", "description": "At most 10 words."},
-						"kind":    map[string]any{"type": "string", "enum": []string{"call", "return", "note"}},
-						"changed": map[string]any{"type": "boolean", "description": "True when this PR adds or alters the step."},
-						"unit":    map[string]any{"type": "string", "description": "The change unit id responsible, copied exactly. Empty when none is."},
+						"from":   map[string]any{"type": "string", "description": "Participant id."},
+						"to":     map[string]any{"type": "string", "description": "Participant id; same as from for a note."},
+						"text":   map[string]any{"type": "string", "description": "At most 10 words."},
+						"kind":   map[string]any{"type": "string", "enum": []string{"call", "return", "note"}},
+						"change": map[string]any{"type": "string", "enum": []string{"none", "added", "removed"}, "description": "added: new or altered by the PR (new form). removed: deleted or replaced by it (old form). none: the same before and after."},
+						"unit":   map[string]any{"type": "string", "description": "The change unit id responsible, copied exactly. Empty when none is."},
 					},
-					"required": []string{"from", "to", "text"},
+					"required": []string{"from", "to", "text", "change"},
 				},
 			},
 			"note":    map[string]any{"type": "string", "description": "One line on what to watch, or empty."},
@@ -101,7 +114,7 @@ var sequenceTool = llm.ToolDefinition{
 
 const (
 	maxSeqActors = 8
-	maxSeqSteps  = 24
+	maxSeqSteps  = 32
 	seqUnitsChar = 20000
 )
 
@@ -117,6 +130,7 @@ func WriteSequence(ctx context.Context, l llm.LLMTool, pr *PRInfo, units []*Unit
 		return nil, fmt.Errorf("sequence: %w", err)
 	}
 	sq := decodeSequence(args, units)
+	sq.Version = SequenceVersion
 	if sq.Problem == "" && len(sq.Steps) == 0 {
 		return nil, fmt.Errorf("sequence: empty reply")
 	}
@@ -164,7 +178,15 @@ func decodeSequence(args map[string]any, units []*Unit) *Sequence {
 			Kind: strings.ToLower(seqID(str(m["kind"]))),
 			Unit: strings.TrimSpace(str(m["unit"])),
 		}
-		s.Changed, _ = m["changed"].(bool)
+		switch strings.ToLower(strings.TrimSpace(str(m["change"]))) {
+		case "added":
+			s.Changed = true
+		case "removed":
+			s.Removed = true
+		case "none":
+		default:
+			s.Changed, _ = m["changed"].(bool)
+		}
 		if !byID[s.From] || !byID[s.To] || s.Text == "" {
 			continue
 		}
@@ -211,10 +233,41 @@ func seqID(s string) string {
 func str(v any) string { s, _ := v.(string); return s }
 func list(v any) []any { l, _ := v.([]any); return l }
 
-// Mermaid renders the diagram as Mermaid text, for pasting into a PR
-// description or an issue. Changed steps are wrapped in a rect so they
-// stand out where nobody can click them.
+// View is the flow on one side of the PR: before it, without the steps it
+// adds and with the ones it removes marked Changed, or after it, without
+// the removed steps. Columns no step of that side uses are left out.
+func (sq *Sequence) View(before bool) *Sequence {
+	if sq == nil {
+		return nil
+	}
+	v := *sq
+	v.Steps, v.Participants = nil, nil
+	used := map[string]bool{}
+	for _, s := range sq.Steps {
+		if before && s.Changed || !before && s.Removed {
+			continue
+		}
+		if before {
+			s.Changed = s.Removed
+		}
+		s.Removed = false
+		v.Steps = append(v.Steps, s)
+		used[s.From], used[s.To] = true, true
+	}
+	for _, a := range sq.Participants {
+		if used[a.ID] {
+			v.Participants = append(v.Participants, a)
+		}
+	}
+	return &v
+}
+
+// Mermaid renders the diagram after the PR as Mermaid text, for pasting
+// into a PR description or an issue; View(true).Mermaid() is the one
+// before it. Changed steps are wrapped in a rect so they stand out where
+// nobody can click them.
 func (sq *Sequence) Mermaid() string {
+	sq = sq.View(false)
 	if sq == nil || len(sq.Steps) == 0 {
 		return ""
 	}

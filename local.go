@@ -207,11 +207,15 @@ func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 	return &localSnapshot{info: info, src: src, raw: raw}, nil
 }
 
+// localCacheKey names a run of a local checkout: which checkout, what the
+// change was, and how it was triaged. The three are kept apart so runs of
+// the same checkout under the same settings can be found for each other;
+// the settings part used to be hashed from a string holding the head
+// commit, which made every commit look like different settings.
 func localCacheKey(s *localSnapshot, o options) string {
 	pathHash := sha256.Sum256([]byte(s.info.LocalPath))
 	diffHash := sha256.Sum256([]byte(s.info.BaseOid + "|" + s.info.HeadOid + "|" + s.raw))
-	settings := sha256.Sum256([]byte(cacheKey(s.info.PRRef, s.info.HeadOid, o)))
-	return fmt.Sprintf("local__%x__%x__%x", pathHash[:5], diffHash[:6], settings[:4])
+	return fmt.Sprintf("local__%x__%x__%s", pathHash[:5], diffHash[:6], settingsHash(o))
 }
 
 func readLocalFile(dir, path string) ([]byte, error) {
@@ -257,7 +261,11 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	if m := loadCodeMap(o.codemapDir); m != nil {
 		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: s.info.Repo}
 	}
-	return t.runSource(ctx, key, s.info, s.src, pipe, o)
+	// A local branch moves the same way a PR does: a commit or a save
+	// changes a few units and leaves the rest as they were.
+	carry := t.carryFrom(ctx, key, s.info.BaseOid, o, jo.Force)
+	pipe.CarryFrom = carry.carryFrom()
+	return t.runSource(ctx, key, s.info, s.src, pipe, o, carry)
 }
 
 func ensureLocalCodeMap(ctx context.Context, o options, info *triage.PRInfo, progress func(string, int, int)) error {

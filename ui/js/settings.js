@@ -210,6 +210,7 @@ export function jobSettings() {
   for (const k of ["classifier", "classify_model", "summarizer", "summary_model"]) body[k] = $("#" + k).value.trim();
   body.review_tools = $("#review_tools").checked;
   body.lint = $("#lint").checked ? "auto" : "off";
+  body.incremental = $("#incremental").checked;
   // Only sent when picked, so the server's -summary-lang stays the default.
   const lang = $("#summary_lang").value;
   if (lang) body.summary_lang = lang;
@@ -250,6 +251,9 @@ export function initSettings(changed, langChanged) {
   const lint = $("#lint");
   lint.checked = saved("lint") ? saved("lint") === "1" : S.cfg?.lint !== false;
   lint.onchange = () => save("lint", lint.checked ? "1" : "0");
+  const incr = $("#incremental");
+  incr.checked = saved("incremental") ? saved("incremental") === "1" : S.cfg?.incremental !== false;
+  incr.onchange = () => save("incremental", incr.checked ? "1" : "0");
   const recursive = $("#recursive_fix");
   const location = $("#fix_location");
   location.value = saved("fix_location") || S.cfg?.fix_location || "worktree";

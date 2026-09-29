@@ -20,6 +20,8 @@
 .seq-note { fill: var(--panel, rgba(127, 127, 127, .10)); stroke: var(--border); }
 
 .seq-band { fill: rgba(255, 196, 0, .14); }
+.seq.before .seq-band { fill: rgba(230, 80, 60, .14); }
+.seq.before .seq-step.linked:hover .seq-band, .seq.before .seq-step.linked:focus .seq-band { fill: rgba(230, 80, 60, .26); }
 .seq-step.changed text { fill: var(--fg); font-weight: 600; }
 .seq-step.changed .seq-arrow { stroke: var(--fg); stroke-width: 1.8; }
 .seq-step.linked { cursor: pointer; }

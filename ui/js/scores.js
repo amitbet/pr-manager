@@ -47,10 +47,17 @@ export function attentionPill(u) {
   return `<span class="dz ${attLevel(u.attention)}" title="${esc(lines.join("\n") || "review found no issues")}">attention ${u.attention}${what ? ` · ${what}` : ""}</span>`;
 }
 
+// carriedChip marks a unit that kept the review an earlier run of the
+// same change earned, because neither its diff nor anything it was judged
+// against moved.
+export const carriedChip = (u) => u.carried_from
+  ? `<span class="chip carried" title="Its diff, and the units it was judged against, are the same as at ${esc(u.carried_from.slice(0, 8))}, so this review was not paid for again.">kept from ${esc(u.carried_from.slice(0, 8))}</span>` : "";
+
 // decisionChips are the score and "escalated" markers for a unit.
 export function decisionChips(u) {
   const d = u.decision, s = u.score;
   return (s ? `<span class="chip" title="${esc(s.why)}">score ${s.total}${s.pin || s.comment_pin ? " · pinned" : ""}</span>` : "") +
+    carriedChip(u) +
     (d.escalated?.length ? `<span class="esc-chip" title="${esc(d.escalated.join("\n"))}">↑ escalated</span>` : "");
 }
 

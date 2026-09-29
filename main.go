@@ -39,6 +39,9 @@ type options struct {
 	codeRoot, org                          string // code map sources, see codemap_build.go
 	classifyEffort, reviewEffort           string
 	reviewTools                            bool
+	// incremental lets a re-run of the same PR keep the review of units
+	// whose diff and surroundings did not move.
+	incremental bool
 	// groupReview is only consulted when the flag was given; otherwise
 	// grouping follows the policy file.
 	groupReview, groupReviewSet bool
@@ -104,6 +107,7 @@ func main() {
 	fs.StringVar(&o.classifyEffort, "classify-effort", "low", "reasoning effort for classify (openai, codex, claude-code): none|minimal|low|medium|high|xhigh ('' = model default)")
 	fs.StringVar(&o.reviewEffort, "review-effort", "medium", "reasoning effort for summarize/review (openai, codex, claude-code; '' = model default)")
 	fs.BoolVar(&o.reviewTools, "review-tools", true, "let the codex/claude-code reviewer read the repo at the PR head (a git worktree) and the Go module cache; slower, catches claims about code outside the diff (-review-tools=false to turn off)")
+	fs.BoolVar(&o.incremental, "incremental", true, "when a PR is triaged again after a push, keep the review of every unit whose diff, and whose callers, callees, file-mates and moved code, did not change; the rest of the pipeline still runs on the whole diff (-incremental=false, or -force, reviews everything)")
 	fs.BoolVar(&o.groupReview, "group-review", true, "review related change units together in one call instead of one call each: fewer, larger review tasks and much less repeated context (-group-review=false to turn off; grouping in .triage.yaml overrides when this flag is not given)")
 	fs.StringVar(&o.lint, "lint", "auto", "static analysis over the lines the PR adds, fed to the review prompt, the likelihood score and the Issues tab: auto (the linters the repository is configured for and that are installed, plus the built-in secret scan), off, or a comma-separated list of "+strings.Join(triage.KnownLinters(), ",")+" (lint in .triage.yaml decides when this flag is not given)")
 	fs.StringVar(&o.summaryLang, "summary-lang", "", "language to translate summaries, review notes and issue text into, e.g. Hebrew or Japanese (default English: no translation)")
