@@ -107,6 +107,28 @@ func (r *reviews) fileLines(ref triage.PRRef, sha, path string) ([]string, error
 	return lines, nil
 }
 
+// readCheckoutFile is readLocalFile with the checkout's root resolved
+// first: readLocalFile compares the resolved file against the root, so an
+// unresolved root under a symlink (/var on macOS) rejects every file.
+func readCheckoutFile(dir, path string) ([]byte, error) {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	return readLocalFile(root, path)
+}
+
+// readFixFile reads path from a fix checkout. ok is false, with no error,
+// when the checkout no longer exists, so the caller can fall back to the
+// PR head.
+func readFixFile(dir, path string) (b []byte, ok bool, err error) {
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return nil, false, nil
+	}
+	b, err = readCheckoutFile(dir, path)
+	return b, err == nil, err
+}
+
 func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 	const pr = "/api/prs/{host}/{owner}/{repo}/{number}"
 	const local = "/api/local/{key}"
@@ -143,18 +165,23 @@ func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 			return
 		}
 		var b []byte
-		if req.URL.Query().Get("side") == "base" {
+		fixed := false
+		if res.LocalFixDir != "" && req.URL.Query().Get("side") != "base" {
+			// A fix checkout that was cleaned up falls back to the head.
+			b, fixed, err = readFixFile(res.LocalFixDir, path)
+		}
+		switch {
+		case fixed || err != nil:
+		case req.URL.Query().Get("side") == "base":
 			var s string
 			s, err = triage.Git(res.PR.LocalPath, "show", res.PR.BaseOid+":"+path)
 			b = []byte(s)
-		} else if res.LocalFixDir != "" {
-			b, err = readLocalFile(res.LocalFixDir, path)
-		} else if res.PR.Rev != "" {
+		case res.PR.Rev != "":
 			var s string
 			s, err = triage.Git(res.PR.LocalPath, "show", res.PR.HeadOid+":"+path)
 			b = []byte(s)
-		} else {
-			b, err = readLocalFile(res.PR.LocalPath, path)
+		default:
+			b, err = readCheckoutFile(res.PR.LocalPath, path)
 		}
 		if err != nil {
 			writeErr(w, 404, err)
@@ -260,11 +287,34 @@ func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 			writeErr(w, 404, err)
 			return
 		}
+		if res.PR == nil {
+			writeErr(w, 404, errors.New("result has no PR"))
+			return
+		}
+		path := req.URL.Query().Get("path")
 		sha := res.PR.HeadOid
 		if req.URL.Query().Get("side") == "base" {
 			sha = res.PR.BaseOid
+		} else if res.LocalFixDir != "" {
+			// A fixed result's head is the fix checkout, not the PR head
+			// blob: it has the fix's edits and the files it added. It is not
+			// cached, as a follow-up fix rewrites it in place.
+			if !safeRepoPath(path) {
+				writeErr(w, 400, errors.New("bad file path"))
+				return
+			}
+			b, ok, err := readFixFile(res.LocalFixDir, path)
+			if err != nil {
+				writeErr(w, 404, err)
+				return
+			}
+			if ok {
+				writeJSON(w, 200, map[string]any{"lines": strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")})
+				return
+			}
+			// The fix checkout was cleaned up: the PR head is the next best.
 		}
-		lines, err := r.fileLines(ref, sha, req.URL.Query().Get("path"))
+		lines, err := r.fileLines(ref, sha, path)
 		if err != nil {
 			writeErr(w, 404, err)
 			return

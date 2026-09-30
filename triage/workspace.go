@@ -12,9 +12,9 @@ import (
 
 // reviewWorkspace gives the reviewer the repository at the PR head: the
 // saved head directory when there is one, else a detached git worktree of
-// src.Head (removed by the returned cleanup). Go repos also get the module
-// cache so library behavior can be checked instead of guessed. nil when
-// neither is available.
+// src.Snapshot or src.Head (removed by the returned cleanup). Go repos
+// also get the module cache so library behavior can be checked instead of
+// guessed. nil when neither is available.
 func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 	noop := func() {}
 	var ws *llm.Workspace
@@ -22,7 +22,11 @@ func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 	switch {
 	case src.HeadDir != "":
 		ws = &llm.Workspace{Dir: src.HeadDir}
-	case src.Dir != "" && src.Head != "":
+	case src.Dir != "" && (src.Snapshot != "" || src.Head != ""):
+		rev := src.Head
+		if src.Snapshot != "" {
+			rev = src.Snapshot
+		}
 		dir, err := os.MkdirTemp("", "pr-manager-head-")
 		if err != nil {
 			return nil, noop, err
@@ -32,7 +36,7 @@ func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 		if r, err := filepath.EvalSymlinks(dir); err == nil {
 			dir = r
 		}
-		if _, err := Git(src.Dir, "worktree", "add", "--detach", dir, src.Head); err != nil {
+		if _, err := Git(src.Dir, "worktree", "add", "--detach", dir, rev); err != nil {
 			os.RemoveAll(dir)
 			return nil, noop, err
 		}
@@ -42,11 +46,13 @@ func reviewWorkspace(src *Source) (*llm.Workspace, func(), error) {
 			os.RemoveAll(dir)
 		}
 		// The PR head is untrusted: its agent files must not reach the
-		// reviewer as the project's instructions. A saved head directory
-		// (the user's own working tree) is left as it is.
-		if err := StripAgentFiles(dir); err != nil {
-			cleanup()
-			return nil, noop, err
+		// reviewer as the project's instructions. A snapshot of the user's
+		// own working tree, like a saved head directory, is left as it is.
+		if src.Snapshot == "" {
+			if err := StripAgentFiles(dir); err != nil {
+				cleanup()
+				return nil, noop, err
+			}
 		}
 	default:
 		return nil, noop, nil

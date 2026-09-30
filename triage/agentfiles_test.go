@@ -101,3 +101,42 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 	}
 	return out
 }
+
+// A snapshot of the user's working tree is checked out in place of Head,
+// whatever the checkout holds by then, and keeps its agent files.
+func TestReviewWorkspaceSnapshot(t *testing.T) {
+	repo := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func() string {
+		gitRun(t, repo, "add", "-A")
+		gitRun(t, repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "c")
+		return strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
+	}
+	gitRun(t, repo, "init", "-q")
+	write("CLAUDE.md", "the user's own\n")
+	write("x.go", "package x\n\nconst X = 1\n")
+	head := commit()
+	write("x.go", "package x\n\nconst X = 2\n")
+	snapshot := commit()
+	write("x.go", "package x\n\nconst X = 3\n") // saved during the review
+
+	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: head, Snapshot: snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if b, err := os.ReadFile(filepath.Join(ws.Dir, "x.go")); err != nil || !strings.Contains(string(b), "X = 2") {
+		t.Fatalf("x.go in the workspace: %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(ws.Dir, "CLAUDE.md")); err != nil {
+		t.Errorf("CLAUDE.md removed from the snapshot: %v", err)
+	}
+	if ws.Dir == repo {
+		t.Error("workspace is the live checkout")
+	}
+}

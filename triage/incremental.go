@@ -2,6 +2,7 @@ package triage
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -174,23 +175,24 @@ func diffBody(u *Unit) string {
 }
 
 // relIndex answers "was this unit judged against something that changed?"
-// over a fixed set of changed units, with each one's diff, name and moved
+// over a fixed set of changed units, with each one's diff, names and moved
 // lines worked out once.
 type relIndex struct {
 	units []*Unit
 	text  map[*Unit]changed
-	name  map[*Unit]string
+	names map[*Unit][]depName
 	diff  map[*Unit]string
+	code  map[*Unit]string
 }
 
 func newRelIndex(moved []*Unit) *relIndex {
-	x := &relIndex{text: map[*Unit]changed{}, name: map[*Unit]string{}, diff: map[*Unit]string{}}
+	x := &relIndex{text: map[*Unit]changed{}, names: map[*Unit][]depName{}, diff: map[*Unit]string{}, code: map[*Unit]string{}}
 	for _, o := range moved {
 		if !reviewable(o) {
 			continue // generated and formatting units are not shown to a reviewer
 		}
 		x.units = append(x.units, o)
-		x.text[o], x.name[o], x.diff[o] = changedText(o), shortName(o.Symbol), o.Diff()
+		x.text[o], x.names[o], x.diff[o], x.code[o] = changedText(o), declaredNames(o), o.Diff(), codeText(o)
 	}
 	sort.SliceStable(x.units, func(i, j int) bool { return x.units[i].ID < x.units[j].ID })
 	return x
@@ -201,8 +203,12 @@ func newRelIndex(moved []*Unit) *relIndex {
 // context (see rankRelated): code that moved between the two, either one
 // naming the other, and the same file. A change to any of them can flip
 // a verdict on lines that did not themselves move.
+//
+// The naming link is stricter than the prompt's: rankRelated only orders
+// context, so it can afford to ignore names too short to tell apart, but a
+// missed link here keeps a stale verdict. See refersTo.
 func (x *relIndex) related(u *Unit) (string, bool) {
-	uText, uName, uDiff := changedText(u), shortName(u.Symbol), u.Diff()
+	uText, uNames, uDiff, uCode := changedText(u), declaredNames(u), u.Diff(), codeText(u)
 	for _, o := range x.units {
 		if o.ID == u.ID {
 			continue
@@ -213,7 +219,7 @@ func (x *relIndex) related(u *Unit) (string, bool) {
 		if n, _ := overlap(x.text[o].added, uText.removed); n >= minMovedLines {
 			return fmt.Sprintf("%s changed, and code moved between them", o.ID), true
 		}
-		if mentions(uDiff, x.name[o]) || mentions(x.diff[o], uName) {
+		if refersToAny(uDiff, uCode, x.names[o]) || refersToAny(x.diff[o], x.code[o], uNames) {
 			return fmt.Sprintf("%s changed, and the two name each other", o.ID), true
 		}
 		if o.File == u.File {
@@ -221,6 +227,139 @@ func (x *relIndex) related(u *Unit) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// depName is a name other code can reach a unit's declaration by. A member
+// (a method) is only reached through a selector, x.name.
+type depName struct {
+	name   string
+	member bool
+}
+
+var (
+	// topDeclRe is an unindented declaration line in the common languages:
+	// what a unit declares when its symbol does not say (a Go file that no
+	// longer parses, a file split without declarations).
+	topDeclRe = regexp.MustCompile(`^(?:export\s+)?(?:default\s+)?(?:pub\s+)?(?:async\s+)?(?:func|var|const|let|type|def|class|fn|interface|struct|enum)\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)`)
+	// blockSpecRe is a spec line of a Go var or const block, which names
+	// the unit after its first spec only: "\tname = ...", "\ta, b int".
+	blockSpecRe = regexp.MustCompile(`^\t([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*(?:=[^=]|=$|\s+[A-Za-z_*\[])`)
+)
+
+// declaredNames lists the names a unit declares, for dependency links: its
+// symbol's short name, plus the top-level declarations its changed lines
+// add or remove, and every spec a changed line of a var or const block
+// touches. A declaration a push removes counts as much as one it adds.
+func declaredNames(u *Unit) []depName {
+	var out []depName
+	seen := map[string]bool{}
+	add := func(n string, member bool) {
+		if n != "" && identRe.MatchString(n) && !seen[n] {
+			seen[n] = true
+			out = append(out, depName{n, member})
+		}
+	}
+	add(shortName(u.Symbol), strings.Contains(u.Symbol, "."))
+	block := strings.HasPrefix(u.Symbol, "var ") || strings.HasPrefix(u.Symbol, "const ")
+	for _, h := range u.Hunks {
+		for _, l := range h.Lines {
+			if len(l) < 2 || (l[0] != '+' && l[0] != '-') {
+				continue
+			}
+			if m := topDeclRe.FindStringSubmatch(l[1:]); m != nil {
+				add(m[1], strings.HasPrefix(l[1:], "func (") || strings.HasPrefix(l[1:], "func("))
+			}
+			if !block {
+				continue
+			}
+			if m := blockSpecRe.FindStringSubmatch(l[1:]); m != nil {
+				for _, n := range strings.Split(m[1], ",") {
+					add(strings.TrimSpace(n), false)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func refersToAny(diff, code string, names []depName) bool {
+	for _, n := range names {
+		if refersTo(diff, code, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// refersTo reports whether a diff uses n. A name of three characters or
+// more counts anywhere in diff as a whole word, as the prompt ranks it
+// (see mentions). A shorter one (db, r, ID) would match half of any
+// diff that way, and the prompt ignores it for that reason, but a
+// dependency on it is as real as any other. So it counts only in code,
+// the diff lines with their comments cut (see codeText): a member only as
+// a selector (.ID), anything else as a whole word that the same code does
+// not declare as a local (i := 0, for i, let r), which is what nearly
+// every short word in a function body is.
+func refersTo(diff, code string, n depName) bool {
+	if len(n.name) >= 3 {
+		return mentions(diff, n.name)
+	}
+	if n.member {
+		return hasWord(code, n.name, func(i int) bool { return i > 0 && code[i-1] == '.' })
+	}
+	return hasWord(code, n.name, nil) && !declaresLocal(code, n.name)
+}
+
+// hasWord reports whether text holds name as a whole word at an offset
+// keep accepts (any, when keep is nil).
+func hasWord(text, name string, keep func(i int) bool) bool {
+	for off := 0; ; {
+		i := strings.Index(text[off:], name)
+		if i < 0 {
+			return false
+		}
+		i += off
+		end := i + len(name)
+		if (i == 0 || !isWordByte(text[i-1])) && (end == len(text) || !isWordByte(text[end])) && (keep == nil || keep(i)) {
+			return true
+		}
+		off = i + 1
+	}
+}
+
+// declaresLocal reports whether code declares name for itself: a Go short
+// declaration, a var, let or const, or a Python for. Such code refers to its own
+// name, not to a package-level one of the same spelling.
+func declaresLocal(code, name string) bool {
+	re := regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_.])(?:(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*` + name + `(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*:=|for\s+` + name + `\s+in\b|(?:var|let|const)\s+` + name + `(?:[^A-Za-z0-9_.]|$))`)
+	return re.MatchString(code)
+}
+
+// codeText is a unit's diff lines without their +/-/space markers, hunk
+// headers or comments: the code a short name has to appear in to count.
+// A comment is a line that starts one (//, /*, "* ", "# "), or the tail of a
+// line after " //" or " # ".
+func codeText(u *Unit) string {
+	var sb strings.Builder
+	for _, h := range u.Hunks {
+		for _, l := range h.Lines {
+			if len(l) < 2 {
+				continue
+			}
+			t := strings.TrimSpace(l[1:])
+			if strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") || t == "*" || strings.HasPrefix(t, "* ") || strings.HasPrefix(t, "*/") || t == "#" || strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "#!") {
+				continue
+			}
+			for _, c := range []string{" //", "\t//", " # ", "\t# "} {
+				if i := strings.Index(t, c); i >= 0 {
+					t = t[:i]
+				}
+			}
+			sb.WriteString(t)
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
 }
 
 // applyCarried gives u the review an earlier run wrote for it. The bucket

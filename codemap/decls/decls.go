@@ -18,7 +18,7 @@ type Decl struct {
 // IsTSPath reports whether the indexer parses p as TypeScript/JavaScript.
 func IsTSPath(p string) bool {
 	switch path.Ext(p) {
-	case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs":
+	case ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs":
 		return true
 	}
 	return false

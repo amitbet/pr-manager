@@ -86,6 +86,105 @@ func TestInspectLocalIncludesWorkingTreeWithoutChangingIndex(t *testing.T) {
 	}
 }
 
+// A local review reads the working tree as it was when the diff was
+// taken: a save during the review changes neither the content the prompt
+// and policy read nor the commit the reviewer's workspace checks out.
+func TestInspectLocalFreezesWorkingTree(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitTest(t, root, "init", "--bare", remote)
+	repo := filepath.Join(root, "repo")
+	gitTest(t, root, "init", "-b", "main", repo)
+	gitTest(t, repo, "config", "user.name", "Test")
+	gitTest(t, repo, "config", "user.email", "test@example.com")
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("x.go", "package x\n\nconst X = 1\n")
+	write(".gitignore", "*.log\n")
+	gitTest(t, repo, "add", "-A")
+	gitTest(t, repo, "commit", "-m", "initial")
+	gitTest(t, repo, "remote", "add", "origin", remote)
+	gitTest(t, repo, "push", "-u", "origin", "main")
+	gitTest(t, repo, "switch", "-c", "feature")
+	write("x.go", "package x\n\nconst X = 2\n")
+	write("new.go", "package x\n")
+	write("debug.log", "ignored\n")
+	head := gitTest(t, repo, "rev-parse", "HEAD")
+	index := gitTest(t, repo, "ls-files", "--stage")
+
+	snap, err := inspectLocal(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := snap.src
+	resolved, _ := filepath.EvalSymlinks(repo)
+	if src.Snapshot == "" || src.Snapshot == head || src.Head != head || src.HeadDir != "" || snap.info.LocalPath != resolved {
+		t.Fatalf("source: snapshot %q head %q headDir %q path %q", src.Snapshot, src.Head, src.HeadDir, snap.info.LocalPath)
+	}
+	if !strings.Contains(snap.raw, "+const X = 2") || !strings.Contains(snap.raw, "new.go") || strings.Contains(snap.raw, "debug.log") {
+		t.Fatalf("diff: %s", snap.raw)
+	}
+	key := localCacheKey(snap, options{})
+
+	write("x.go", "package x\n\nconst X = 3\n")
+	write("new.go", "package y\n")
+
+	if b, err := src.Content("x.go"); err != nil || !strings.Contains(string(b), "X = 2") {
+		t.Fatalf("content after save: %q, %v", b, err)
+	}
+	if b, err := src.Content("new.go"); err != nil || string(b) != "package x\n" {
+		t.Fatalf("untracked content after save: %q, %v", b, err)
+	}
+	if _, err := src.Content("debug.log"); err == nil {
+		t.Fatal("ignored file in the snapshot")
+	}
+	// The reviewer's workspace is a worktree of the snapshot.
+	if got := gitTest(t, repo, "show", src.Snapshot+":x.go"); !strings.Contains(got, "X = 2") {
+		t.Fatalf("snapshot x.go: %q", got)
+	}
+	if got := gitTest(t, repo, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD moved to %s", got)
+	}
+	if got := gitTest(t, repo, "ls-files", "--stage"); got != index {
+		t.Fatal("inspection changed the repository index")
+	}
+	if b, _ := os.ReadFile(filepath.Join(repo, "x.go")); !strings.Contains(string(b), "X = 3") {
+		t.Fatalf("working tree: %q", b)
+	}
+
+	// Inspecting again sees the save, under another key; the same tree
+	// makes the same snapshot.
+	again, err := inspectLocal(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(again.raw, "+const X = 3") || localCacheKey(again, options{}) == key {
+		t.Fatalf("after save: %s", again.raw)
+	}
+	same, err := inspectLocal(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.src.Snapshot != again.src.Snapshot {
+		t.Fatalf("snapshot not stable: %s, %s", same.src.Snapshot, again.src.Snapshot)
+	}
+
+	// With nothing uncommitted the snapshot is the head commit itself.
+	gitTest(t, repo, "add", "-A")
+	gitTest(t, repo, "commit", "-m", "the rest")
+	clean, err := inspectLocal(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.src.Snapshot != clean.src.Head {
+		t.Fatalf("clean snapshot %s, head %s", clean.src.Snapshot, clean.src.Head)
+	}
+}
+
 func TestLocalRepoRef(t *testing.T) {
 	for _, tc := range []struct{ remote, host, owner, repo string }{
 		{"https://github.com/acme/widget.git", "", "acme", "widget"},

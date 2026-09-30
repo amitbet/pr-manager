@@ -61,8 +61,30 @@ func loadTSConfig(repoRoot string) (baseURL string, paths [][2]string) {
 
 var tsExts = []string{"", ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"}
 
+// tsJSExtSubst maps an emitted JS extension to the TS sources it may be
+// compiled from, in TypeScript's lookup order. Node ESM projects
+// (moduleResolution node16/nodenext/bundler) import siblings by their
+// output name: "./foo.js" names foo.ts.
+var tsJSExtSubst = map[string][]string{
+	".js":  {".ts", ".tsx", ".d.ts"},
+	".jsx": {".tsx", ".d.ts"},
+	".mjs": {".mts", ".d.mts"},
+	".cjs": {".cts", ".d.cts"},
+}
+
 func (r *tsResolver) tryFile(p string) string {
 	p = path.Clean(p)
+	if _, ok := r.files[p]; ok {
+		return p // a real .js file wins over its TS namesake
+	}
+	if ext := path.Ext(p); tsJSExtSubst[ext] != nil {
+		stem := strings.TrimSuffix(p, ext)
+		for _, e := range tsJSExtSubst[ext] {
+			if _, ok := r.files[stem+e]; ok {
+				return stem + e
+			}
+		}
+	}
 	for _, e := range tsExts {
 		if _, ok := r.files[p+e]; ok {
 			return p + e

@@ -384,3 +384,68 @@ func TestPipelineCarriesReviewsAcrossAPush(t *testing.T) {
 		t.Errorf("an unchanged push made %d review calls, want 0", noneCalls)
 	}
 }
+
+// A name of one or two characters is still a dependency: a caller that
+// reads db.Limit was judged against the value db was built with.
+func TestCarryOverReviewsAgainWhenAShortNamedUnitChanges(t *testing.T) {
+	a := carryUnit("a.go:F", "a.go", "F", "+\treturn db.Limit")
+	b := carryUnit("b.go:var db", "b.go", "var db", "+var db = Config{Limit: 10}")
+	fa, fb := clone(a), clone(b)
+	fb.Hunks[0].Lines = []string{"+var db = Config{Limit: 0}"}
+	c := PlanCarryOver([]*Unit{fa, fb}, []*Unit{a, b}, "prev")
+	if _, ok := c.Reuse["a.go:F"]; ok {
+		t.Fatal("a caller of db kept its review although db changed")
+	}
+	if !strings.Contains(c.Why["a.go:F"], "name each other") {
+		t.Errorf("why = %q", c.Why["a.go:F"])
+	}
+}
+
+func TestCarryOverFollowsEverySpecOfAVarBlock(t *testing.T) {
+	a := carryUnit("a.go:F", "a.go", "F", "+\treturn n * 2")
+	b := carryUnit("b.go:var db", "b.go", "var db", " var (", " \tdb = open()", "+\tn  = 10", " )")
+	fa, fb := clone(a), clone(b)
+	fb.Hunks[0].Lines = []string{" var (", " \tdb = open()", "+\tn  = 0", " )"}
+	c := PlanCarryOver([]*Unit{fa, fb}, []*Unit{a, b}, "prev")
+	if _, ok := c.Reuse["a.go:F"]; ok {
+		t.Fatal("a reader of n kept its review although the block changed n")
+	}
+}
+
+// Short words are everywhere in code. Only a real use of the changed
+// declaration costs a review: not a comment, not a local of the same
+// spelling, not a different identifier, and a short method only through a
+// selector.
+func TestCarryOverShortNamesDoNotLinkUnrelatedCode(t *testing.T) {
+	cases := []struct {
+		name    string
+		changer *Unit
+		to      string
+		keeper  []string
+		keep    bool
+	}{
+		{"comment only", carryUnit("b.go:var r", "b.go", "var r", "+var r = 1"), "+var r = 2",
+			[]string{"+\t// r is read elsewhere", "+\tx := load() // see r"}, true},
+		{"local of the same name", carryUnit("b.go:var i", "b.go", "var i", "+var i = 1"), "+var i = 2",
+			[]string{"+\tfor i := 0; i < n; i++ {", "+\t\tsum += i", "+\t}"}, true},
+		{"longer identifiers", carryUnit("b.go:var db", "b.go", "var db", "+var db = 1"), "+var db = 2",
+			[]string{"+\tdbx := mydb.Open(db_name)"}, true},
+		{"method without a selector", carryUnit("b.go:(*T).Do", "b.go", "(*T).Do", "+\treturn 1"), "+\treturn 2",
+			[]string{"+\tDo := 3", "+\tuse(Do)"}, true},
+		{"method through a selector", carryUnit("b.go:(*T).Do", "b.go", "(*T).Do", "+\treturn 1"), "+\treturn 2",
+			[]string{"+\tt.Do()"}, false},
+		{"bare use", carryUnit("b.go:var i", "b.go", "var i", "+var i = 1"), "+var i = 2",
+			[]string{"+\treturn i + 1"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := carryUnit("a.go:F", "a.go", "F", tc.keeper...)
+			fa, fb := clone(a), clone(tc.changer)
+			fb.Hunks[0].Lines = []string{tc.to}
+			c := PlanCarryOver([]*Unit{fa, fb}, []*Unit{a, tc.changer}, "prev")
+			if _, ok := c.Reuse["a.go:F"]; ok != tc.keep {
+				t.Errorf("kept = %v, want %v (why %q)", ok, tc.keep, c.Why["a.go:F"])
+			}
+		})
+	}
+}

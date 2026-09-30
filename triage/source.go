@@ -25,9 +25,14 @@ type Source struct {
 	Dir, Base, Head string
 	Title           string
 	// HeadDir, if set, is a directory holding the head revision (a saved
-	// fixture or the working tree), used as the reviewer's workspace
-	// instead of a git worktree.
+	// fixture), used as the reviewer's workspace instead of a git worktree.
 	HeadDir string
+	// Snapshot, if set, is a commit in Dir holding the files Content
+	// serves: a local review's working tree, frozen when its diff was
+	// taken. The reviewer's workspace is a detached worktree of it in
+	// place of Head, with its agent files kept, as the checkout is the
+	// user's own; Head stays the branch's commit for its history.
+	Snapshot string
 }
 
 // FromGit diffs base...head in dir.

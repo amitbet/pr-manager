@@ -170,22 +170,15 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	if err != nil {
 		return nil, err
 	}
-	tmp, err := os.CreateTemp("", "pr-manager-index-*")
+	// The working tree is frozen into a commit once, and everything after
+	// reads that: a save or a fix while the review runs must not show the
+	// prompt, the linters or the reviewer's tools other code than the diff.
+	snapshot, err := snapshotWorkingTree(ctx, dir, head)
 	if err != nil {
 		return nil, err
 	}
-	index := tmp.Name()
-	tmp.Close()
-	os.Remove(index)
-	defer os.Remove(index)
-	if _, err = gitWithIndex(ctx, dir, index, "read-tree", "HEAD"); err != nil {
-		return nil, err
-	}
-	if _, err = gitWithIndex(ctx, dir, index, "add", "-A"); err != nil {
-		return nil, err
-	}
-	diffArgs := []string{"diff", "--cached", "--no-color", "--no-ext-diff", "-M", "-U5", base}
-	raw, err := gitWithIndex(ctx, dir, index, diffArgs...)
+	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "-M", "-U5", base, snapshot}
+	raw, err := triage.GitCtx(ctx, dir, diffArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +189,7 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	if err != nil {
 		return nil, err
 	}
-	ws, err := gitWithIndex(ctx, dir, index, "diff", "--cached", "--no-color", "--no-ext-diff", "-M", "-U5", "-w", "--ignore-blank-lines", base)
+	ws, err := triage.GitCtx(ctx, dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", "-w", "--ignore-blank-lines", base, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +203,8 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 			real[f.Path] = true
 		}
 	}
-	src := &triage.Source{Files: files, RealChanges: real, Dir: dir, Base: base, Head: head, HeadDir: dir}
-	src.Content = func(p string) ([]byte, error) { return readLocalFile(dir, p) }
+	src := &triage.Source{Files: files, RealChanges: real, Dir: dir, Base: base, Head: head, Snapshot: snapshot}
+	src.Content = func(p string) ([]byte, error) { s, e := triage.Git(dir, "show", snapshot+":"+p); return []byte(s), e }
 	src.BaseContent = func(p string) ([]byte, error) { s, e := triage.Git(dir, "show", base+":"+p); return []byte(s), e }
 	ref := localRepoRef(dir)
 	title, _ := triage.Git(dir, "log", "-1", "--format=%s", "HEAD")
@@ -222,6 +215,47 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	info := &triage.PRInfo{PRRef: ref, LocalPath: dir, Title: strings.TrimSpace(title), Author: strings.TrimSpace(author), State: "LOCAL", BaseRef: baseBranch, HeadRef: branch, BaseOid: base, HeadOid: head, Ahead: ahead, Behind: behind, Uncommitted: strings.TrimSpace(status) != ""}
 	info.Commits = triage.CommitMessages(ctx, dir, base, head)
 	return finishSnapshot(info, src, raw), nil
+}
+
+// snapshotWorkingTree writes the checkout's working tree, untracked files
+// included and ignored ones not, as git add -A sees it, into a commit on
+// top of head, and returns it; head itself when nothing is uncommitted.
+// It stages in a copy of the checkout's index, which keeps its stat cache
+// (so a large checkout isn't rehashed) and its skip-worktree bits; the
+// checkout's own index, HEAD and refs are left alone. The commit is
+// reachable from nothing and git gc drops it in time.
+func snapshotWorkingTree(ctx context.Context, dir, head string) (string, error) {
+	index, cleanup, err := scratchIndex(ctx, dir, true)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	if _, err := gitWithIndex(ctx, dir, index, "add", "-A"); err != nil {
+		return "", err
+	}
+	tree, err := gitWithIndex(ctx, dir, index, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	tree = strings.TrimSpace(tree)
+	if headTree, err := triage.GitCtx(ctx, dir, "rev-parse", head+"^{tree}"); err == nil && strings.TrimSpace(headTree) == tree {
+		return head, nil
+	}
+	// A fixed identity and date: commit-tree needs one even where the
+	// user has none set, and the same tree then makes the same commit.
+	cmd := proc.CommandContext(ctx, "git", "commit-tree", tree, "-p", head, "-m", "pr-manager working tree snapshot")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=pr-manager", "GIT_AUTHOR_EMAIL=pr-manager@localhost", "GIT_AUTHOR_DATE=@0 +0000",
+		"GIT_COMMITTER_NAME=pr-manager", "GIT_COMMITTER_EMAIL=pr-manager@localhost", "GIT_COMMITTER_DATE=@0 +0000")
+	out, err := cmd.Output()
+	if err != nil {
+		if e, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("git commit-tree: %w: %s", err, strings.TrimSpace(string(e.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // emptyTree writes git's empty tree in dir and returns it, the base of a
