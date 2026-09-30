@@ -81,6 +81,9 @@ func buildContext(members, units []*Unit, baseDecls map[string]map[string]bool, 
 				notes = append(notes, label(u)+fmt.Sprintf("%d of the %d distinctive added lines here match lines removed from %s in this PR (e.g. `%s`); %s", n, m, o.ID, sample, rest))
 			}
 		}
+		if claims := absoluteClaims(u); len(claims) > 0 {
+			notes = append(notes, label(u)+"These added comment or doc lines make absolute claims: "+quoteClaims(claims)+". Try to break each one: pick an input that meets the claim's condition and trace what the code does with it. A claim the code breaks is a defect, with that input as the failure scenario; if only the wording overstates correct code, it is low at most. A claim you cannot break is not an issue.")
+		}
 	}
 	var sb strings.Builder
 	var hidden []string

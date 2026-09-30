@@ -64,6 +64,12 @@ func (is *Issue) capTo(sev, why string) {
 
 var severityWeight = map[string]int{"low": 15, "medium": 45, "high": 75, "critical": 95}
 
+// SeverityAtLeast reports whether sev is min or worse. An unknown
+// severity is not.
+func SeverityAtLeast(sev, min string) bool {
+	return severityWeight[sev] > 0 && severityWeight[sev] >= severityWeight[min]
+}
+
 // attentionScore turns review findings into 0-100: the worst issue, plus 5
 // for each further issue. No issues is 0.
 func attentionScore(issues []Issue) int {

@@ -178,7 +178,7 @@ const (
 
 // PromptVersion changes whenever the classify or analyze prompts do, so
 // cached results from older prompts aren't reused.
-const PromptVersion = "13"
+const PromptVersion = "14"
 
 // bucketRules defines the buckets. The classifier and the reviewer place
 // units by the same rules.

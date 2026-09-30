@@ -38,6 +38,8 @@ Look for:
 - concurrency, resource leaks, retries/timeouts
 - security problems
 - breaking a contract other code relies on: API/wire/JSON shape, DB schema or queries, persisted formats, CRDs. If a code map line lists dependent repos, check the change is compatible with them.
+- test fakes, mocks and fixtures that return values, errors or data shapes the real dependency never does, so the test passes against behavior production never sees. Compare them with the real code before reporting.
+- comments or docs the PR adds that promise more than the code keeps: a "never", "always" or "every" some input breaks.
 Judge impact with the other changes of the PR shown after the diff: a fallback, caller or test elsewhere may limit the problem, or show that it is intended.
 Severity: critical = outage, data loss or security hole; high = wrong behavior in production that you can show happening; medium = real risk worth a reviewer's time; low = minor problem with a concrete consequence.
 Give the new-file line when there is one. No style, naming or "add tests" remarks. Most correct changes have no defects: an empty list is the right answer then, so don't look for something to report in every hunk.`
