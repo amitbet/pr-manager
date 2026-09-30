@@ -208,8 +208,8 @@ func extractCS(repo, repoRoot string, tracked []string, g *Graph) {
 				}
 			}
 		}
-		for name, ct := range fileTypes[p] {
-			b[lastSeg(name)] = ct
+		for _, name := range bindOrder(fileTypes[p]) {
+			b[lastSeg(name)] = fileTypes[p][name]
 		}
 		binds[p], statics[p] = b, st
 	}

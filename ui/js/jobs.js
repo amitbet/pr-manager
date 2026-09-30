@@ -4,6 +4,7 @@
 // server when its view is left or the page reloads; the list reopens it.
 import { $, esc, api } from "./util.js";
 import { mountActivity } from "./activity.js";
+import { S } from "./state.js";
 
 const FAILED_FOR = 60 * 60 * 1000; // failed jobs stay listed this long
 const KIND = { triage: "triage", fix: "fix", index: "index" };
@@ -64,6 +65,24 @@ export function stageText(j) {
   return `${j.stage} ${j.done}/${j.total}${j.kind === "triage" ? " units" : ""}`;
 }
 
+// pollJob fetches a job, retrying a lost connection (no answer, or a 5xx)
+// with backoff, about 10s in all, before giving up. retrying runs before
+// each wait so the view can say the connection was lost. A 4xx (the job
+// is gone) fails at once.
+const RETRY = [1000, 3000, 6000];
+export async function pollJob(id, retrying = () => {}) {
+  for (let i = 0; ; i++) {
+    try {
+      return await api(`/api/jobs/${id}`);
+    } catch (e) {
+      if (i >= RETRY.length || (e.status && e.status < 500)) throw e;
+      retrying(e);
+      await new Promise((res) => setTimeout(res, RETRY[i]));
+    }
+  }
+}
+const LOST = "connection lost, retrying…";
+
 // watchJob shows a job in #main and follows it until it ends or the view is
 // replaced. A finished job with a result opens it; onCached, if set, gets
 // a job that reused a cached result first and opens it only if it returns
@@ -75,7 +94,10 @@ export async function watchJob(id, onCached) {
   markActive(id);
   try {
     for (;;) {
-      const j = await api(`/api/jobs/${id}`);
+      const j = await pollJob(id, () => {
+        const w = view.querySelector(".progress-what");
+        if (w) w.textContent = LOST;
+      });
       if (!view.isConnected) return;
       document.querySelectorAll("#list .pr-item").forEach((el) => el.classList.toggle("active", same(el.dataset.src, j.url)));
       await refreshLog().catch(() => {});
@@ -109,7 +131,10 @@ export async function showLog(id) {
   if (!dlg.open) dlg.showModal();
   const live = () => dlg.open && dlg.token === token;
   while (live()) {
-    const j = await api(`/api/jobs/${id}`).catch((e) => ({ status: "error", error: e.message }));
+    const j = await pollJob(id, () => {
+      const s = live() && body.querySelector(".job-log-stage");
+      if (s) s.textContent = LOST;
+    }).catch((e) => ({ status: "error", error: `connection lost: ${e.message}` }));
     await refreshLog().catch(() => {});
     if (!live()) return;
     if (j.kind) dlg.querySelector("h3").textContent = `${KIND[j.kind] || j.kind} log`;
@@ -137,6 +162,8 @@ export async function refreshJobs() {
   let finished = false;
   for (const j of jobs) {
     if (status.get(j.id) === "running" && j.status === "done") finished = true;
+    // A new code map makes the treemap's cached trees stale.
+    if (j.kind === "index" && status.get(j.id) === "running" && j.status !== "running") S.trees = {};
     status.set(j.id, j.status);
   }
   if (finished) onFinished();

@@ -37,7 +37,7 @@ type Change struct {
 // Log returns the non-merge commits reachable from rev, newest first,
 // committed after since (zero: no limit), at most max (0: no limit).
 func Log(dir, rev string, since time.Time, limit int) ([]Commit, error) {
-	args := []string{"-C", dir, "log", "--no-merges", "--no-renames", "--name-status", "--format=%x1e%H%x1f%ct%x1f%ae%x1f%s"}
+	args := []string{"-C", dir, "-c", "core.quotePath=false", "-c", "log.showSignature=false", "log", "--no-merges", "--no-renames", "--name-status", "--format=%x1e%H%x1f%ct%x1f%ae%x1f%s"}
 	if !since.IsZero() {
 		args = append(args, "--since="+strconv.FormatInt(since.Unix(), 10))
 	}
@@ -75,11 +75,22 @@ func Parse(out string) []Commit {
 			if !ok || st == "" {
 				continue
 			}
-			c.Files = append(c.Files, Change{Status: st[0], Path: p})
+			c.Files = append(c.Files, Change{Status: st[0], Path: unquote(p)})
 		}
 		cs = append(cs, c)
 	}
 	return cs
+}
+
+// unquote decodes a path git C-quoted (control characters, quotes and
+// backslashes stay quoted even with core.quotePath off).
+func unquote(p string) string {
+	if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+		if u, err := strconv.Unquote(p); err == nil {
+			return u
+		}
+	}
+	return p
 }
 
 // Authors returns the distinct author emails of base..head.
@@ -215,8 +226,13 @@ func Summarize(commits []Commit, ref time.Time, cfg Config) *Stats {
 				fs.Created = c.Email
 			}
 			if ch.Status == 'D' {
-				// A deleted file's history ends; a later re-add starts over.
+				// A deleted file's history ends; a later re-add starts over,
+				// its co-changes too.
 				delete(st.Files, ch.Path)
+				for q := range st.Pairs[ch.Path] {
+					delete(st.Pairs[q], ch.Path)
+				}
+				delete(st.Pairs, ch.Path)
 				continue
 			}
 			switch kind {
@@ -235,16 +251,22 @@ func Summarize(commits []Commit, ref time.Time, cfg Config) *Stats {
 				fs.Last = c.Time
 			}
 		}
-		if bulk || len(files) < 2 {
+		var live []string // a file deleted here has no history left to pair
+		for _, ch := range c.Files {
+			if ch.Status != 'D' && !Skip(ch.Path) {
+				live = append(live, ch.Path)
+			}
+		}
+		if bulk || len(live) < 2 {
 			continue
 		}
-		for _, a := range files {
+		for _, a := range live {
 			m := st.Pairs[a]
 			if m == nil {
 				m = map[string]int{}
 				st.Pairs[a] = m
 			}
-			for _, b := range files {
+			for _, b := range live {
 				if a != b {
 					m[b]++
 				}

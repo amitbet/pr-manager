@@ -1,10 +1,10 @@
 // Local fix jobs. The result stays open while a fix runs, with a banner that
 // shows the job's stage and opens its log. A completed job opens its
 // reviewed result and worktree path.
-import { $, esc, api, postJSON } from "./util.js";
+import { $, esc, postJSON } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
-import { refreshJobs, showLog, stageText } from "./jobs.js";
+import { refreshJobs, showLog, stageText, pollJob } from "./jobs.js";
 
 let onDone = async () => {};
 let run = null; // { id, key: the result being fixed, job }
@@ -98,7 +98,11 @@ function askUncommitted() {
 // result when it's done and its PR is still on screen.
 async function follow(id) {
   for (;;) {
-    const j = await api(`/api/jobs/${id}`).catch((e) => ({ status: "error", error: e.message }));
+    const j = await pollJob(id, () => {
+      if (run?.id !== id) return;
+      run.job = { ...run.job, lost: true };
+      paint();
+    }).catch((e) => ({ status: "error", error: `connection lost: ${e.message}` }));
     if (run?.id !== id) return;
     run.job = j;
     if (j.status === "done") {
@@ -131,7 +135,7 @@ export function fixBanner() {
     return `<div class="tr-banner error fix-banner" role="status">Fix failed: ${esc(run.job.error)} <span class="spacer"></span>${log}<button class="linkbtn" data-act="fix-dismiss">dismiss</button></div>`;
   }
   const warn = run.job.warning ? `<div class="tr-banner warn" role="status">${esc(run.job.warning)}</div>` : "";
-  return `<div class="fix-banner"><div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}</div>`;
+  return `<div class="fix-banner"><div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.lost ? "connection lost, retrying…" : run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}</div>`;
 }
 
 // fixDisabled disables a fix button while a fix runs and on a PR that

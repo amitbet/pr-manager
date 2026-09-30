@@ -82,3 +82,19 @@ func texts(t Thread) string {
 	}
 	return strings.Join(s, "|")
 }
+
+func TestWriterPendingCap(t *testing.T) {
+	l := New()
+	ctx, _ := Start(With(context.Background(), l), "llm", "x")
+	w := Writer(ctx, "")
+	chunk := []byte(strings.Repeat("x", 64<<10))
+	for range (maxPendingLen / len(chunk)) + 1 {
+		_, _ = w.Write(chunk)
+	}
+	if n := len(l.Snapshot()[0].Lines); n != 1 {
+		t.Fatalf("lines = %d, want the oversized pending line flushed once", n)
+	}
+	if len(w.buf) >= maxPendingLen {
+		t.Errorf("buf = %d bytes, want it flushed", len(w.buf))
+	}
+}

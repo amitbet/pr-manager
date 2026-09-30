@@ -48,7 +48,7 @@ func localBase(dir string) (string, string, error) {
 }
 
 func gitWithIndex(ctx context.Context, dir, index string, args ...string) (string, error) {
-	cmd := proc.CommandContext(ctx, "git", args...)
+	cmd := proc.CommandContext(ctx, "git", triage.GitArgs(args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
 	out, err := cmd.Output()
@@ -177,7 +177,7 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	if err != nil {
 		return nil, err
 	}
-	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "-M", "-U5", base, snapshot}
+	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M", "-U5", base, snapshot}
 	raw, err := triage.GitCtx(ctx, dir, diffArgs...)
 	if err != nil {
 		return nil, err
@@ -189,7 +189,7 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	if err != nil {
 		return nil, err
 	}
-	ws, err := triage.GitCtx(ctx, dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", "-w", "--ignore-blank-lines", base, snapshot)
+	ws, err := triage.GitCtx(ctx, dir, "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M", "-U5", "-w", "--ignore-blank-lines", base, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +350,7 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 		info.HeadRef, info.Ahead = head[:10], 1
 	}
 	info.BaseOid = base
-	raw, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", base, head)
+	raw, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M", "-U5", base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +361,7 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	ws, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "-M", "-U5", "-w", "--ignore-blank-lines", base, head)
+	ws, err := triage.Git(dir, "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M", "-U5", "-w", "--ignore-blank-lines", base, head)
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 // or too new for the type checker compiled into this binary. It adds no edges.
 func (x *goExtractor) parseModule(m Module) {
 	root := filepath.Join(x.repoRoot, m.Dir)
+	tracked := gitFileSet(x.repoRoot)
 	err := filepath.WalkDir(root, func(p string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -35,6 +36,9 @@ func (x *goExtractor) parseModule(m Module) {
 		}
 		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return nil
+		}
+		if tracked != nil && !tracked[rel(x.repoRoot, p)] {
+			return nil // ignored or generated outside git: not the repo's code
 		}
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, p, nil, parser.ParseComments)
@@ -95,4 +99,21 @@ func (x *goExtractor) parseModule(m Module) {
 	if err != nil {
 		x.warnings = append(x.warnings, fmt.Sprintf("parse %s: %v", root, err))
 	}
+}
+
+// trackedFiles is the repo's file list as discovery reads it (tracked plus
+// untracked-but-not-ignored), so the fallback walk honours .gitignore. Nil
+// when git can't list it; the walk then takes every file.
+func gitFileSet(root string) map[string]bool {
+	out, err := gitOut(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, l := range strings.Split(out, "\x00") {
+		if l != "" {
+			set[l] = true
+		}
+	}
+	return set
 }

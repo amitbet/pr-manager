@@ -81,7 +81,27 @@ func (r *reviews) save(ref triage.PRRef, ds []Draft) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.draftFile(ref), b, 0o644)
+	// Written to a temporary file and renamed over the old one, so a crash
+	// mid-write never leaves a truncated drafts file behind.
+	f := r.draftFile(ref)
+	tmp, err := os.CreateTemp(filepath.Dir(f), filepath.Base(f)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(b)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), f)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // fileLines returns a file at a commit from the PR's cached clone.

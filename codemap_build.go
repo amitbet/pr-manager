@@ -218,7 +218,7 @@ func addRepo(ctx context.Context, ws string, ref triage.PRRef, local map[string]
 	if ref.Owner == "" || (ref.Owner == "local" && ref.Host == "") {
 		return "", fmt.Errorf("%s is not in the code directory and there is no org to clone it from", ref.Repo)
 	}
-	args := []string{"repo", "clone", ref.RepoArg(), dir, "--", "--filter=blob:none", "--quiet"}
+	args := []string{"repo", "clone", ref.RepoArg(), dir, "--", "--filter=blob:none", "--quiet", "--config=core.longpaths=true"}
 	cctx, done := activity.Command(ctx, "", "gh", args...)
 	clone := proc.CommandContext(ctx, "gh", args...)
 	out, err := clone.CombinedOutput()

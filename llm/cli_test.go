@@ -408,3 +408,101 @@ func TestHasSubscriptionConcurrent(t *testing.T) {
 		t.Errorf("claude probed %d times, want once", strings.Count(string(b), "claude"))
 	}
 }
+
+// Claude Code runs on the claude.ai login: the variables this app reads for
+// its own API and cloud providers, which would send claude to another
+// endpoint, provider or model, are removed unless KeepClaudeCodeEnv is 1.
+func TestClaudeCodeEnvDropsRerouting(t *testing.T) {
+	rerouting := map[string]string{
+		"ANTHROPIC_API_KEY":              "sk-ant",
+		"ANTHROPIC_AUTH_TOKEN":           "tok",
+		"ANTHROPIC_BASE_URL":             "https://gateway.example.com",
+		"ANTHROPIC_CUSTOM_HEADERS":       "X-A: b",
+		"CLAUDE_CODE_USE_BEDROCK":        "1",
+		"CLAUDE_CODE_USE_VERTEX":         "1",
+		"CLAUDE_CODE_USE_FOUNDRY":        "1",
+		"AWS_BEARER_TOKEN_BEDROCK":       "bedrock",
+		"ANTHROPIC_BEDROCK_BASE_URL":     "https://bedrock.example.com",
+		"ANTHROPIC_VERTEX_PROJECT_ID":    "proj",
+		"CLOUD_ML_REGION":                "us-east5",
+		"VERTEX_REGION_CLAUDE_HAIKU_4_5": "us-east5",
+		"ANTHROPIC_FOUNDRY_RESOURCE":     "res",
+		"ANTHROPIC_MODEL":                "us.anthropic.claude-sonnet-5",
+		"ANTHROPIC_SMALL_FAST_MODEL":     "us.anthropic.claude-haiku-4-5",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "us.anthropic.claude-haiku-4-5",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "us.anthropic.claude-opus-5-5",
+		"CLAUDE_CODE_SUBAGENT_MODEL":     "claude-haiku-4-5",
+	}
+	kept := map[string]string{
+		"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat",
+		"AWS_PROFILE":             "dev",
+		"PR_MANAGER_TEST_KEEP":    "x",
+	}
+	for k, v := range rerouting {
+		t.Setenv(k, v)
+	}
+	for k, v := range kept {
+		t.Setenv(k, v)
+	}
+	envMap := func() map[string]string {
+		m := map[string]string{}
+		for _, kv := range cliEnv(claudeCodeUnset()...) {
+			k, v, _ := strings.Cut(kv, "=")
+			m[k] = v
+		}
+		return m
+	}
+
+	t.Setenv(KeepClaudeCodeEnv, "")
+	env := envMap()
+	for k := range rerouting {
+		if _, ok := env[k]; ok {
+			t.Errorf("%s passed to claude", k)
+		}
+	}
+	for k, v := range kept {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
+		}
+	}
+
+	t.Setenv(KeepClaudeCodeEnv, "1")
+	env = envMap()
+	for k, v := range rerouting {
+		if env[k] != v {
+			t.Errorf("with %s=1: %s = %q, want %q", KeepClaudeCodeEnv, k, env[k], v)
+		}
+	}
+}
+
+// The subscription probe sees the environment a run gets: a Bedrock setup
+// in the app's environment doesn't hide the claude.ai login.
+func TestHasSubscriptionClaudeCodeEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/bin")
+	script := `#!/bin/sh
+if [ -n "$CLAUDE_CODE_USE_BEDROCK" ]; then
+  echo '{"loggedIn":true,"authMethod":"third_party"}'
+else
+  echo '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'
+fi
+`
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+	forgetSubscriptions()
+	defer forgetSubscriptions()
+	t.Setenv(KeepClaudeCodeEnv, "")
+	if !HasSubscription("claude-code") {
+		t.Fatal("claude.ai login hidden by CLAUDE_CODE_USE_BEDROCK")
+	}
+	forgetSubscriptions()
+	t.Setenv(KeepClaudeCodeEnv, "1")
+	if HasSubscription("claude-code") {
+		t.Fatalf("with %s=1 the probe should see Bedrock", KeepClaudeCodeEnv)
+	}
+}

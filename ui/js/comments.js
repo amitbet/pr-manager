@@ -82,7 +82,8 @@ export const actions = {
   save: async () => { await saveComposer(); return false; },
   delete: async (el) => {
     if (!confirm("Delete this pending comment?")) return false;
-    S.drafts = await api(`${prBase()}/drafts/${el.dataset.id}`, { method: "DELETE" });
+    try { S.drafts = await api(`${prBase()}/drafts/${el.dataset.id}`, { method: "DELETE" }); }
+    catch (err) { alert(err.message); return false; }
   },
   "issue-draft": async (el) => {
     const f = fileOfUnit(el.dataset.unit);

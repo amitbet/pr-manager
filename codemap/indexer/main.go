@@ -346,7 +346,12 @@ func cmdTop(args []string) error {
 		}
 		return float64(r.Impact)*1000 + r.Rank
 	}
-	sort.Slice(recs, func(i, j int) bool { return key(recs[i]) > key(recs[j]) })
+	sort.Slice(recs, func(i, j int) bool {
+		if ki, kj := key(recs[i]), key(recs[j]); ki != kj {
+			return ki > kj
+		}
+		return recs[i].ID < recs[j].ID
+	})
 	fmt.Printf("%-7s %-6s %-5s %-8s %-6s %-6s %-9s %-6s %s\n", "impact", "likely", "rank", "rollback", "calls", "deps", "dep_repos", "fixes", "id")
 	for i, r := range recs {
 		if i >= *n {

@@ -2,6 +2,9 @@ package triage
 
 import (
 	"bytes"
+	"go/scanner"
+	"go/token"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -36,6 +39,13 @@ func (p *Presorter) rule(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 	if pat, ok := MatchAny(p.Policy.ForceHuman, u.File); ok {
 		return Decision{Bucket: BucketHuman, ChangeKind: "config", Reason: "path matches force_human policy " + pat}, true
 	}
+	// A rename away from a forced path (go.mod -> go.mod.bak) is as much a
+	// change to it as an edit.
+	if f.OldPath != "" && f.OldPath != u.File {
+		if pat, ok := MatchAny(p.Policy.ForceHuman, f.OldPath); ok {
+			return Decision{Bucket: BucketHuman, ChangeKind: "config", Reason: "old path " + f.OldPath + " matches force_human policy " + pat}, true
+		}
+	}
 	if f.Binary {
 		return Decision{Bucket: BucketHuman, ChangeKind: "binary", Reason: "binary file"}, true
 	}
@@ -55,14 +65,14 @@ func (p *Presorter) rule(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 		}
 		return Decision{Bucket: BucketSkim, ChangeKind: "generated", Reason: "generated header the merge base did not have (new file or new header), so it is still reviewed", Confidence: 1}, true
 	}
-	if u.Status == StatusRenamed && len(u.Hunks) == 0 {
+	if u.Status == StatusRenamed && len(u.Hunks) == 0 && inertRename(f.OldPath, u.File) {
 		return Decision{Bucket: BucketNone, ChangeKind: "rename", Reason: "pure rename, content identical"}, true
 	}
-	if src.RealChanges != nil && len(u.Hunks) > 0 && !src.RealChanges[u.File] && trailingSpaceOnly(u) {
+	if src.RealChanges != nil && len(u.Hunks) > 0 && !src.RealChanges[u.File] && trailingSpaceOnly(u) && !lineEndingsChanged(u, f, src) && !inMultilineString(u, f, src) {
 		return Decision{Bucket: BucketNone, ChangeKind: "format", Reason: "trailing whitespace / blank lines only"}, true
 	}
 	if strings.HasSuffix(u.File, ".go") {
-		if d, ok := goBoilerplate(u); ok {
+		if d, ok := goBoilerplate(u, f, src); ok {
 			return d, true
 		}
 	}
@@ -75,26 +85,289 @@ func (p *Presorter) rule(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 // trailingSpaceOnly reports whether the unit's removed and added lines are
 // the same once trailing whitespace and blank lines are dropped. git diff -w
 // also ignores indentation and spaces inside a line, which can change a
-// string literal or, in some languages, the program.
+// string literal or, in some languages, the program. Two cases where
+// trailing whitespace does matter are left to the classifier: a line
+// ending in a backslash (spaces after it decide whether it continues the
+// line, and a blank line after it ends the continuation), and a removed
+// and added line that read the same (the diff scanner drops a trailing CR,
+// so that pair is a line-ending change).
 func trailingSpaceOnly(u *Unit) bool {
-	var removed, added []string
+	var removed, added, rawRemoved, rawAdded []string
 	for _, h := range u.Hunks {
+		prev := "" // the line before, on either side
 		for _, l := range h.Lines {
 			if l == "" || (l[0] != '+' && l[0] != '-') {
+				if l != "" && l[0] == ' ' {
+					prev = strings.TrimRight(l[1:], " \t\r\f\v")
+				}
 				continue
 			}
+			if strings.HasSuffix(prev, "\\") {
+				return false
+			}
 			t := strings.TrimRight(l[1:], " \t\r\f\v")
+			prev = t
+			if strings.HasSuffix(t, "\\") {
+				return false
+			}
 			if t == "" {
 				continue
 			}
 			if l[0] == '+' {
-				added = append(added, t)
+				added, rawAdded = append(added, t), append(rawAdded, l[1:])
 			} else {
-				removed = append(removed, t)
+				removed, rawRemoved = append(removed, t), append(rawRemoved, l[1:])
 			}
 		}
 	}
-	return slices.Equal(removed, added)
+	if !slices.Equal(removed, added) {
+		return false
+	}
+	for i := range removed {
+		if rawRemoved[i] == rawAdded[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// lineEndingsChanged reports whether the file gained or lost carriage
+// returns, which the diff's lines do not show. Without both sides'
+// content it says no; trailingSpaceOnly catches the lines that read the
+// same.
+func lineEndingsChanged(u *Unit, f FileDiff, src *Source) bool {
+	if src.Content == nil || src.BaseContent == nil || u.Status == StatusAdded || u.Status == StatusDeleted {
+		return false
+	}
+	head, err := src.Content(u.File)
+	if err != nil {
+		return true
+	}
+	old := f.OldPath
+	if old == "" {
+		old = u.File
+	}
+	base, err := src.BaseContent(old)
+	if err != nil {
+		return true
+	}
+	return bytes.Count(head, []byte("\r")) != bytes.Count(base, []byte("\r"))
+}
+
+// multilineDelims are the string delimiters that can span lines, where
+// trailing whitespace and blank lines are part of the value.
+var multilineDelims = map[string][]string{
+	".py": {`"""`, `'''`}, ".pyi": {`"""`, `'''`},
+	".js": {"`"}, ".jsx": {"`"}, ".mjs": {"`"}, ".cjs": {"`"}, ".ts": {"`"}, ".tsx": {"`"}, ".mts": {"`"}, ".cts": {"`"},
+}
+
+// inMultilineString reports whether a changed line may sit inside a
+// string that spans lines. Go files are tokenized, so only raw strings
+// that cover a changed line count. Elsewhere any multi-line delimiter in
+// the file (or, without content, the hunks) counts. It errs toward yes:
+// that only costs a classifier call.
+func inMultilineString(u *Unit, f FileDiff, src *Source) bool {
+	ext := strings.ToLower(path.Ext(u.File))
+	if ext == ".go" {
+		return goRawStringCovers(u, f, src)
+	}
+	delims := multilineDelims[ext]
+	if len(delims) == 0 {
+		return false
+	}
+	var texts [][]byte
+	if src.Content != nil && u.Status != StatusDeleted {
+		b, err := src.Content(u.File)
+		if err != nil {
+			return true
+		}
+		texts = append(texts, b)
+	}
+	if src.BaseContent != nil && u.Status != StatusAdded {
+		old := f.OldPath
+		if old == "" {
+			old = u.File
+		}
+		b, err := src.BaseContent(old)
+		if err != nil {
+			return true
+		}
+		texts = append(texts, b)
+	}
+	if len(texts) == 0 {
+		for _, h := range u.Hunks {
+			texts = append(texts, []byte(strings.Join(h.Lines, "\n")))
+		}
+	}
+	for _, t := range texts {
+		for _, d := range delims {
+			if bytes.Contains(t, []byte(d)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// goRawStringCovers reports whether a changed line of u falls on a Go raw
+// string that spans lines: added lines against the head's strings,
+// removed ones against the base's. Without content, a backtick anywhere
+// in the hunks counts.
+func goRawStringCovers(u *Unit, f FileDiff, src *Source) bool {
+	var newLines, oldLines []int
+	for _, h := range u.Hunks {
+		o, n := h.OldStart, h.NewStart
+		for _, l := range h.Lines {
+			if l == "" {
+				continue
+			}
+			switch l[0] {
+			case ' ':
+				o++
+				n++
+			case '-':
+				oldLines = append(oldLines, o)
+				o++
+			case '+':
+				newLines = append(newLines, n)
+				n++
+			}
+		}
+	}
+	covers := func(content ContentFunc, file string, lines []int) (bool, bool) {
+		if content == nil || len(lines) == 0 {
+			return false, false
+		}
+		b, err := content(file)
+		if err != nil {
+			return false, false
+		}
+		for _, r := range goRawStrings(b) {
+			for _, l := range lines {
+				if l >= r[0] && l <= r[1] {
+					return true, true
+				}
+			}
+		}
+		return false, true
+	}
+	old := f.OldPath
+	if old == "" {
+		old = u.File
+	}
+	inNew, knewNew := covers(src.Content, u.File, newLines)
+	inOld, knewOld := covers(src.BaseContent, old, oldLines)
+	if inNew || inOld {
+		return true
+	}
+	if (len(newLines) == 0 || knewNew) && (len(oldLines) == 0 || knewOld) {
+		return false
+	}
+	for _, h := range u.Hunks {
+		for _, l := range h.Lines {
+			if strings.Contains(l, "`") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// goRawStrings are the first and last lines of each raw string literal
+// in src that spans lines.
+func goRawStrings(src []byte) [][2]int {
+	fset := token.NewFileSet()
+	file := fset.AddFile("", -1, len(src))
+	var s scanner.Scanner
+	s.Init(file, src, func(token.Position, string) {}, 0)
+	var out [][2]int
+	for {
+		pos, tok, lit := s.Scan()
+		if tok == token.EOF {
+			return out
+		}
+		if tok == token.STRING && strings.HasPrefix(lit, "`") {
+			if n := strings.Count(lit, "\n"); n > 0 {
+				start := fset.Position(pos).Line
+				out = append(out, [2]int{start, start + n})
+			}
+		}
+	}
+}
+
+// buildSpecialNames are files whose name alone gives them a role (a
+// manifest, an entry point, a package marker); renaming one to or from
+// such a name can change what is built or run.
+var buildSpecialNames = []string{
+	"go.mod", "go.work", "package.json", "dockerfile", "makefile", "gnumakefile", "__init__.py", "__main__.py",
+	"conftest.py", "setup.py", "cargo.toml", "pyproject.toml", "build.gradle", "pom.xml", "cmakelists.txt",
+}
+
+// buildSpecialStems are base names that are special with any extension.
+var buildSpecialStems = []string{"index", "main", "mod", "lib"}
+
+// goOS and goArch are the GOOS and GOARCH values a Go file name suffix
+// can constrain (go tool dist list, plus the aliases go/build accepts).
+var (
+	goOS = []string{"aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios", "js", "linux", "nacl",
+		"netbsd", "openbsd", "plan9", "solaris", "wasip1", "windows", "zos"}
+	goArch = []string{"386", "amd64", "amd64p32", "arm", "armbe", "arm64", "arm64be", "loong64", "mips", "mipsle",
+		"mips64", "mips64le", "mips64p32", "mips64p32le", "ppc", "ppc64", "ppc64le", "riscv", "riscv64", "s390",
+		"s390x", "sparc", "sparc64", "wasm"}
+)
+
+// inertRename reports whether renaming oldPath to newPath with the content
+// unchanged cannot change what is built or run: the extension stays, and
+// neither name has a special role. A Go file must also stay in its
+// directory (the directory is the package) and keep its build-constraint
+// suffixes (_test, _GOOS, _GOARCH).
+func inertRename(oldPath, newPath string) bool {
+	if oldPath == "" || newPath == "" {
+		return false
+	}
+	ob, nb := strings.ToLower(path.Base(oldPath)), strings.ToLower(path.Base(newPath))
+	oext, next := path.Ext(ob), path.Ext(nb)
+	if oext != next {
+		return false
+	}
+	for _, b := range []string{ob, nb} {
+		stem := strings.TrimSuffix(b, path.Ext(b))
+		if slices.Contains(buildSpecialNames, b) || slices.Contains(buildSpecialStems, stem) || strings.HasPrefix(b, "dockerfile") || strings.HasPrefix(b, ".") {
+			return false
+		}
+	}
+	if oext == ".go" {
+		if path.Dir(oldPath) != path.Dir(newPath) {
+			return false
+		}
+		return slices.Equal(goNameConstraints(ob), goNameConstraints(nb))
+	}
+	return true
+}
+
+// goNameConstraints are the suffixes of a Go file name that go/build
+// reads as constraints: _test, and _GOOS, _GOARCH or _GOOS_GOARCH before
+// it.
+func goNameConstraints(base string) []string {
+	name := strings.TrimSuffix(base, ".go")
+	var out []string
+	if n, ok := strings.CutSuffix(name, "_test"); ok {
+		out, name = append(out, "test"), n
+	}
+	parts := strings.Split(name, "_")
+	if len(parts) < 2 {
+		return out
+	}
+	last := parts[len(parts)-1]
+	if slices.Contains(goArch, last) {
+		out = append(out, "arch="+last)
+		if len(parts) >= 3 && slices.Contains(goOS, parts[len(parts)-2]) {
+			out = append(out, "os="+parts[len(parts)-2])
+		}
+	} else if slices.Contains(goOS, last) {
+		out = append(out, "os="+last)
+	}
+	return out
 }
 
 // baseGenerated reports whether the file had a generated header at the
@@ -285,20 +558,36 @@ func sharesName(a, b []string) bool {
 	return false
 }
 
+// goDirective is a changed line that sets what the file builds into: the
+// package clause, a build constraint, a //go: directive or a cgo flag.
+var goDirective = regexp.MustCompile(`^[+-]\s*(package\s|//go:|//\s*\+build|//line |(//\s*)?#cgo\b)`)
+
+// cgoImport matches import "C", alone or in a group; the comment before it
+// is C code (the cgo preamble).
+var cgoImport = regexp.MustCompile(`(?m)^[ +-]?\s*(import\s+)?"C"\s*(//.*)?$`)
+
 // goBoilerplate decides units whose changed lines are only import specs or
-// the package clause. Blank and dot imports run init code, and a name
-// moved to another package changes what its uses call, so those go to the
-// classifier.
-func goBoilerplate(u *Unit) (Decision, bool) {
+// the blank lines and comments around the package clause. Blank and dot
+// imports run init code, and a name moved to another package changes what
+// its uses call, so those go to the classifier; so does a changed package
+// clause or build directive, and any change in a cgo file, whose comments
+// can be C code.
+func goBoilerplate(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 	var changed []string
 	for _, h := range u.Hunks {
 		for _, l := range h.Lines {
 			if strings.HasPrefix(l, "+") || strings.HasPrefix(l, "-") {
 				changed = append(changed, l)
+				if goDirective.MatchString(l) {
+					return Decision{}, false
+				}
 			}
 		}
+		if cgoImport.MatchString(strings.Join(h.Lines, "\n")) {
+			return Decision{}, false
+		}
 	}
-	if len(changed) == 0 {
+	if len(changed) == 0 || usesCgo(u, f, src) {
 		return Decision{}, false
 	}
 	all := func(re *regexp.Regexp) bool {
@@ -321,7 +610,27 @@ func goBoilerplate(u *Unit) (Decision, bool) {
 		}
 		return Decision{Bucket: BucketNone, ChangeKind: "format", Reason: "import list only (the compiler rejects unused imports; uses are in other units)"}, true
 	case u.Symbol == "" && all(packageLine):
-		return Decision{Bucket: BucketNone, ChangeKind: "format", Reason: "package clause / blank lines only"}, true
+		return Decision{Bucket: BucketNone, ChangeKind: "format", Reason: "comments / blank lines around the package clause only"}, true
 	}
 	return Decision{}, false
+}
+
+// usesCgo reports whether either side of the file imports "C".
+func usesCgo(u *Unit, f FileDiff, src *Source) bool {
+	old := f.OldPath
+	if old == "" {
+		old = u.File
+	}
+	for _, c := range []struct {
+		content ContentFunc
+		file    string
+	}{{src.Content, u.File}, {src.BaseContent, old}} {
+		if c.content == nil {
+			continue
+		}
+		if b, err := c.content(c.file); err == nil && cgoImport.Match(b) {
+			return true
+		}
+	}
+	return false
 }

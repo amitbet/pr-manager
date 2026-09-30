@@ -148,7 +148,7 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	wantTools := sum != nil && sum.Tools && llm.SupportsWorkspace(sum.LLM)
 	var ws *llm.Workspace
 	if p.Lint.on() || wantTools {
-		w, cleanup, err := reviewWorkspace(src)
+		w, cleanup, err := reviewWorkspace(src, p.Warn)
 		defer cleanup()
 		if err != nil && p.Warn != nil {
 			p.Warn("repository at the PR head unavailable: " + err.Error())

@@ -500,7 +500,11 @@ func teleport(n int, real []bool, virtualShare map[int]float64) []float64 {
 	for _, s := range virtualShare {
 		vs += s
 	}
+	// Shares over 0.9 are scaled down together, keeping their ratios, so
+	// the vector still sums to 1.
+	scale := 1.0
 	if vs > 0.9 {
+		scale = 0.9 / vs
 		vs = 0.9
 	}
 	cnt := 0
@@ -515,7 +519,7 @@ func teleport(n int, real []bool, virtualShare map[int]float64) []float64 {
 		}
 	}
 	for i, s := range virtualShare {
-		t[i] = s
+		t[i] = s * scale
 	}
 	return t
 }

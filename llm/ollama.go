@@ -116,10 +116,17 @@ func (o *OllamaLLM) Call(ctx context.Context, req LLMRequest) (*LLMResponse, err
 	for _, tc := range out.Message.ToolCalls {
 		args := map[string]any{}
 		// Arguments arrive as an object, or as a JSON string on some models.
-		if err := json.Unmarshal(tc.Function.Arguments, &args); err != nil {
-			var s string
-			if json.Unmarshal(tc.Function.Arguments, &s) == nil {
-				_ = json.Unmarshal([]byte(s), &args)
+		if len(tc.Function.Arguments) > 0 && string(tc.Function.Arguments) != "null" {
+			if err := json.Unmarshal(tc.Function.Arguments, &args); err != nil {
+				var s string
+				if json.Unmarshal(tc.Function.Arguments, &s) != nil {
+					return nil, badToolArgs(tc.Function.Name, string(tc.Function.Arguments))
+				}
+				if strings.TrimSpace(s) != "" {
+					if err := json.Unmarshal([]byte(s), &args); err != nil {
+						return nil, badToolArgs(tc.Function.Name, s)
+					}
+				}
 			}
 		}
 		r.ToolCalls = append(r.ToolCalls, ToolCall{Name: tc.Function.Name, Arguments: args})

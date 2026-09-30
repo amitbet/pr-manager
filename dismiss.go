@@ -191,21 +191,41 @@ func (d *dismissals) add(ref triage.PRRef, x Dismissal) error {
 	return d.save(ref, append(out, x))
 }
 
-// remove restores a dismissed item.
-func (d *dismissals) remove(ref triage.PRRef, key string) error {
+// remove restores a dismissed item, dropping every record under keys.
+func (d *dismissals) remove(ref triage.PRRef, keys ...string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	ds, err := d.load(ref)
 	if err != nil {
 		return err
 	}
+	drop := map[string]bool{}
+	for _, k := range keys {
+		drop[k] = true
+	}
 	out := ds[:0]
 	for _, old := range ds {
-		if old.Key != key {
+		if !drop[old.Key] {
 			out = append(out, old)
 		}
 	}
 	return d.save(ref, out)
+}
+
+// restoreKeys are the keys to drop to restore the item dismissed under
+// key: an issue can be matched by several records (its own severity, a
+// worse one, the legacy key), and dropping only the one that matched
+// first would leave it dismissed by the next.
+func restoreKeys(r *PRResult, key string) []string {
+	keys := []string{key}
+	for _, u := range resultUnits(r) {
+		for _, is := range u.Issues {
+			if is.DismissKey == key {
+				keys = append(keys, triage.IssueKeys(u.ID, is)...)
+			}
+		}
+	}
+	return keys
 }
 
 // dismissRequest picks the issue or lint finding to dismiss out of a unit.
@@ -309,7 +329,7 @@ func (d *dismissals) routes(mux *http.ServeMux, t *triager) {
 			writeErr(w, 404, err)
 			return
 		}
-		if err := d.remove(res.PR.PRRef, r.PathValue("dkey")); err != nil {
+		if err := d.remove(res.PR.PRRef, restoreKeys(res, r.PathValue("dkey"))...); err != nil {
 			writeErr(w, 500, err)
 			return
 		}

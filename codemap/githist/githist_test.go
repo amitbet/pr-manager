@@ -84,3 +84,29 @@ func TestLog(t *testing.T) {
 		t.Fatalf("log = %+v", cs)
 	}
 }
+
+// A deleted and re-added file starts its co-changes over: confidence is
+// never above 1.
+func TestSummarizeDeleteDropsPairs(t *testing.T) {
+	ref := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	day := func(n int) time.Time { return ref.AddDate(0, 0, -n) }
+	commits := []Commit{
+		{Time: day(9), Email: "a@x", Subject: "one", Files: []Change{{'A', "a.go"}, {'A', "b.go"}}},
+		{Time: day(8), Email: "a@x", Subject: "two", Files: []Change{{'M', "a.go"}, {'M', "b.go"}}},
+		{Time: day(7), Email: "a@x", Subject: "three", Files: []Change{{'M', "a.go"}, {'M', "b.go"}}},
+		{Time: day(6), Email: "a@x", Subject: "drop a", Files: []Change{{'D', "a.go"}, {'M', "b.go"}}},
+		{Time: day(5), Email: "a@x", Subject: "readd a", Files: []Change{{'A', "a.go"}, {'M', "b.go"}}},
+	}
+	st := Summarize(commits, ref, DefaultConfig())
+	if n := st.Pairs["a.go"]["b.go"]; n != 1 {
+		t.Errorf("pairs a->b = %d, want 1", n)
+	}
+	if n := st.Pairs["b.go"]["a.go"]; n != 1 {
+		t.Errorf("pairs b->a = %d, want 1", n)
+	}
+	for _, p := range st.Partners("a.go", 1, 0, 5) {
+		if p.Conf > 1 {
+			t.Errorf("partner %+v: confidence above 1", p)
+		}
+	}
+}

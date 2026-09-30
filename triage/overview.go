@@ -134,7 +134,7 @@ func unitNote(u *Unit) string {
 	if u.Summary != "" {
 		fmt.Fprintf(&b, "  %s\n", u.Summary)
 	}
-	for _, is := range u.Issues {
+	for _, is := range liveIssues(u.Issues) {
 		fmt.Fprintf(&b, "  issue (%s): %s. %s\n", is.Severity, is.Title, is.Detail)
 	}
 	for _, t := range u.Threads {

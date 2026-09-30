@@ -33,10 +33,10 @@ index 1111111..2222222 100644
 @@ -1 +1 @@
 -a v1
 +a v2
-diff --git a/old/name.go b/new/name.go
+diff --git a/pkg/old_name.go b/pkg/new_name.go
 similarity index 100%
-rename from old/name.go
-rename to new/name.go
+rename from pkg/old_name.go
+rename to pkg/new_name.go
 diff --git a/db/migrations/001.sql b/db/migrations/001.sql
 new file mode 100644
 --- /dev/null
@@ -58,7 +58,7 @@ func TestParseDiff(t *testing.T) {
 	if f := files[0]; f.Path != "svc/retry.go" || len(f.Hunks) != 1 || f.Hunks[0].NewStart != 1 || f.Hunks[0].NewLines != 9 {
 		t.Errorf("retry.go: %+v", f)
 	}
-	if f := files[2]; f.Status != StatusRenamed || f.OldPath != "old/name.go" || f.Path != "new/name.go" || len(f.Hunks) != 0 {
+	if f := files[2]; f.Status != StatusRenamed || f.OldPath != "pkg/old_name.go" || f.Path != "pkg/new_name.go" || len(f.Hunks) != 0 {
 		t.Errorf("rename: %+v", f)
 	}
 	if files[3].Status != StatusAdded || !files[4].Binary {
@@ -154,7 +154,7 @@ func TestPresort(t *testing.T) {
 		got[u.File] = u.Decision.Bucket
 	}
 	want := map[string]Bucket{
-		"go.sum": BucketNone, "new/name.go": BucketNone,
+		"go.sum": BucketNone, "pkg/new_name.go": BucketNone,
 		"db/migrations/001.sql": BucketHuman, "logo.png": BucketHuman,
 	}
 	for f, b := range want {
@@ -338,12 +338,20 @@ func TestGoBoilerplate(t *testing.T) {
 		{mk("imports", `-	"github.com/x/y/v2"`, `+	"github.com/x/y/v3"`), false},
 		{mk("imports", `-	"gopkg.in/yaml.v2"`, `+	"github.com/goccy/go-yaml"`), false},
 		{mk("imports", `-import "crypto/rand"`, `+import "math/rand"`), false},
-		{mk("", "+package snapshot", "+"), true},
+		// The package clause, build lines and cgo decide what gets built.
+		{mk("", "+package snapshot", "+"), false},
+		{mk("", "-package snapshot", "+package snapshot_test"), false},
+		{mk("", "+// Package snapshot saves state.", "+"), true},
+		{mk("", "+//go:build linux", "+"), false},
+		{mk("", "-// +build linux"), false},
+		{mk("", "+// #cgo LDFLAGS: -lm"), false},
+		{mk("imports", "+// #include <stdio.h>", ` import "C"`), false},
+		{mk("imports", `+	"C"`), false},
 		{mk("", "+package snapshot", "+var x = 1"), false},
 		{mk("Retry", `+	"fmt"`), false},
 	}
 	for i, c := range cases {
-		if _, got := goBoilerplate(c.u); got != c.want {
+		if _, got := goBoilerplate(c.u, FileDiff{}, &Source{}); got != c.want {
 			t.Errorf("case %d: got %v want %v", i, got, c.want)
 		}
 	}

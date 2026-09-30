@@ -3,6 +3,7 @@ package triage
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +52,14 @@ func TestPresortWhitespace(t *testing.T) {
 		format bool
 	}{
 		{"trailing space", wsUnit("svc/a.go", " func f() {", "-\tx := 1  ", "+\tx := 1", " }"), true},
-		{"blank lines", wsUnit("svc/a.go", " func f() {", "+", "+\t", "-\tx := 1", "+\tx := 1", " }"), true},
+		{"blank lines", wsUnit("svc/a.go", " func f() {", "+", "+\t", "-\tx := 1 ", "+\tx := 1", " }"), true},
+		// The diff scanner drops a trailing CR, so a CRLF -> LF line reads the same.
+		{"line ending", wsUnit("svc/a.go", "-\tx := 1", "+\tx := 1"), false},
+		{"space after backslash", wsUnit("build/run.sh", "-go build \\ ", "+go build \\", " ./..."), false},
+		{"blank line after continuation", wsUnit("build/run.sh", " go build \\", "+", " ./..."), false},
+		{"python docstring file", wsUnit("app/main.py", " def f():", `+    """doc`, "-    x ", "+    x", `     """`), false},
+		{"js template literal", wsUnit("web/a.js", " const s = `", "-  a ", "+  a", " `"), false},
+		{"go raw string, no content", wsUnit("svc/a.go", " var s = `", "-  a ", "+  a", " `"), false},
 		{"space in a string", wsUnit("svc/a.go", `-	s := "a b"`, `+	s := "a  b"`), false},
 		{"indentation", wsUnit("svc/a.go", "-\tx := 1", "+\t\tx := 1"), false},
 		{"python indentation", wsUnit("app/main.py", "-        return x", "+    return x"), false},
@@ -250,6 +258,74 @@ func TestDocsAndManifests(t *testing.T) {
 	for _, f := range []string{"go.sum", "web/package-lock.json", "Cargo.lock", "poetry.lock", "Gemfile.lock"} {
 		if _, ok := MatchAny(fh, f); ok {
 			t.Errorf("%s: a lockfile should not be force_human", f)
+		}
+	}
+}
+
+func TestPresortForceHumanOldPath(t *testing.T) {
+	u := &Unit{File: "build/go.mod.bak", Status: StatusRenamed}
+	src := &Source{Files: []FileDiff{{Path: u.File, OldPath: "go.mod", Status: StatusRenamed}}}
+	(&Presorter{Policy: DefaultPolicy()}).Presort([]*Unit{u}, src)
+	if u.Decision.Bucket != BucketHuman {
+		t.Errorf("rename away from go.mod: %+v", u.Decision)
+	}
+}
+
+func TestInertRename(t *testing.T) {
+	cases := []struct {
+		old, new string
+		want     bool
+	}{
+		{"svc/retry.go", "svc/backoff.go", true},
+		{"svc/retry.go", "pkg/retry.go", false},
+		{"svc/retry.go", "svc/retry_test.go", false},
+		{"svc/retry_linux.go", "svc/retry_unix.go", false},
+		{"svc/retry_linux_amd64.go", "svc/retry_linux_arm64.go", false},
+		{"svc/retry_linux.go", "svc/backoff_linux.go", true},
+		{"svc/retry.go", "svc/retry.txt", false},
+		{"web/util.ts", "web/lib/util.ts", true},
+		{"web/util.ts", "web/index.ts", false},
+		{"app/conf.py", "app/conftest.py", false},
+		{"app/x.py", "app/__init__.py", false},
+		{"Dockerfile", "Dockerfile.old", false},
+		{"cmd/app.go", "cmd/main.go", false},
+		{"", "a.go", false},
+	}
+	for _, c := range cases {
+		if got := inertRename(c.old, c.new); got != c.want {
+			t.Errorf("%s -> %s: got %v want %v", c.old, c.new, got, c.want)
+		}
+	}
+	u := &Unit{File: "pkg/retry.go", Status: StatusRenamed}
+	src := &Source{Files: []FileDiff{{Path: u.File, OldPath: "svc/retry.go", Status: StatusRenamed}}}
+	if rest := (&Presorter{Policy: DefaultPolicy()}).Presort([]*Unit{u}, src); len(rest) != 1 {
+		t.Errorf("a Go file moved to another package should reach the classifier: %+v", u.Decision)
+	}
+}
+
+func TestPresortWhitespaceContent(t *testing.T) {
+	const goFile = "package a\n\nvar s = `\n  a  \n`\n\nfunc f() {\n\tx := 1\n}\n"
+	const goNew = "package a\n\nvar s = `\n  a\n`\n\nfunc f() {\n\tx := 1\n}\n"
+	read := func(s string) ContentFunc { return func(string) ([]byte, error) { return []byte(s), nil } }
+	hunk := func(start int, lines ...string) *Unit {
+		return &Unit{File: "svc/a.go", Status: StatusModified, Hunks: []Hunk{{OldStart: start, NewStart: start, Lines: lines}}}
+	}
+	cases := []struct {
+		name       string
+		u          *Unit
+		base, head string
+		format     bool
+	}{
+		// Line 4 is inside the raw string; line 8 is code, with the string elsewhere.
+		{"in raw string", hunk(4, "-  a  ", "+  a"), goFile, goNew, false},
+		{"outside raw string", hunk(8, "-\tx := 1 ", "+\tx := 1"), strings.Replace(goFile, "x := 1", "x := 1 ", 1), goFile, true},
+		{"crlf", hunk(8, "-\tx := 1 ", "+\tx := 1"), strings.ReplaceAll(strings.Replace(goFile, "x := 1", "x := 1 ", 1), "\n", "\r\n"), goFile, false},
+	}
+	for _, c := range cases {
+		src := &Source{Files: []FileDiff{{Path: c.u.File}}, RealChanges: map[string]bool{}, Content: read(c.head), BaseContent: read(c.base)}
+		(&Presorter{Policy: DefaultPolicy()}).Presort([]*Unit{c.u}, src)
+		if got := c.u.Decision.ChangeKind == "format"; got != c.format {
+			t.Errorf("%s: format=%v want %v (%+v)", c.name, got, c.format, c.u.Decision)
 		}
 	}
 }

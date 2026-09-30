@@ -2,6 +2,7 @@ package triage
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -348,6 +349,9 @@ func ParsePolicy(b []byte) (Policy, error) {
 		p.Tiers.Budgets[name] = bud
 	}
 	for k, w := range t.KindWeights {
+		if math.IsNaN(w) || math.IsInf(w, 0) || w < 0 {
+			return p, fmt.Errorf("tiers.kind_weights.%s: want a finite weight >= 0, got %v", k, w)
+		}
 		p.Tiers.KindWeights[k] = w
 	}
 	if t.CriticalImpact != nil {

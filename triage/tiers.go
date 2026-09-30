@@ -452,9 +452,7 @@ func (tp TierPolicy) ApplyThreads(u *Unit) {
 		}
 	}
 	all := append(liveIssues(u.Issues), from...)
-	if u.Reviewed || len(from) > 0 {
-		u.Attention = attentionScore(all)
-	}
+	u.Attention = attentionScore(all)
 	s.CommentPin, s.CommentPinWhy = "", ""
 	if worst != nil && severityWeight[worst.Issue.Severity] >= severityWeight["medium"] {
 		s.CommentPin = BucketHuman

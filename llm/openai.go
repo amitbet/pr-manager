@@ -206,12 +206,22 @@ func (o *OpenAILLM) Call(ctx context.Context, req LLMRequest) (*LLMResponse, err
 		args := map[string]any{}
 		if strings.TrimSpace(tc.Function.Arguments) != "" {
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				args = map[string]any{"raw": tc.Function.Arguments}
+				return nil, badToolArgs(tc.Function.Name, tc.Function.Arguments)
 			}
 		}
 		r.ToolCalls = append(r.ToolCalls, ToolCall{Name: tc.Function.Name, Arguments: args, CallID: tc.ID})
 	}
 	return r, nil
+}
+
+// badToolArgs reports tool-call arguments that are not valid JSON, so callers
+// take their failure path instead of acting on garbage input.
+func badToolArgs(name, raw string) error {
+	const max = 200
+	if len(raw) > max {
+		raw = raw[:max] + "..."
+	}
+	return fmt.Errorf("tool call %q arguments are not valid JSON: %s", name, raw)
 }
 
 func mapOpenAIFinishReason(s string) StopReason {
@@ -304,7 +314,7 @@ func (o *OpenAILLM) callResponses(ctx context.Context, req LLMRequest) (*LLMResp
 			args := map[string]any{}
 			if strings.TrimSpace(item.Arguments) != "" {
 				if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
-					args = map[string]any{"raw": item.Arguments}
+					return nil, badToolArgs(item.Name, item.Arguments)
 				}
 			}
 			r.ToolCalls = append(r.ToolCalls, ToolCall{Name: item.Name, Arguments: args, CallID: item.CallID})

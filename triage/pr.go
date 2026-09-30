@@ -152,7 +152,7 @@ func (f *PRFetcher) lock(slug string) func() {
 func run(ctx context.Context, dir, name string, args ...string) (out string, err error) {
 	_, done := activity.Command(ctx, dir, name, args...)
 	defer func() { done(err) }()
-	cmd := proc.Command(name, args...)
+	cmd := proc.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	b, err := cmd.Output()
 	if err != nil {
@@ -270,7 +270,8 @@ func (f *PRFetcher) Source(ctx context.Context, info *PRInfo) (*Source, error) {
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 			return nil, err
 		}
-		if _, err := run(ctx, "", "gh", "repo", "clone", ref.RepoArg(), dir, "--", "--filter=blob:none", "--no-checkout", "--quiet"); err != nil {
+		if _, err := run(ctx, "", "gh", "repo", "clone", ref.RepoArg(), dir, "--", "--filter=blob:none", "--no-checkout", "--quiet", "--config=core.longpaths=true"); err != nil {
+			_ = os.RemoveAll(dir) // a killed clone leaves a .git that isn't one
 			return nil, err
 		}
 	}

@@ -84,7 +84,7 @@ func discoverRepos(ws string) ([]*RepoInfo, error) {
 }
 
 func gitOut(dir string, args ...string) (string, error) {
-	cmd := proc.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := proc.Command("git", append([]string{"-C", dir, "-c", "core.quotePath=false"}, args...)...)
 	b, err := cmd.Output()
 	return string(b), err
 }
@@ -103,13 +103,12 @@ func repoRemote(root string) string {
 }
 
 func (ri *RepoInfo) loadFiles() error {
-	out, err := gitOut(ri.Root, "ls-files", "--cached", "--others", "--exclude-standard")
+	out, err := gitOut(ri.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return err
 	}
 	seen := map[string]bool{}
-	for _, l := range strings.Split(out, "\n") {
-		l = strings.TrimSpace(l)
+	for _, l := range strings.Split(out, "\x00") {
 		if l == "" || seen[l] {
 			continue
 		}
@@ -151,16 +150,22 @@ func (ri *RepoInfo) loadFiles() error {
 func (ri *RepoInfo) fingerprint(allMods []Module) (commit string, dirty bool, fp string) {
 	head, _ := gitOut(ri.Root, "rev-parse", "HEAD")
 	commit = strings.TrimSpace(head)
-	status, _ := gitOut(ri.Root, "status", "--porcelain", "--untracked-files=all")
+	status, _ := gitOut(ri.Root, "status", "--porcelain", "-z", "--untracked-files=all")
 	h := sha256.New()
 	fmt.Fprintf(h, "v%d %s %s\n%s\n%s\n", extractorVersion, runtime.Version(), depsHash(), commit, status)
 	if strings.TrimSpace(status) != "" {
 		dirty = true
 		diff, _ := gitOut(ri.Root, "diff", "HEAD")
 		h.Write([]byte(diff))
-		for _, l := range strings.Split(status, "\n") {
+		entries := strings.Split(status, "\x00")
+		for i := 0; i < len(entries); i++ {
+			l := entries[i]
+			if len(l) > 3 && strings.ContainsAny(l[:2], "RC") {
+				i++ // the source path follows as its own entry
+				continue
+			}
 			if strings.HasPrefix(l, "?? ") {
-				if b, err := os.ReadFile(filepath.Join(ri.Root, strings.TrimSpace(l[3:]))); err == nil {
+				if b, err := os.ReadFile(filepath.Join(ri.Root, l[3:])); err == nil {
 					h.Write(b)
 				}
 			}
@@ -223,13 +228,20 @@ func writeGraph(p string, g *Graph) error {
 		return err
 	}
 	zw := gzip.NewWriter(f)
-	if err := json.NewEncoder(zw).Encode(g); err != nil {
-		f.Close()
-		return err
+	err = json.NewEncoder(zw).Encode(g)
+	if cerr := zw.Close(); err == nil {
+		err = cerr
 	}
-	zw.Close()
-	f.Close()
-	return os.Rename(tmp, p)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, p)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 // extractRepo runs every extractor that applies to the repo.

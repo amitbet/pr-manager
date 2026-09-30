@@ -3,7 +3,7 @@
 import { $, esc, api, LABEL } from "./util.js";
 import { S, render } from "./state.js";
 import * as budget from "./budget.js";
-import { refreshJobs } from "./jobs.js";
+import { refreshJobs, pollJob } from "./jobs.js";
 
 // Provider and model pickers. The server lists only the providers this
 // machine can run (a logged-in CLI, an API key that is set, a running Ollama
@@ -214,7 +214,7 @@ async function runIndex() {
     while (j.status === "running") {
       status.textContent = j.stage === "clone" && j.total ? `cloning ${j.done + 1}/${j.total}…` : `${j.stage || "starting"}…`;
       await new Promise((r) => setTimeout(r, 1000));
-      j = await api(`/api/jobs/${j.id}`);
+      j = await pollJob(j.id, () => { status.textContent = "connection lost, retrying…"; });
     }
     if (j.status === "error") throw new Error(j.error);
     const r = j.result;
@@ -225,6 +225,7 @@ async function runIndex() {
     status.textContent = `failed: ${e.message}`;
   } finally {
     btn.disabled = false;
+    S.trees = {}; // the treemap refetches the new code map
   }
 }
 

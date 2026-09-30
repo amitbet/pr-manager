@@ -579,6 +579,10 @@ export const actions = {
 export function onKeydown(e) {
   if (S.tab !== "review" || S.mode !== "walk" || !S.result || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest?.("input, textarea, select")) return;
+  // Keys belong to an open dialog (job log, settings), and Enter or Space
+  // on a focused button or link is that control's own click.
+  if (document.querySelector("dialog[open]")) return;
+  if ((e.key === "Enter" || e.key === " ") && e.target.closest?.("button, a, summary, [contenteditable]:not([contenteditable=false])")) return;
   if (onIntro()) {
     if (e.key !== "ArrowRight" && e.key !== "j" && e.key !== "Enter") return;
     e.preventDefault();

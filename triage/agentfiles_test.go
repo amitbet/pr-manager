@@ -71,7 +71,7 @@ func TestReviewWorkspaceStripsAgentFiles(t *testing.T) {
 	gitRun(t, repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "head")
 	head := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
 
-	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: head})
+	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: head}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestReviewWorkspaceStripsAgentFiles(t *testing.T) {
 		t.Errorf("main.go missing: %v", err)
 	}
 	// The saved head directory is the user's own: left alone.
-	ws2, cleanup2, err := reviewWorkspace(&Source{HeadDir: repo})
+	ws2, cleanup2, err := reviewWorkspace(&Source{HeadDir: repo}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestReviewWorkspaceSnapshot(t *testing.T) {
 	snapshot := commit()
 	write("x.go", "package x\n\nconst X = 3\n") // saved during the review
 
-	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: head, Snapshot: snapshot})
+	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: head, Snapshot: snapshot}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -143,3 +143,25 @@ func TestLookupTSMemberFallsBackToClass(t *testing.T) {
 		}
 	}
 }
+
+// A removed SQL "-- comment" reads as "--- comment" and must not be taken
+// for the old-path header.
+func TestParseDiffDashDashLines(t *testing.T) {
+	raw := "diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -1,3 +1,2 @@\n select 1;\n--- old comment\n+++ new counter\n-x\n@@ -10 +9 @@\n-y\n+z\n" +
+		"--- \"a/caf\\303\\251.sql\"\n+++ \"b/caf\\303\\251.sql\"\n@@ -1 +1 @@\n-a\n+b\n"
+	hs, err := ParseDiff(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hs) != 3 {
+		t.Fatalf("hunks = %+v", hs)
+	}
+	for _, h := range hs[:2] {
+		if h.OldPath != "q.sql" || h.NewPath != "q.sql" {
+			t.Errorf("hunk %+v: paths overwritten by a hunk line", h)
+		}
+	}
+	if hs[1].OldStart != 10 || hs[2].OldPath != "café.sql" || hs[2].NewPath != "café.sql" {
+		t.Errorf("hunks = %+v", hs)
+	}
+}

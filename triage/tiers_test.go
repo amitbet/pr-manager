@@ -389,7 +389,7 @@ func TestParsePolicyTiers(t *testing.T) {
 	if bs := p.Tiers.OrderedBudgets(); len(bs) != 6 || bs[0].Name != "most" || bs[5].Name != "custom" {
 		t.Errorf("ordered = %+v", bs)
 	}
-	for _, bad := range []string{"tiers: { review_budget: nope }", "tiers: { budgets: { more: { skim: 99 } } }", "tiers: { budgets: { more: { trust: 2 } } }"} {
+	for _, bad := range []string{"tiers: { review_budget: nope }", "tiers: { budgets: { more: { skim: 99 } } }", "tiers: { budgets: { more: { trust: 2 } } }", "tiers: { kind_weights: { test: .nan } }", "tiers: { kind_weights: { test: .inf } }", "tiers: { kind_weights: { test: -1 } }"} {
 		if _, err := ParsePolicy([]byte(bad)); err == nil {
 			t.Errorf("%s: want an error", bad)
 		}

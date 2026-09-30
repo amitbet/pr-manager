@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,10 @@ import (
 // Coding-agent subscriptions: instead of an API key, spawn the locally
 // logged-in Codex CLI (ChatGPT plan) or Claude Code CLI (Claude plan) on this
 // machine in one-shot structured-output mode, the same way t3code generates
-// commit messages. The CLIs keep their own credentials; API keys are removed
-// from their environment so a key in .env never overrides the subscription.
+// commit messages. The CLIs keep their own credentials; API keys (and, for
+// Claude Code, the variables that point it at another endpoint, cloud
+// provider or model) are removed from their environment so a key in .env
+// never overrides the subscription.
 
 // Subscription model presets.
 const (
@@ -257,7 +260,7 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	}
 	// Its one JSON line is the answer, which CallToolIn logs.
 	dropAll := func(string) string { return "" }
-	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, dropAll, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, dropAll, claudeCodeUnset()...)
 	if err != nil {
 		return nil, fmt.Errorf("claude-code/%s: %w", c.ModelID(), err)
 	}
@@ -505,6 +508,62 @@ func cliEnv(unset ...string) []string {
 	return env
 }
 
+// KeepClaudeCodeEnv is the env var that, set to 1, runs claude with the
+// environment as it is, for a Claude Code deliberately routed through a
+// gateway or a cloud provider.
+const KeepClaudeCodeEnv = "PR_MANAGER_CLAUDE_CODE_KEEP_ENV"
+
+// claudeCodeRerouting are the variables that take Claude Code off the
+// claude.ai login: API credentials, another endpoint or cloud provider, and
+// model overrides (the model is passed with --model). This app reads the
+// same variables for its own claude-api, bedrock, vertex and foundry
+// providers, so they are often set. CLAUDE_CODE_OAUTH_TOKEN is a
+// subscription token and stays.
+var claudeCodeRerouting = []string{
+	// Credentials other than the claude.ai login.
+	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+	// Workload identity federation.
+	"ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID", "ANTHROPIC_SERVICE_ACCOUNT_ID",
+	"ANTHROPIC_IDENTITY_TOKEN", "ANTHROPIC_IDENTITY_TOKEN_FILE", "ANTHROPIC_SCOPE",
+	// Another endpoint.
+	"ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_UNIX_SOCKET",
+	// Cloud providers and gateways.
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+	"CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+	"CLAUDE_CODE_USE_GATEWAY", "AWS_BEARER_TOKEN_BEDROCK", "CLOUD_ML_REGION",
+	// Model overrides.
+	"ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+	"CLAUDE_CODE_SUBAGENT_MODEL",
+}
+
+// claudeCodeReroutingPrefixes are families of the same: per-provider
+// endpoints and settings, per-model regions and the ANTHROPIC_DEFAULT_*_MODEL
+// aliases.
+var claudeCodeReroutingPrefixes = []string{
+	"ANTHROPIC_BEDROCK_", "ANTHROPIC_VERTEX_", "ANTHROPIC_FOUNDRY_", "ANTHROPIC_AWS_",
+	"ANTHROPIC_GOOGLE_CLOUD_", "VERTEX_REGION_", "ANTHROPIC_DEFAULT_",
+}
+
+// claudeCodeUnset is what to remove from claude's environment so it runs on
+// the claude.ai subscription: the rerouting variables that are set, or none
+// if KeepClaudeCodeEnv is 1.
+func claudeCodeUnset() []string {
+	if os.Getenv(KeepClaudeCodeEnv) == "1" {
+		return nil
+	}
+	unset := slices.Clone(claudeCodeRerouting)
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		for _, p := range claudeCodeReroutingPrefixes {
+			if strings.HasPrefix(k, p) {
+				unset = append(unset, k)
+				break
+			}
+		}
+	}
+	return unset
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -600,10 +659,11 @@ func probeSubscription(provider string) bool {
 	switch provider {
 	case "codex":
 		// "Logged in using ChatGPT" vs "Logged in using an API key".
-		out, err := probe(ctx, "codex", "login", "status")
+		out, err := probe(ctx, []string{"OPENAI_API_KEY", "CODEX_API_KEY"}, "codex", "login", "status")
 		return err == nil && strings.Contains(out, "ChatGPT")
 	case "claude-code":
-		out, err := probe(ctx, "claude", "auth", "status")
+		// The same environment as a run, so the answer is what a run uses.
+		out, err := probe(ctx, claudeCodeUnset(), "claude", "auth", "status")
 		var st struct {
 			LoggedIn         bool   `json:"loggedIn"`
 			AuthMethod       string `json:"authMethod"`
@@ -615,13 +675,13 @@ func probeSubscription(provider string) bool {
 	return false
 }
 
-func probe(ctx context.Context, bin string, args ...string) (string, error) {
+func probe(ctx context.Context, unset []string, bin string, args ...string) (string, error) {
 	if _, err := exec.LookPath(bin); err != nil {
 		return "", err
 	}
 	cmd := proc.CommandContext(ctx, bin, args...)
 	ownGroup(cmd)
-	cmd.Env = cliEnv("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	cmd.Env = cliEnv(unset...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

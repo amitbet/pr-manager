@@ -46,6 +46,16 @@ func TestWriteOverview(t *testing.T) {
 	}
 }
 
+func TestUnitNoteSkipsDismissed(t *testing.T) {
+	u := &Unit{File: "a.go", Decision: Decision{Bucket: BucketHuman}, Issues: []Issue{
+		{Severity: "high", Title: "Real bug"}, {Severity: "high", Title: "Not a bug", Dismissed: true},
+	}}
+	note := unitNote(u)
+	if !strings.Contains(note, "Real bug") || strings.Contains(note, "Not a bug") {
+		t.Errorf("note = %q", note)
+	}
+}
+
 func TestCommitMessages(t *testing.T) {
 	dir := t.TempDir()
 	git := func(args ...string) string {

@@ -142,7 +142,7 @@ func TestReviewWorkspaceFromHeadDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws, cleanup, err := reviewWorkspace(&Source{HeadDir: dir})
+	ws, cleanup, err := reviewWorkspace(&Source{HeadDir: dir}, nil)
 	defer cleanup()
 	if err != nil || ws == nil || ws.Dir != dir {
 		t.Fatalf("ws = %+v, err = %v", ws, err)
@@ -150,7 +150,7 @@ func TestReviewWorkspaceFromHeadDir(t *testing.T) {
 	if mc := goModCache(); mc != "" && (len(ws.ReadDirs) != 1 || ws.ReadDirs[0] != mc) {
 		t.Errorf("read dirs = %q, want module cache %q", ws.ReadDirs, mc)
 	}
-	if ws, _, _ := reviewWorkspace(&Source{}); ws != nil {
+	if ws, _, _ := reviewWorkspace(&Source{}, nil); ws != nil {
 		t.Errorf("no head: ws = %+v", ws)
 	}
 }
@@ -164,7 +164,7 @@ func TestReviewWorkspaceWorktree(t *testing.T) {
 			t.Skip("git unavailable:", err)
 		}
 	}
-	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: "HEAD"})
+	ws, cleanup, err := reviewWorkspace(&Source{Dir: repo, Head: "HEAD"}, nil)
 	if err != nil || ws == nil {
 		t.Fatalf("ws = %+v, err = %v", ws, err)
 	}

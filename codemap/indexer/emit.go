@@ -328,8 +328,12 @@ func (e *emitter) run() {
 		if contains(n.Tags, "generated") {
 			lk, lkLvl = 0, "low" // regenerated, not edited: its defects live in the source
 		}
-		sort.Slice(callers, func(a, b int) bool {
-			return e.syms.pr[e.syms.member[callers[a]]] > e.syms.pr[e.syms.member[callers[b]]]
+		sort.SliceStable(callers, func(a, b int) bool {
+			pa, pb := e.syms.pr[e.syms.member[callers[a]]], e.syms.pr[e.syms.member[callers[b]]]
+			if pa != pb {
+				return pa > pb
+			}
+			return symID(w.nodes[callers[a]]) < symID(w.nodes[callers[b]])
 		})
 		var top []string
 		for _, c := range callers {
@@ -424,7 +428,11 @@ func (e *emitter) run() {
 					fr = append(fr, k)
 				}
 				sort.Slice(fr, func(a, b int) bool {
-					return e.files.pr[e.files.gidx[fr[a]]] > e.files.pr[e.files.gidx[fr[b]]]
+					pa, pb := e.files.pr[e.files.gidx[fr[a]]], e.files.pr[e.files.gidx[fr[b]]]
+					if pa != pb {
+						return pa > pb
+					}
+					return fr[a] < fr[b]
 				})
 				if len(fr) > 5 {
 					fr = fr[:5]
@@ -522,7 +530,8 @@ func (e *emitter) run() {
 	for _, key := range dirKeys {
 		d := dirsOut[key]
 		if !d.hasGraph {
-			for sub := range dirSubdirs[key] {
+			// Sorted, so among children tied on rank the first by name wins.
+			for _, sub := range sortedKeys(dirSubdirs[key]) {
 				c := dirsOut[sub]
 				if c.rec.Rank > d.rec.Rank {
 					d.rec.Rank, d.rec.RankInRepo, d.rec.PR = c.rec.Rank, c.rec.RankInRepo, c.rec.PR
@@ -530,7 +539,7 @@ func (e *emitter) run() {
 				}
 			}
 		}
-		for sub := range dirSubdirs[key] {
+		for _, sub := range sortedKeys(dirSubdirs[key]) {
 			c := dirsOut[sub]
 			d.rbScores = append(d.rbScores, c.rbScores...)
 			d.rec.Symbols += c.rec.Symbols
@@ -689,7 +698,12 @@ func writeOutput(outDir string, e *emitter, cfg *Config, stats map[string]any) e
 			return err
 		}
 	}
-	sort.Slice(e.repoRec, func(i, j int) bool { return e.repoRec[i].Impact > e.repoRec[j].Impact })
+	sort.Slice(e.repoRec, func(i, j int) bool {
+		if e.repoRec[i].Impact != e.repoRec[j].Impact {
+			return e.repoRec[i].Impact > e.repoRec[j].Impact
+		}
+		return e.repoRec[i].Repo < e.repoRec[j].Repo
+	})
 	counts["repo"] = len(e.repoRec)
 	if err := writeJSONL(filepath.Join(outDir, "repos.jsonl"), e.repoRec); err != nil {
 		return err

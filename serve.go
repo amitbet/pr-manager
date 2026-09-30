@@ -305,14 +305,15 @@ func cacheKey(ref triage.PRRef, head string, o options) string {
 // job says when the model differs (see noteModel). Results from another
 // prompt version are not reused: a new version fixes what the reviews
 // missed. Only English results count: other languages are translated from
-// them.
-func (t *triager) latestCached(ref triage.PRRef, head string) (*PRResult, error) {
+// them. Nor are results diffed against another base branch than baseRef
+// (see sameBase).
+func (t *triager) latestCached(ref triage.PRRef, head, baseRef string) (*PRResult, error) {
 	pattern := filepath.Join(t.results, fmt.Sprintf("%s__%.10s__*.json", ref.FileKey(), head))
 	paths, _ := filepath.Glob(pattern)
 	var best *PRResult
 	for _, p := range paths {
 		r, err := t.Load(strings.TrimSuffix(filepath.Base(p), ".json"))
-		if err == nil && r.SummaryLang == "" && r.PromptVersion == triage.PromptVersion && (best == nil || r.CreatedAt.After(best.CreatedAt)) {
+		if err == nil && r.SummaryLang == "" && r.PromptVersion == triage.PromptVersion && sameBase(r, baseRef) && (best == nil || r.CreatedAt.After(best.CreatedAt)) {
 			best = r
 		}
 	}
@@ -332,11 +333,11 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	}
 	key := cacheKey(ref, info.HeadOid, o)
 	if !jo.Force {
-		if r, err := t.Load(key); err == nil {
-			return t.withThreads(ctx, r, o, progress), nil
+		if r, err := t.Load(key); err == nil && sameBase(r, info.BaseRef) {
+			return t.withThreads(ctx, t.withPRInfo(r, info), o, progress), nil
 		}
-		if r, err := t.latestCached(ref, info.HeadOid); err == nil {
-			return t.withThreads(ctx, r, o, progress), nil
+		if r, err := t.latestCached(ref, info.HeadOid, info.BaseRef); err == nil {
+			return t.withThreads(ctx, t.withPRInfo(r, info), o, progress), nil
 		}
 	}
 	src, err := t.fetcher.Source(ctx, info)
@@ -362,6 +363,49 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	carry := t.carryFrom(ctx, key, info.BaseOid, o, jo.Force)
 	pipe.CarryFrom = carry.carryFrom()
 	return t.runSource(ctx, key, info, src, pipe, o, carry)
+}
+
+// sameBase reports whether a saved result was diffed against the branch
+// the PR targets now. The cache key covers the head, not the base, and a
+// PR can be retargeted without a push; its diff and review are then
+// another's. Resolve has the base branch's name but not its commit, so
+// only a renamed base is caught here; a base that moved on keeps the
+// saved diff until the head changes. Results saved without a base branch
+// are kept.
+func sameBase(r *PRResult, baseRef string) bool {
+	return r.PR == nil || r.PR.BaseRef == "" || baseRef == "" || r.PR.BaseRef == baseRef
+}
+
+// withPRInfo puts what can change on a PR without a push (its state,
+// title, description, URL, author and branch names) from info on a saved
+// result, and saves it when any of it did, so a merged PR does not show as
+// open. The diff's fields (base commit, commits, line counts) are left: the
+// saved result is still that diff.
+func (t *triager) withPRInfo(r *PRResult, info *triage.PRInfo) *PRResult {
+	if r.PR == nil || r.PR.LocalPath != "" {
+		return r
+	}
+	set := func(r *PRResult) {
+		p := r.PR
+		p.State, p.Title, p.Body, p.URL, p.Author = info.State, info.Title, info.Body, info.URL, info.Author
+		p.BaseRef, p.HeadRef, p.MergedAt = info.BaseRef, info.HeadRef, info.MergedAt
+	}
+	p := r.PR
+	if p.State == info.State && p.Title == info.Title && p.Body == info.Body && p.URL == info.URL &&
+		p.Author == info.Author && p.BaseRef == info.BaseRef && p.HeadRef == info.HeadRef && p.MergedAt == info.MergedAt {
+		return r
+	}
+	saved, err := t.updateResult(r.Key, func(r *PRResult) {
+		if r.PR != nil {
+			set(r)
+		}
+	})
+	if err != nil {
+		log.Printf("save PR details %s: %v", r.Key, err)
+		set(r)
+		return r
+	}
+	return saved
 }
 
 func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo, src *triage.Source, pipe *triage.Pipeline, o options, carry *carryPlan) (*PRResult, error) {
@@ -661,9 +705,9 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 	go func() {
 		r, err := t.Run(ctx, ref, jo, progress)
 		j.finish(err)
-		var now string
+		var now, nowReview string
 		if err == nil {
-			now, _ = runBy(t.options(jo))
+			now, nowReview = runBy(t.options(jo))
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
@@ -674,7 +718,7 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 		}
 		j.Status, j.Key = "done", r.Key
 		j.markCached(r)
-		j.noteModel(r, now)
+		j.noteModel(r, now, nowReview)
 		log.Printf("triage %s: %v (%s)", j.URL, r.Counts, r.Key)
 	}()
 	return j, nil
@@ -687,15 +731,43 @@ func (j *job) markCached(r *PRResult) {
 	}
 }
 
-// noteModel records, on a job that reused a result, which model made it
-// and which one a re-run would use, when they differ.
-func (j *job) noteModel(r *PRResult, now string) {
+// noteModel records, on a job that reused a result, which models made it
+// and which ones a re-run would use (see runBy), when they differ: the
+// placing model, and the reviewer with its repo tools. Results saved
+// without a summarizer are compared by the placing model alone.
+func (j *job) noteModel(r *PRResult, classifier, summarizer string) {
 	if j.Cached == nil {
 		return
 	}
-	if now != r.Classifier {
-		j.CachedBy, j.RunsWith = r.Classifier, now
+	if r.Summarizer == "" {
+		if classifier != r.Classifier {
+			j.CachedBy, j.RunsWith = r.Classifier, classifier
+		}
+		return
 	}
+	was, now := modelLabel(r.Classifier, r.Summarizer), modelLabel(classifier, summarizer)
+	if was != now {
+		j.CachedBy, j.RunsWith = was, now
+	}
+}
+
+// modelLabel names a run's models in one string: the reviewer alone when
+// it placed the units (with its "+repo tools"), else both.
+func modelLabel(classifier, summarizer string) string {
+	if summarizer == "" || summarizer == classifier {
+		return classifier
+	}
+	if strings.HasPrefix(summarizer, classifier) {
+		return summarizer
+	}
+	return classifier + ", review " + summarizer
+}
+
+// snapshot copies j under t.mu, for encoding while its worker updates it.
+func (t *triager) snapshot(j *job) job {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return *j
 }
 
 // jobLog is the activity of a job, for the UI to watch while it runs.
@@ -794,7 +866,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, err)
 			return
 		}
-		writeJSON(w, 202, t.startIndex(jo))
+		writeJSON(w, 202, t.snapshot(t.startIndex(jo)))
 	})
 	mux.HandleFunc("GET /api/providers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, providerList(r.Context(), o, r.URL.Query().Has("refresh")))
@@ -879,7 +951,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, err)
 			return
 		}
-		writeJSON(w, 202, j)
+		writeJSON(w, 202, t.snapshot(j))
 	})
 	mux.HandleFunc("GET /api/revs", func(w http.ResponseWriter, r *http.Request) {
 		revs, err := listRevs(r.URL.Query().Get("path"))
@@ -909,11 +981,27 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		}
 		if ref, err := triage.ParsePRRef(url); err == nil {
 			localRef := triage.PRRef{Owner: "local", Repo: localPathID(res.PR.LocalPath)}
+			rv.dmu.Lock()
 			if ds, err := rv.load(localRef); err == nil && len(ds) > 0 {
-				if err := rv.save(ref, ds); err != nil {
+				// Added to any drafts the PR already has, by ID.
+				have, err := rv.load(ref)
+				if err != nil {
+					have = nil
+				}
+				seen := map[string]bool{}
+				for _, d := range have {
+					seen[d.ID] = true
+				}
+				for _, d := range ds {
+					if !seen[d.ID] {
+						have = append(have, d)
+					}
+				}
+				if err := rv.save(ref, have); err != nil {
 					log.Printf("copy local review notes: %v", err)
 				}
 			}
+			rv.dmu.Unlock()
 		}
 		writeJSON(w, 200, map[string]string{"url": url})
 	})
@@ -936,7 +1024,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, err)
 			return
 		}
-		writeJSON(w, 202, j)
+		writeJSON(w, 202, t.snapshot(j))
 	})
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, t.jobList())

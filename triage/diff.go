@@ -1,7 +1,6 @@
 package triage
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os/exec"
@@ -47,11 +46,37 @@ func Git(dir string, args ...string) (string, error) {
 	return GitCtx(context.Background(), dir, args...)
 }
 
-// GitCtx is Git, logged to ctx's activity log.
+// gitConfig pins the settings that change output we parse: a user's
+// diff.noprefix, mnemonic prefixes, submodule logs, quoted non-ASCII paths
+// or blank context lines would otherwise break ParseDiff and path lists.
+// core.longpaths lets Windows check out deep trees. Unknown keys are
+// ignored by older git.
+var gitConfig = []string{
+	"-c", "core.quotePath=false",
+	"-c", "core.longpaths=true",
+	"-c", "diff.noprefix=false",
+	"-c", "diff.mnemonicPrefix=false",
+	"-c", "diff.srcPrefix=a/",
+	"-c", "diff.dstPrefix=b/",
+	"-c", "diff.submodule=short",
+	"-c", "diff.suppressBlankEmpty=false",
+	"-c", "diff.relative=false",
+	"-c", "color.ui=never",
+	"-c", "log.showSignature=false",
+}
+
+// GitArgs returns args with the -c flags that pin git's output format
+// in front, for running git directly.
+func GitArgs(args ...string) []string {
+	return append(append([]string(nil), gitConfig...), args...)
+}
+
+// GitCtx is Git, logged to ctx's activity log. It is killed when ctx is
+// done.
 func GitCtx(ctx context.Context, dir string, args ...string) (_ string, err error) {
 	_, done := activity.Command(ctx, dir, "git", args...)
 	defer func() { done(err) }()
-	cmd := proc.Command("git", args...)
+	cmd := proc.CommandContext(ctx, "git", GitArgs(args...)...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -67,7 +92,7 @@ func GitCtx(ctx context.Context, dir string, args ...string) (_ string, err erro
 // ignoreWS drops whitespace and blank-line changes, which is how
 // formatting-only files are detected.
 func GitDiff(dir, base, head string, ignoreWS bool) (string, error) {
-	args := []string{"diff", "--no-color", "--no-ext-diff", "-M", "-U5"}
+	args := []string{"diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M", "-U5"}
 	if ignoreWS {
 		args = append(args, "-w", "--ignore-blank-lines")
 	}
@@ -93,10 +118,12 @@ func ParseDiff(s string) ([]FileDiff, error) {
 		}
 		cur = nil
 	}
-	sc := bufio.NewScanner(strings.NewReader(s))
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
+	// Lines are split by hand: a scanner's line limit would fail the
+	// whole diff on one minified or generated line.
+	for rest := s; rest != ""; {
+		var line string
+		line, rest, _ = strings.Cut(rest, "\n")
+		line = strings.TrimSuffix(line, "\r")
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			flushFile()
@@ -110,10 +137,10 @@ func ParseDiff(s string) ([]FileDiff, error) {
 			cur.Status = StatusDeleted
 			cur.Path = cur.OldPath
 		case hunk == nil && strings.HasPrefix(line, "rename from "):
-			cur.OldPath = strings.TrimPrefix(line, "rename from ")
+			cur.OldPath = unquotePath(strings.TrimPrefix(line, "rename from "))
 			cur.Status = StatusRenamed
 		case hunk == nil && strings.HasPrefix(line, "rename to "):
-			cur.Path = strings.TrimPrefix(line, "rename to ")
+			cur.Path = unquotePath(strings.TrimPrefix(line, "rename to "))
 		case hunk == nil && strings.HasPrefix(line, "Binary files "):
 			cur.Binary = true
 		case hunk == nil && (strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ")):
@@ -130,16 +157,62 @@ func ParseDiff(s string) ([]FileDiff, error) {
 		}
 	}
 	flushFile()
-	return files, sc.Err()
+	return files, nil
 }
 
-// splitDiffGitPaths splits "a/x b/y". Paths with spaces are ambiguous in
-// this line; rename lines override it when present.
+// splitDiffGitPaths splits "a/x b/y", either side of which git may
+// C-quote ("a/t\tab"). Unquoted paths with spaces are ambiguous in this
+// line; rename lines override it when present.
 func splitDiffGitPaths(s string) (string, string) {
+	if strings.HasPrefix(s, `"`) {
+		if a, rest, ok := cutQuoted(s); ok {
+			b := strings.TrimPrefix(rest, " ")
+			if strings.HasPrefix(b, `"`) {
+				if q, _, ok := cutQuoted(b); ok {
+					b = q
+				}
+			}
+			return strings.TrimPrefix(a, "a/"), strings.TrimPrefix(b, "b/")
+		}
+	}
+	if i := strings.Index(s, ` "b/`); i >= 0 {
+		if b, _, ok := cutQuoted(s[i+1:]); ok {
+			return strings.TrimPrefix(s[:i], "a/"), strings.TrimPrefix(b, "b/")
+		}
+	}
 	if i := strings.Index(s, " b/"); i >= 0 {
 		return strings.TrimPrefix(s[:i], "a/"), s[i+3:]
 	}
 	return s, s
+}
+
+// cutQuoted unquotes the C-quoted string s starts with and returns it and
+// what follows it. Git's escapes (\t, \", \\, \303 octal bytes) are a
+// subset of Go's.
+func cutQuoted(s string) (string, string, bool) {
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case '"':
+			u, err := strconv.Unquote(s[:i+1])
+			if err != nil {
+				return "", s, false
+			}
+			return u, s[i+1:], true
+		}
+	}
+	return "", s, false
+}
+
+// unquotePath decodes a path git C-quoted, and returns others as is.
+func unquotePath(s string) string {
+	if strings.HasPrefix(s, `"`) {
+		if u, rest, ok := cutQuoted(s); ok && rest == "" {
+			return u
+		}
+	}
+	return s
 }
 
 func parseHunkHeader(line string) (Hunk, error) {

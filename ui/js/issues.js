@@ -15,7 +15,8 @@ import { issueDraftButton } from "./comments.js";
 import { issueFixButton, threadFixButton, fixAllHTML } from "./fix.js";
 import { raisedBy, raisedChip } from "./threads.js";
 import { lintLine, LINT_RANK } from "./lint.js";
-import { trText, trDir } from "./entext.js";
+import { trText, trDir, english } from "./entext.js";
+import * as budget from "./budget.js";
 import { jumpToUnit } from "./review.js";
 
 const KINDS = [["issue", "Review"], ["lint", "Static analysis"], ["comment", "Review comments"]];
@@ -152,21 +153,45 @@ export function issuesHTML() {
     </details>` : ""}`;
 }
 
+// TR are the placement texts a translation replaces (see translate.js):
+// the English kept for the EN toggle, and the translation on screen.
+const TR = [["reason", (u) => u.decision], ["escalated", (u) => u.decision], ["pin_why", (u) => u.score], ["floor_why", (u) => u.score]];
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// keepTranslated puts the translation back on a unit whose placement the
+// server re-sent in English, for each text whose English is unchanged; a
+// changed text stays in English, and becomes the English the toggle shows.
+function keepTranslated(u, en, was) {
+  TR.forEach(([k, of], i) => {
+    const o = of(u);
+    if (!o) return;
+    if (same(o[k], en[k])) o[k] = was[i];
+    else en[k] = o[k];
+  });
+}
+
 // merge copies the server's re-placed state onto the result already on
 // screen, rather than replacing it: the units carry translated text and
-// the diff rendering state, and neither survives a swap.
+// the diff rendering state, and neither survives a swap. The server
+// places under the result's default budget, so the chosen one is applied
+// again.
 function merge(fresh) {
   const r = S.result;
   Object.assign(r, { counts: fresh.counts, impact: fresh.impact, likelihood: fresh.likelihood, attention: fresh.attention });
   const by = new Map();
   for (const f of fresh.files) for (const u of f.units || []) by.set(u.id, u);
+  const tr = english.get(r);
   for (const { u } of allUnits()) {
     const n = by.get(u.id);
     if (!n) continue;
+    const en = tr?.units[u.id];
+    const was = en && TR.map(([k, of]) => of(u)?.[k]);
     Object.assign(u, { decision: n.decision, score: n.score, attention: n.attention });
+    if (en) keepTranslated(u, en, was);
     (u.issues || []).forEach((is, i) => Object.assign(is, { dismissed: n.issues?.[i]?.dismissed, dismissed_why: n.issues?.[i]?.dismissed_why, dismiss_key: n.issues?.[i]?.dismiss_key }));
     (u.lint || []).forEach((x, i) => Object.assign(x, { dismissed: n.lint?.[i]?.dismissed, dismissed_why: n.lint?.[i]?.dismissed_why, dismiss_key: n.lint?.[i]?.dismiss_key }));
   }
+  budget.apply(r, S.cfg); // after the translation: the bucket text quotes pin_why and floor_why
 }
 
 // syncDismiss copies the reason being typed into state before a re-render,

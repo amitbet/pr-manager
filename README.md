@@ -302,7 +302,7 @@ How a PR is fetched: `gh pr view` resolves it, then a blobless clone under `.cac
 With `-classifier auto` (the default) the first available provider wins:
 
 1. `codex`: the Codex CLI logged in with ChatGPT (`codex login`). gpt-6-luna classifies, gpt-6-sol summarizes and reviews.
-2. `claude-code`: the Claude Code CLI logged in with a Claude plan (`claude auth login`). Haiku 4.5 classifies, Opus 5.5 summarizes and reviews.
+2. `claude-code`: the Claude Code CLI logged in with a Claude plan (`claude auth login`). Haiku 4.5 classifies, Opus 5.5 summarizes and reviews. It runs without the variables that would send it elsewhere (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` and the other cloud settings, `ANTHROPIC_MODEL` and the other model overrides), so the cloud providers' settings don't move it off the plan; set `PR_MANAGER_CLAUDE_CODE_KEEP_ENV=1` to keep them for a Claude Code you route through a gateway or cloud.
 3. `openai-api`: `OPENAI_API_KEY`. gpt-5.4-mini classifies, gpt-6-sol summarizes and reviews.
 3. A cloud account this machine is set up for, the way Claude Code is: `bedrock` (`CLAUDE_CODE_USE_BEDROCK=1` or `AWS_BEARER_TOKEN_BEDROCK`), `vertex` (`CLAUDE_CODE_USE_VERTEX=1` or `ANTHROPIC_VERTEX_PROJECT_ID`), `foundry` (`CLAUDE_CODE_USE_FOUNDRY=1` or `ANTHROPIC_FOUNDRY_RESOURCE`), then `azure-openai` (`AZURE_OPENAI_ENDPOINT`).
 4. `openai-api`: `OPENAI_API_KEY`. gpt-5.4-mini classifies, gpt-6-sol summarizes and reviews.

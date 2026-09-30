@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"sort"
 	"time"
 
 	"github.com/amitbet/pr-manager/codemap/githist"
@@ -10,7 +11,7 @@ import (
 // .cache/codemap/graphs. Ranking always runs over the union of all cached
 // graphs, so re-extracting one repo is enough to refresh the whole map.
 
-const extractorVersion = 12
+const extractorVersion = 13
 
 // Node is one addressable unit of code: a Go declaration, a TS/JS top-level
 // declaration or class member, a Java type or method, a Python function, class, method or
@@ -129,5 +130,11 @@ func (a edgeAcc) list() []Edge {
 	for _, e := range a {
 		out = append(out, *e)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].To < out[j].To
+	})
 	return out
 }

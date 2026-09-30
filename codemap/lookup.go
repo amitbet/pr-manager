@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"path"
@@ -26,6 +27,7 @@ type Map struct {
 	mu     sync.Mutex
 	shards map[string]*shard
 	rules  []PathRule
+	warned map[string]bool // repos whose shard failed to read, logged once
 }
 
 type shard struct {
@@ -69,7 +71,7 @@ func readJSONL(p string) ([]*Record, error) {
 	for sc.Scan() {
 		var r Record
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return nil, fmt.Errorf("%s: %w", p, err)
+			return out, fmt.Errorf("%s: %w", p, err)
 		}
 		out = append(out, &r)
 	}
@@ -83,7 +85,7 @@ func (m *Map) shard(repo string) *shard {
 		return s
 	}
 	s := &shard{byID: map[string]*Record{}, symbols: map[string][]*Record{}, bySym: map[string][]*Record{}}
-	recs, _ := readJSONL(filepath.Join(m.Dir, repo+".jsonl"))
+	recs, err := readJSONL(filepath.Join(m.Dir, repo+".jsonl"))
 	for _, r := range recs {
 		s.byID[r.ID] = r
 		if r.Level == "symbol" {
@@ -91,6 +93,19 @@ func (m *Map) shard(repo string) *shard {
 			k := r.Path + "\x00" + NormSym(r.Sym)
 			s.bySym[k] = append(s.bySym[k], r)
 		}
+	}
+	// A missing shard is a repo the map doesn't cover. Any other error
+	// leaves a partial shard: use it, but read again next time rather than
+	// caching it for good.
+	if err != nil && !os.IsNotExist(err) {
+		if !m.warned[repo] {
+			if m.warned == nil {
+				m.warned = map[string]bool{}
+			}
+			m.warned[repo] = true
+			log.Printf("codemap: reading %s shard: %v", repo, err)
+		}
+		return s
 	}
 	m.shards[repo] = s
 	return s
@@ -258,6 +273,16 @@ func (m *Map) Lookup(q Query) Result {
 
 	tags, cp, floor := m.pathRules(q.Repo, q.Path)
 	res.PathRules = tags
+	if len(res.Basis) == 0 {
+		// Nothing in the map covers this repo: only the path rules speak.
+		res.Impact = floor
+		if cp != nil && res.Impact > *cp {
+			res.Impact = *cp
+		}
+		res.Notes = append(res.Notes, "repo not in map; estimated from path rules")
+		res.ImpactLevel = m.level(res.Impact)
+		return res
+	}
 	top := res.Basis[0]
 	switch res.Matched {
 	case "symbol", "file":
@@ -334,14 +359,40 @@ type Hunk struct {
 	Header   string `json:"header,omitempty"`
 }
 
-// ParseDiff reads a unified diff (git diff format).
+// ParseDiff reads a unified diff (git diff format). Inside a hunk, lines
+// are counted off its header, so a removed "-- comment" line is not taken
+// for a "--- path" header.
 func ParseDiff(r io.Reader) ([]Hunk, error) {
 	var out []Hunk
 	var oldP, newP string
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1<<20), 64<<20)
-	for sc.Scan() {
-		l := sc.Text()
+	var remOld, remNew int // lines of the current hunk still to come
+	br := bufio.NewReader(r)
+	for {
+		l, err := br.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return out, err
+		}
+		if l == "" && err == io.EOF {
+			break
+		}
+		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
+		if remOld > 0 || remNew > 0 {
+			switch {
+			case strings.HasPrefix(l, "-"):
+				remOld--
+				continue
+			case strings.HasPrefix(l, "+"):
+				remNew--
+				continue
+			case strings.HasPrefix(l, " "), l == "":
+				remOld--
+				remNew--
+				continue
+			case strings.HasPrefix(l, "\\"):
+				continue
+			}
+			remOld, remNew = 0, 0 // a short hunk: read l as a header
+		}
 		switch {
 		case strings.HasPrefix(l, "diff --git "):
 			oldP, newP = "", ""
@@ -351,14 +402,14 @@ func ParseDiff(r io.Reader) ([]Hunk, error) {
 				newP = strings.TrimPrefix(parts[3], "b/")
 			}
 		case strings.HasPrefix(l, "--- "):
-			p := strings.TrimSpace(strings.TrimPrefix(l, "--- "))
+			p := diffHeaderPath(strings.TrimPrefix(l, "--- "))
 			if p == "/dev/null" {
 				oldP = ""
 			} else {
 				oldP = strings.TrimPrefix(p, "a/")
 			}
 		case strings.HasPrefix(l, "+++ "):
-			p := strings.TrimSpace(strings.TrimPrefix(l, "+++ "))
+			p := diffHeaderPath(strings.TrimPrefix(l, "+++ "))
 			if p == "/dev/null" {
 				newP = ""
 			} else {
@@ -385,10 +436,29 @@ func ParseDiff(r io.Reader) ([]Hunk, error) {
 					h.NewStart, h.NewLines = start, n
 				}
 			}
+			remOld, remNew = h.OldLines, h.NewLines
 			out = append(out, h)
 		}
+		if err == io.EOF {
+			break
+		}
 	}
-	return out, sc.Err()
+	return out, nil
+}
+
+// diffHeaderPath is the path of a ---/+++ line: C-quoted by git for
+// control characters and quotes, and followed by a tab and a timestamp
+// (or git's lone tab after a name with spaces).
+func diffHeaderPath(s string) string {
+	if strings.HasPrefix(s, `"`) {
+		if i := strings.LastIndex(s, `"`); i > 0 {
+			if u, err := strconv.Unquote(s[:i+1]); err == nil {
+				return u
+			}
+		}
+	}
+	s, _, _ = strings.Cut(s, "\t")
+	return strings.TrimSpace(s)
 }
 
 // DiffReport is the assessment for a whole diff.

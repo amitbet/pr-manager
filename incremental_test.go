@@ -149,7 +149,7 @@ func TestLatestCachedSkipsOlderPromptVersions(t *testing.T) {
 	}
 	ref := triage.PRRef{Owner: "acme", Repo: "web", Number: 7}
 	saveRun(t, tr, "acme__web__7__head000000__old", "base", "head000000", time.Minute)
-	if _, err := tr.latestCached(ref, "head000000"); err == nil {
+	if _, err := tr.latestCached(ref, "head000000", ""); err == nil {
 		t.Fatal("a result from before prompt versions was reused")
 	}
 	cur := saveRun(t, tr, "acme__web__7__head000000__cur", "base", "head000000", time.Hour)
@@ -157,20 +157,20 @@ func TestLatestCachedSkipsOlderPromptVersions(t *testing.T) {
 	if err := tr.saveResult(cur); err != nil {
 		t.Fatal(err)
 	}
-	got, err := tr.latestCached(ref, "head000000")
+	got, err := tr.latestCached(ref, "head000000", "")
 	if err != nil || got.Key != cur.Key {
 		t.Fatalf("latestCached = %v, %v; want %s", got, err, cur.Key)
 	}
 
 	j := &job{Started: time.Now()}
 	j.markCached(got)
-	j.noteModel(got, "claude-code/sonnet")
+	j.noteModel(got, "claude-code/sonnet", "")
 	if j.CachedBy != "codex/gpt" || j.RunsWith != "claude-code/sonnet" {
 		t.Errorf("job says cached by %q, runs with %q", j.CachedBy, j.RunsWith)
 	}
 	j = &job{Started: time.Now()}
 	j.markCached(got)
-	j.noteModel(got, "codex/gpt")
+	j.noteModel(got, "codex/gpt", "")
 	if j.CachedBy != "" || j.RunsWith != "" {
 		t.Errorf("same model named as different: %q, %q", j.CachedBy, j.RunsWith)
 	}

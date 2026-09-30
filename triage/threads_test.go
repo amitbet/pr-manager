@@ -122,6 +122,32 @@ func TestMergeThreadsKeepsUnchangedVerdicts(t *testing.T) {
 	}
 }
 
+func TestAssignThreadsReresolvesDuplicate(t *testing.T) {
+	idx := func(i int) *int { return &i }
+	// A re-review put the duplicated issue second and dropped another.
+	u := &Unit{File: "a.go", Hunks: []Hunk{{NewStart: 1, NewLines: 5}}, Issues: []Issue{{Title: "New finding"}, {Title: "Conn leaked"}}}
+	old := []Thread{
+		{ID: "moved", Path: "a.go", Updated: "1", Trusted: true, Status: ThreadValid, Issue: &Issue{Title: "c"}, DuplicateOf: idx(0), DuplicateTitle: "Conn leaked"},
+		{ID: "gone", Path: "a.go", Updated: "1", Trusted: true, Status: ThreadValid, Issue: &Issue{Title: "c"}, DuplicateOf: idx(1), DuplicateTitle: "Dropped issue"},
+		{ID: "legacy", Path: "a.go", Updated: "1", Trusted: true, Status: ThreadValid, Issue: &Issue{Title: "c"}, DuplicateOf: idx(5)},
+	}
+	var fresh []Thread
+	for _, o := range old {
+		fresh = append(fresh, Thread{ID: o.ID, Path: o.Path, Updated: o.Updated, Trusted: true})
+	}
+	AssignThreads([]*Unit{u}, MergeThreads(old, fresh))
+	th := u.Threads
+	if len(th) != 3 || th[0].DuplicateOf == nil || *th[0].DuplicateOf != 1 {
+		t.Errorf("moved issue not found again: %+v", th)
+	}
+	if th[1].DuplicateOf != nil || th[1].DuplicateTitle != "" {
+		t.Errorf("dropped issue: still a duplicate: %+v", th[1])
+	}
+	if th[2].DuplicateOf != nil {
+		t.Errorf("out-of-range legacy index kept: %+v", th[2])
+	}
+}
+
 func TestJudgeThreads(t *testing.T) {
 	var calls atomic.Int32 // the threads are judged in parallel
 	critic := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
@@ -201,6 +227,22 @@ func TestApplyThreadsRaisesAndReleases(t *testing.T) {
 	tp.ApplyThreads(u)
 	if u.Attention != severityWeight["low"] || u.Score.Clean != 0.5 || u.Score.CommentPin != "" || u.Decision.Bucket != BucketHuman || !strings.Contains(u.Score.Why, "medium issue") {
 		t.Errorf("low comment: attention %d clean %v pin %q (%s)", u.Attention, u.Score.Clean, u.Score.CommentPin, u.Score.Why)
+	}
+}
+
+func TestApplyThreadsReleasesUnreviewedUnit(t *testing.T) {
+	tp := DefaultTierPolicy()
+	// Placed by the classifier alone: no review, so nothing but threads sets attention.
+	u := &Unit{Decision: Decision{Bucket: BucketSkim}, Score: &Score{Base: 30, Kind: 1, Prior: 30}}
+	u.Threads = []Thread{{ID: "t", Author: "bob", Trusted: true, Status: ThreadValid, Issue: &Issue{Severity: "high", Title: "Leak"}}}
+	tp.ApplyThreads(u)
+	if u.Attention != severityWeight["high"] {
+		t.Fatalf("with the comment: attention %d", u.Attention)
+	}
+	u.Threads = nil // resolved on GitHub
+	tp.ApplyThreads(u)
+	if u.Attention != 0 || u.Score.CommentPin != "" || u.Decision.Bucket == BucketHuman {
+		t.Errorf("after resolving: %s attention %d pin %q", u.Decision.Bucket, u.Attention, u.Score.CommentPin)
 	}
 }
 

@@ -143,8 +143,16 @@ func loadConfig(p string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("%s: %w", p, err)
 	}
+	if p != "" {
+		if err := fillFromDefault(&c, b); err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+	}
 	if c.Rank.Damping == 0 {
 		c.Rank.Damping = 0.85
+	}
+	if c.Rank.Damping <= 0 || c.Rank.Damping >= 1 {
+		return nil, fmt.Errorf("rank.damping must be between 0 and 1 (exclusive), got %v", c.Rank.Damping)
 	}
 	if c.Impact.RankWeight == 0 && c.Impact.RollbackWeight == 0 {
 		c.Impact.RankWeight, c.Impact.RollbackWeight = 0.55, 0.45
@@ -211,6 +219,41 @@ func loadConfig(p string) (*Config, error) {
 		c.sinks = append(c.sinks, s)
 	}
 	return &c, nil
+}
+
+// fillFromDefault completes a user config (raw is its YAML) from the
+// embedded default: impact levels it leaves out, and whole top-level
+// sections it omits. Without levels every record would rate critical.
+func fillFromDefault(c *Config, raw []byte) error {
+	var def Config
+	if err := yaml.Unmarshal(defaultConfig, &def); err != nil {
+		return fmt.Errorf("default config: %w", err)
+	}
+	var top map[string]any
+	if err := yaml.Unmarshal(raw, &top); err != nil {
+		return err
+	}
+	if c.Output == "" {
+		c.Output = def.Output
+	}
+	if c.Cache == "" {
+		c.Cache = def.Cache
+	}
+	if c.Impact.Levels == nil {
+		c.Impact.Levels = map[string]int{}
+	}
+	for k, v := range def.Impact.Levels {
+		if _, ok := c.Impact.Levels[k]; !ok {
+			c.Impact.Levels[k] = v
+		}
+	}
+	if _, ok := top["symbols"]; !ok {
+		c.Symbols = def.Symbols
+	}
+	if _, ok := top["rollback"]; !ok {
+		c.Rollback = def.Rollback
+	}
+	return nil
 }
 
 func globRe(g string) *regexp.Regexp { return codemap.GlobRe(g) }

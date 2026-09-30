@@ -74,6 +74,12 @@ func issueKeys(unit string, is Issue) []string {
 	return append(keys, legacyIssueKey(unit, is))
 }
 
+// IssueKeys are the keys a dismissal of is may be stored under (see
+// issueKeys), so restoring it can drop every record that hides it.
+func IssueKeys(unit string, is Issue) []string {
+	return issueKeys(unit, is)
+}
+
 // LintKey identifies one static-analysis finding. The rule and the line's
 // message are the whole claim, so they are the key: the same rule firing
 // again on the same unit is the same finding.

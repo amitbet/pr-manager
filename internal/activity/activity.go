@@ -7,6 +7,7 @@
 package activity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,13 +17,14 @@ import (
 )
 
 const (
-	maxLines    = 400       // per thread; older lines are dropped
-	maxLineLen  = 2000      // longer lines are cut
-	maxDataLen  = 256 << 10 // larger attached data is dropped
-	maxThreads  = 2000      // per log; older finished threads are dropped
-	statusRun   = "running"
-	statusDone  = "done"
-	statusError = "error"
+	maxLines      = 400       // per thread; older lines are dropped
+	maxLineLen    = 2000      // longer lines are cut
+	maxPendingLen = 1 << 20   // a LineWriter line held longer than this is flushed
+	maxDataLen    = 256 << 10 // larger attached data is dropped
+	maxThreads    = 2000      // per log; older finished threads are dropped
+	statusRun     = "running"
+	statusDone    = "done"
+	statusError   = "error"
 )
 
 type Line struct {
@@ -248,12 +250,18 @@ func (w *LineWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	w.buf = append(w.buf, p...)
 	for {
-		i := strings.IndexByte(string(w.buf), '\n')
+		i := bytes.IndexByte(w.buf, '\n')
 		if i < 0 {
 			break
 		}
 		w.emit(string(w.buf[:i]))
 		w.buf = w.buf[i+1:]
+	}
+	// A writer that never sends a newline mustn't grow the buffer forever:
+	// past the cap, what's held is logged as a line of its own.
+	if len(w.buf) >= maxPendingLen {
+		w.emit(string(w.buf))
+		w.buf = nil
 	}
 	return len(p), nil
 }

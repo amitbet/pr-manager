@@ -163,8 +163,8 @@ func extractJava(repo, repoRoot string, tracked []string, g *Graph) {
 				}
 			}
 		}
-		for name, jt := range fileTypes[p] {
-			b[lastSeg(name)] = jt
+		for _, name := range bindOrder(fileTypes[p]) {
+			b[lastSeg(name)] = fileTypes[p][name]
 		}
 		binds[p], statics[p] = b, st
 	}
@@ -180,7 +180,8 @@ func extractJava(repo, repoRoot string, tracked []string, g *Graph) {
 		return jt
 	}
 	for _, p := range order {
-		for _, jt := range fileTypes[p] {
+		for _, name := range bindOrder(fileTypes[p]) {
+			jt := fileTypes[p][name]
 			for _, s := range jt.d.Supers {
 				if st := resolveType(p, s); st != nil && st != jt {
 					jt.supers = append(jt.supers, st)
@@ -387,6 +388,24 @@ func extractJava(repo, repoRoot string, tracked []string, g *Graph) {
 		}
 	}
 	g.Edges = append(g.Edges, edges.list()...)
+}
+
+// bindOrder is m's keys (dotted type names) in the order to bind them by
+// last segment, so that when two share one the top-level type (fewest
+// segments), then the alphabetically first, is bound last and wins.
+func bindOrder[T any](m map[string]T) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		di, dj := strings.Count(keys[i], "."), strings.Count(keys[j], ".")
+		if di != dj {
+			return di > dj
+		}
+		return keys[i] > keys[j]
+	})
+	return keys
 }
 
 func lastSeg(s string) string {

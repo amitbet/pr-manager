@@ -33,7 +33,7 @@ export function initSidebar(pick) {
   });
   $("#list").addEventListener("click", (e) => {
     const item = e.target.closest(".pr-item");
-    if (item) { onPick(item.dataset.key, item.dataset.src); return; }
+    if (item) { Promise.resolve(onPick(item.dataset.key, item.dataset.src)).catch((err) => alert(err.message)); return; }
     const head = e.target.closest(".repo-head");
     if (!head) return;
     const repo = head.dataset.repo;
