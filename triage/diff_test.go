@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,12 @@ func TestGitDiffIgnoresUserConfig(t *testing.T) {
 	git("add", ".")
 	git("commit", "-q", "-m", "one")
 	os.WriteFile(filepath.Join(dir, name), []byte("package a\n\nvar x = 1\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "tab\there.go"), []byte("package a\n"), 0o644)
+	// Windows can't name a file with a tab; the quoted-path case is still
+	// covered there by the non-ASCII name.
+	tabbed := runtime.GOOS != "windows"
+	if tabbed {
+		os.WriteFile(filepath.Join(dir, "tab\there.go"), []byte("package a\n"), 0o644)
+	}
 	git("add", ".")
 	git("commit", "-q", "-m", "two")
 	raw, err := GitDiff(dir, "HEAD~1", "HEAD", false)
@@ -47,7 +53,11 @@ func TestGitDiffIgnoresUserConfig(t *testing.T) {
 	for _, f := range files {
 		got[f.Path] = f.Status
 	}
-	if len(files) != 2 || got[name] != StatusModified || got["tab\there.go"] != StatusAdded {
+	want := 1
+	if tabbed {
+		want = 2
+	}
+	if len(files) != want || got[name] != StatusModified || (tabbed && got["tab\there.go"] != StatusAdded) {
 		t.Fatalf("files = %+v\n%s", files, raw)
 	}
 }

@@ -1627,7 +1627,8 @@ func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, di
 	for _, u := range units {
 		if old := prior[u.ID]; old != nil && !reviewed[u.ID] {
 			u.Decision, u.Summary, u.Headline, u.Focus = old.Decision, old.Summary, old.Headline, old.Focus
-			u.Reviewed, u.Issues, u.Attention, u.Score = old.Reviewed, old.Issues, old.Attention, old.Score
+			// The fix may have moved these lines without touching them.
+			u.Reviewed, u.Issues, u.Attention, u.Score = old.Reviewed, triage.CarryIssues(old, u), old.Attention, old.Score
 		}
 	}
 	if pipe.Summarizer != nil {

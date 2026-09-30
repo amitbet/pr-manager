@@ -449,3 +449,73 @@ func TestCarryOverShortNamesDoNotLinkUnrelatedCode(t *testing.T) {
 		})
 	}
 }
+
+// moved is u with its hunks at the given new-file starts: the same lines
+// after code above them was added or removed.
+func moved(u *Unit, starts ...int) *Unit {
+	c := clone(u)
+	for i, s := range starts {
+		c.Hunks[i].NewStart = s
+	}
+	return c
+}
+
+func TestRebaseLineFollowsTheHunks(t *testing.T) {
+	body := []string{" func Fetch() {", "-\told()", "+\tx := 1", "+\ty := 2", " }"} // new side: 20..23
+	second := []string{" func Store() {", "+\tz := 3", " }"}                        // new side: 50..52
+	old := carryUnit("a.go:Fetch", "a.go", "Fetch", body...)
+	old.Hunks[0].NewStart = 20
+	old.Hunks = append(old.Hunks, Hunk{Header: "@@ -48,2 +50,3 @@", OldStart: 48, NewStart: 50, Lines: second})
+
+	cases := []struct {
+		name       string
+		starts     []int
+		line, want int
+	}{
+		{"first line of a moved hunk", []int{30, 60}, 20, 30},
+		{"added line inside it", []int{30, 60}, 22, 32},
+		{"context line closing it", []int{30, 60}, 23, 33},
+		{"unchanged line above every hunk", []int{30, 60}, 5, 15},
+		{"unchanged line between the hunks", []int{30, 60}, 40, 50},
+		{"unchanged line below the last hunk", []int{30, 60}, 70, 80},
+		{"only the second hunk moved: a line in the first", []int{20, 53}, 21, 21},
+		{"only the second hunk moved: a line in it", []int{20, 53}, 51, 54},
+		{"only the second hunk moved: a line between", []int{20, 53}, 40, 40},
+		{"only the second hunk moved: a line below", []int{20, 53}, 60, 63},
+		{"no line", []int{30, 60}, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := rebaseLine(c.line, old.Hunks, moved(old, c.starts...).Hunks); got != c.want {
+				t.Errorf("rebaseLine(%d) = %d, want %d", c.line, got, c.want)
+			}
+		})
+	}
+	if got := rebaseLine(22, old.Hunks, old.Hunks[:1]); got != 22 {
+		t.Errorf("hunks that do not correspond should leave the line alone, got %d", got)
+	}
+}
+
+// A unit whose lines are unchanged but sit lower in the file keeps its
+// review, and its issues point where the lines are now.
+func TestCarriedIssuesMoveWithTheUnit(t *testing.T) {
+	old := carryUnit("a.go:Fetch", "a.go", "Fetch", " func Fetch() {", "+\tx := 1", " }")
+	old.Hunks[0].NewStart = 20
+	old.Issues = []Issue{{Severity: "medium", Title: "at the func line", Line: 20}, {Severity: "low", Title: "on the added line", Line: 21},
+		{Severity: "low", Title: "not tied to a line"}}
+
+	fresh := moved(old, 30)
+	c := PlanCarryOver([]*Unit{fresh}, []*Unit{old}, "deadbeef")
+	if c.Reuse[fresh.ID] != old {
+		t.Fatalf("the moved unit should keep its review, why: %q", c.Why[fresh.ID])
+	}
+	applyCarried(fresh, c.Reuse[fresh.ID], c.From)
+	for i, want := range []int{30, 31, 0} {
+		if got := fresh.Issues[i].Line; got != want {
+			t.Errorf("issue %q: line %d, want %d", fresh.Issues[i].Title, got, want)
+		}
+	}
+	if old.Issues[0].Line != 20 {
+		t.Error("carrying must not rewrite the earlier run's issues")
+	}
+}

@@ -33,7 +33,8 @@ func TestGoFallbackHonoursGitignore(t *testing.T) {
 	}
 	// PATH with git but no go: packages.Load fails and the fallback runs.
 	bin := t.TempDir()
-	if err := os.Symlink(gitPath, filepath.Join(bin, "git")); err != nil {
+	// Keep git's own name so PATH lookup finds it on Windows (git.exe).
+	if err := os.Symlink(gitPath, filepath.Join(bin, filepath.Base(gitPath))); err != nil {
 		t.Skip("cannot symlink git:", err)
 	}
 	t.Setenv("PATH", bin)

@@ -369,7 +369,7 @@ func codeText(u *Unit) string {
 func applyCarried(u, old *Unit, from string) {
 	u.Summary, u.Headline = old.Summary, old.Headline
 	u.Focus = append([]string(nil), old.Focus...)
-	u.Issues = append([]Issue(nil), old.Issues...)
+	u.Issues = CarryIssues(old, u)
 	u.Reviewed = true
 	u.CarriedFrom = from
 	// A dismissal is re-applied when the result is loaded, from the
@@ -377,6 +377,54 @@ func applyCarried(u, old *Unit, from string) {
 	for i := range u.Issues {
 		u.Issues[i].Dismissed, u.Issues[i].DismissedWhy, u.Issues[i].DismissKey = false, "", ""
 	}
+}
+
+// CarryIssues is a copy of old's issues for u, a later version of the
+// same unit, with each line moved to where u has it. A unit keeps its
+// review when its diff lines are unchanged, not its line numbers: code
+// added or removed above it moves the whole unit, and an issue left at
+// its old line points into whatever sits there now.
+func CarryIssues(old, u *Unit) []Issue {
+	out := append([]Issue(nil), old.Issues...)
+	for i := range out {
+		out[i].Line = rebaseLine(out[i].Line, old.Hunks, u.Hunks)
+	}
+	return out
+}
+
+// rebaseLine moves a new-file line from the coordinates of from's hunks to
+// those of to's. The two show the same lines, so their hunks correspond in
+// order: a line inside a hunk keeps its offset in it, counted over the
+// new-side lines (context and added), and a line outside all of them moves
+// with the hunk before it, or with the first hunk when it is above them.
+// Hunks that do not correspond (not the same number) leave line as it is.
+func rebaseLine(line int, from, to []Hunk) int {
+	if line <= 0 || len(from) == 0 || len(from) != len(to) {
+		return line
+	}
+	delta := to[0].NewStart - from[0].NewStart
+	for i, h := range from {
+		if line < h.NewStart {
+			break
+		}
+		n, m := newSideLines(h), newSideLines(to[i])
+		if off := line - h.NewStart; off < n {
+			return to[i].NewStart + min(off, max(m-1, 0))
+		}
+		delta = to[i].NewStart + m - (h.NewStart + n)
+	}
+	return max(line+delta, 1)
+}
+
+// newSideLines counts the lines a hunk shows of the new file.
+func newSideLines(h Hunk) int {
+	n := 0
+	for _, l := range h.Lines {
+		if l == "" || l[0] == ' ' || l[0] == '+' {
+			n++
+		}
+	}
+	return n
 }
 
 // CarriedDecision is the decision an earlier run gave old, for a unit that
