@@ -4,7 +4,8 @@
 the change, fixes every issue the review found, checks the fixed code, and
 fixes what the check still finds, for up to `-rounds` rounds (3 by default).
 The rounds follow the same rules as the UI: an issue a round worked on that
-the check still finds gets another try; a new issue only at medium or worse;
+the check still finds gets another try if the patch changed its code (not if
+the fixer left it alone); a new issue only at medium or worse;
 an issue a check had found fixed that comes back is left for you. Then the
 fixed code is triaged once and the report printed.
 

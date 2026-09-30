@@ -543,7 +543,15 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		// undismissed until the repository's dismissals are applied.
 		t.dismissed.apply(next)
 		current, selected = next, reviewed
-		issues = tracker.next(issues, reviewed, remaining(next, reviewed, threads, skip))
+		touched := map[string]bool{}
+		for _, f := range next.Files {
+			for _, u := range f.Units {
+				if touchesPatch(u.Unit, changed) {
+					touched[u.ID] = true
+				}
+			}
+		}
+		issues = tracker.next(issues, reviewed, touched, remaining(next, reviewed, threads, skip))
 	}
 	if left := tracker.warning(); left != "" {
 		if stopped != "" {
@@ -698,23 +706,27 @@ func remaining(r *PRResult, reviewed, threads, skip map[string]bool) []targetedI
 const chaseSeverity = "medium"
 
 // roundTracker decides which of the issues a check left go into the next
-// round. Targeted threads and issues a round already worked on and the
-// check still found go in: a partial fix gets another try. An issue a
+// round. Targeted threads go in, and so does an issue a round worked on
+// that the check still found, when that round's patch changed its unit:
+// a partial fix gets another try. One whose unit the patch left alone
+// the fixer declined, and asking again gets the same answer. An issue a
 // check had found fixed that comes back is not chased again, since
 // fixing it once more would undo whatever brought it back; neither is a
-// new issue below chaseSeverity. Both are counted for the warning.
+// new issue below chaseSeverity. All three are counted for the warning.
 type roundTracker struct {
-	tried, fixed map[string]bool // issue scopes worked on / found fixed
-	back, minor  int
+	// Issue scopes worked on, found fixed, and left alone by the patch.
+	tried, fixed, declined map[string]bool
+	back, minor, kept      int
 }
 
 func newRoundTracker() *roundTracker {
-	return &roundTracker{tried: map[string]bool{}, fixed: map[string]bool{}}
+	return &roundTracker{tried: map[string]bool{}, fixed: map[string]bool{}, declined: map[string]bool{}}
 }
 
-// next records which of this round's issues the check found fixed, and
+// next records which of this round's issues the check found fixed and
+// which the patch left alone (touched holds the units it changed), and
 // returns what the next round works on out of left, remaining's answer.
-func (rt *roundTracker) next(round []targetedIssue, reviewed map[string]bool, left []targetedIssue) []targetedIssue {
+func (rt *roundTracker) next(round []targetedIssue, reviewed, touched map[string]bool, left []targetedIssue) []targetedIssue {
 	found := map[string]bool{}
 	for _, x := range left {
 		if x.Comment == nil {
@@ -725,8 +737,11 @@ func (rt *roundTracker) next(round []targetedIssue, reviewed map[string]bool, le
 		if x.Comment == nil {
 			scope := issueScope(x.UnitID, x.Issue)
 			rt.tried[scope] = true
-			if reviewed[x.UnitID] && !found[scope] {
+			switch {
+			case reviewed[x.UnitID] && !found[scope]:
 				rt.fixed[scope] = true
+			case !touched[x.UnitID]:
+				rt.declined[scope] = true
 			}
 		}
 	}
@@ -740,6 +755,8 @@ func (rt *roundTracker) next(round []targetedIssue, reviewed map[string]bool, le
 		switch {
 		case rt.fixed[scope]:
 			rt.back++
+		case rt.declined[scope]:
+			rt.kept++
 		case rt.tried[scope]:
 			out = append(out, x)
 		case triage.SeverityAtLeast(x.Issue.Severity, chaseSeverity):
@@ -756,6 +773,9 @@ func (rt *roundTracker) warning() string {
 	var parts []string
 	if rt.back > 0 {
 		parts = append(parts, fmt.Sprintf("%d issue(s) a check had found fixed came back in a later round and were not fixed again", rt.back))
+	}
+	if rt.kept > 0 {
+		parts = append(parts, fmt.Sprintf("%d issue(s) the fixer left unchanged were not tried again", rt.kept))
 	}
 	if rt.minor > 0 {
 		parts = append(parts, fmt.Sprintf("%d new low-severity issue(s) the checks found were left for you", rt.minor))
