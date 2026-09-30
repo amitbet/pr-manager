@@ -287,14 +287,18 @@ jobs:
       - name: Update desktop Homebrew cask and Scoop manifest
         if: ${{ !contains(needs.version.outputs.tag, '-') }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
+          # The Scoop desktop manifest also installs the CLI archive.
+          gh release download "$RELEASE_TAG" -p checksums.txt -D "$RUNNER_TEMP" --clobber
           for attempt in 1 2 3; do
             git fetch origin main
             git checkout -B main origin/main
             mkdir -p Casks bucket
             bash scripts/desktop-cask.sh "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/PR-Manager-macos-arm64.zip" > Casks/pr-manager-desktop.rb
-            bash scripts/scoop-manifest.sh desktop "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe" > bucket/pr-manager-desktop.json
+            bash scripts/scoop-manifest.sh desktop "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe" "$RUNNER_TEMP/checksums.txt" > bucket/pr-manager-desktop.json
             git add Casks/pr-manager-desktop.rb bucket/pr-manager-desktop.json
             if git diff --cached --quiet; then exit 0; fi
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
