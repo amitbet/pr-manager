@@ -905,3 +905,35 @@ func TestCheckoutRevRestore(t *testing.T) {
 		t.Error("existing branch deleted")
 	}
 }
+
+// A partial fix gets another round, a new issue only at medium or worse,
+// and an issue a check had found fixed is not fixed again when it comes
+// back.
+func TestRoundTrackerChasesWhatConverges(t *testing.T) {
+	at := func(title, sev string) targetedIssue {
+		return targetedIssue{UnitID: "a.go:f", File: "a.go", Issue: triage.Issue{Severity: sev, Title: title, Evidence: title + "()"}}
+	}
+	reviewed := map[string]bool{"a.go:f": true}
+	rt := newRoundTracker()
+	partial, fixed := at("partial", "low"), at("fixed", "high")
+	thread := targetedIssue{UnitID: "a.go:f", Comment: &fixComment{Thread: "t1"}}
+	got := rt.next([]targetedIssue{partial, fixed, thread}, reviewed, []targetedIssue{partial, at("new medium", "medium"), at("new low", "low"), thread})
+	if titles := issueTitles(got); titles != "partial,new medium," {
+		t.Errorf("round 2 works on %q", titles)
+	}
+	got = rt.next(got, reviewed, []targetedIssue{fixed})
+	if len(got) != 0 {
+		t.Errorf("round 3 works on %q, want nothing: the fixed issue came back", issueTitles(got))
+	}
+	if w := rt.warning(); !strings.Contains(w, "1 issue(s) a check had found fixed came back") || !strings.Contains(w, "1 new low-severity") {
+		t.Errorf("warning = %q", w)
+	}
+}
+
+func issueTitles(xs []targetedIssue) string {
+	var titles []string
+	for _, x := range xs {
+		titles = append(titles, x.Issue.Title)
+	}
+	return strings.Join(titles, ",")
+}

@@ -6,6 +6,7 @@
 //	pr-manager eval -fixtures DIR [flags]    score against labeled past PRs
 //	pr-manager serve [-addr host:port]       web UI (make ui)
 //	pr-manager prs -repo o/r -author login   triage an author's PRs into the UI cache
+//	pr-manager fix [-C dir | -pr URL]        review, fix and re-review until clean (CI or pre-PR)
 package main
 
 import (
@@ -69,9 +70,14 @@ type options struct {
 	limit               int
 	force               bool
 	reviewDryRun        bool
+	// fix: see runFixCmd. baseSet and fixInSet mark -base and -in as given.
+	fixRounds              int
+	fixIn, failOn          string
+	fixCommit, fixComments bool
+	baseSet, fixInSet      bool
 }
 
-var subcommands = map[string]bool{"eval": true, "serve": true, "prs": true, "index": true}
+var subcommands = map[string]bool{"eval": true, "serve": true, "prs": true, "index": true, "fix": true}
 
 var version = "dev"
 var commit = "none"
@@ -144,6 +150,11 @@ func main() {
 	fs.IntVar(&o.limit, "limit", 20, "prs: max PRs")
 	fs.BoolVar(&o.reviewDryRun, "review-dry-run", false, "serve: return the review payload instead of posting it to GitHub")
 	fs.BoolVar(&o.force, "force", false, "prs/-pr: re-run PRs that already have a cached result")
+	fs.IntVar(&o.fixRounds, "rounds", 3, "fix: fix rounds, 1-10; each round after the first fixes what the check of the one before still found")
+	fs.StringVar(&o.fixIn, "in", "place", "fix: where fixes go for a local checkout: place (its current branch, left uncommitted unless -commit) or worktree (a new branch in a worktree under -cache); a -pr is always fixed in a worktree")
+	fs.BoolVar(&o.fixCommit, "commit", false, "fix: commit uncommitted changes before fixing and the fixes after, with written messages")
+	fs.BoolVar(&o.fixComments, "comments", true, "fix -pr: also fix the PR's review comments the review confirmed")
+	fs.StringVar(&o.failOn, "fail-on", "medium", "fix: exit 3 when issues at this severity or worse remain after fixing: low|medium|high|critical|off")
 
 	// The subcommand may come before or after the flags.
 	args, sub := os.Args[1:], ""
@@ -162,6 +173,12 @@ func main() {
 		}
 		if f.Name == "lint" {
 			o.lintSet = true
+		}
+		if f.Name == "base" {
+			o.baseSet = true
+		}
+		if f.Name == "in" {
+			o.fixInSet = true
 		}
 	})
 
@@ -184,6 +201,8 @@ func main() {
 		err = runPRs(ctx, o)
 	case "index":
 		err = runIndex(ctx, o)
+	case "fix":
+		err = runFixCmd(ctx, o)
 	default:
 		err = runTriage(ctx, o)
 	}
@@ -191,6 +210,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pr-manager:", err)
 		if err == errHuman {
 			os.Exit(2)
+		}
+		if err == errIssuesLeft {
+			os.Exit(3)
 		}
 		os.Exit(1)
 	}

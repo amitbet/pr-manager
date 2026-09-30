@@ -41,7 +41,9 @@ PLIST
     ;;
   linux/amd64)
     go build -tags desktop,production,webkit2_41 -trimpath -ldflags "-s -w -X main.version=$desktop_version" -o "$out/pr-manager-linux-amd64" .
-    tar -C "$out" -czf "$out/pr-manager-linux-amd64.tar.gz" pr-manager-linux-amd64
+    # The command line too, which runs without GTK (a server, a CI job).
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$desktop_version" -o "$out/pr-manager" .
+    tar -C "$out" -czf "$out/pr-manager-linux-amd64.tar.gz" pr-manager-linux-amd64 pr-manager
     ;;
   windows/amd64)
     # Icon and version metadata. go build links the .syso into the exe.

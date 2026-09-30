@@ -25,8 +25,10 @@ import (
 )
 
 type fixRequest struct {
-	Key      string `json:"key"`
-	Location string `json:"location"` // worktree (default) | clone
+	Key string `json:"key"`
+	// Location is worktree (default) or clone; the fix command also uses
+	// branch, which fixes a local checkout in place, in its own branch.
+	Location string `json:"location"`
 	// Uncommitted says what to do with a local checkout's uncommitted
 	// changes: commit them first, or fix in the checkout's own branch.
 	Uncommitted string `json:"uncommitted,omitempty"` // commit | branch
@@ -159,6 +161,9 @@ func fixable(r *PRResult, location string) error {
 	}
 	if r.PR.LocalPath != "" && location == "clone" {
 		return errors.New("local fixes go in a separate worktree or the current branch")
+	}
+	if r.PR.LocalPath == "" && location == "branch" {
+		return errors.New("only a local checkout can be fixed in place")
 	}
 	return nil
 }
@@ -352,6 +357,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		if warning = localChanges(old.PR, s.info); warning != "" {
 			t.warn(ctx, jobID, warning)
 		}
+		inBranch = req.Location == "branch"
 		if s.info.Uncommitted {
 			switch req.Uncommitted {
 			case "commit":
@@ -497,7 +503,8 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	}
 	// Each round fixes and then checks: the check reviews what the patch
 	// touched and asks whether the targeted comments were addressed, and
-	// what it still finds goes into the next round. Classification, lint
+	// what it still finds goes into the next round (see roundTracker for
+	// which of it). Classification, lint
 	// and the code map wait until the rounds are done, since only the
 	// final code's buckets count, and run once.
 	current := old
@@ -507,6 +514,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	}
 	applied := 0
 	stopped := "" // why the rounds ended early, once one had applied
+	tracker := newRoundTracker()
 	for round := 1; round <= rounds && len(issues) > 0; round++ {
 		progress("fix", round, rounds)
 		changed, err := fixRound(ctx, o, fixDir, current, issues)
@@ -535,7 +543,13 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		// undismissed until the repository's dismissals are applied.
 		t.dismissed.apply(next)
 		current, selected = next, reviewed
-		issues = remaining(next, reviewed, threads, skip)
+		issues = tracker.next(issues, reviewed, remaining(next, reviewed, threads, skip))
+	}
+	if left := tracker.warning(); left != "" {
+		if stopped != "" {
+			stopped += "; "
+		}
+		stopped += left
 	}
 	if stopped != "" {
 		t.warn(ctx, jobID, stopped)
@@ -676,6 +690,77 @@ func remaining(r *PRResult, reviewed, threads, skip map[string]bool) []targetedI
 		}
 	}
 	return out
+}
+
+// chaseSeverity is the least severity at which an issue a check finds,
+// and no round was asked to fix, starts another round. Below it the
+// rounds would polish instead of converge; the issue stays on the result.
+const chaseSeverity = "medium"
+
+// roundTracker decides which of the issues a check left go into the next
+// round. Targeted threads and issues a round already worked on and the
+// check still found go in: a partial fix gets another try. An issue a
+// check had found fixed that comes back is not chased again, since
+// fixing it once more would undo whatever brought it back; neither is a
+// new issue below chaseSeverity. Both are counted for the warning.
+type roundTracker struct {
+	tried, fixed map[string]bool // issue scopes worked on / found fixed
+	back, minor  int
+}
+
+func newRoundTracker() *roundTracker {
+	return &roundTracker{tried: map[string]bool{}, fixed: map[string]bool{}}
+}
+
+// next records which of this round's issues the check found fixed, and
+// returns what the next round works on out of left, remaining's answer.
+func (rt *roundTracker) next(round []targetedIssue, reviewed map[string]bool, left []targetedIssue) []targetedIssue {
+	found := map[string]bool{}
+	for _, x := range left {
+		if x.Comment == nil {
+			found[issueScope(x.UnitID, x.Issue)] = true
+		}
+	}
+	for _, x := range round {
+		if x.Comment == nil {
+			scope := issueScope(x.UnitID, x.Issue)
+			rt.tried[scope] = true
+			if reviewed[x.UnitID] && !found[scope] {
+				rt.fixed[scope] = true
+			}
+		}
+	}
+	var out []targetedIssue
+	for _, x := range left {
+		if x.Comment != nil {
+			out = append(out, x)
+			continue
+		}
+		scope := issueScope(x.UnitID, x.Issue)
+		switch {
+		case rt.fixed[scope]:
+			rt.back++
+		case rt.tried[scope]:
+			out = append(out, x)
+		case triage.SeverityAtLeast(x.Issue.Severity, chaseSeverity):
+			out = append(out, x)
+		default:
+			rt.minor++
+		}
+	}
+	return out
+}
+
+// warning says what the rounds left for the user, or "".
+func (rt *roundTracker) warning() string {
+	var parts []string
+	if rt.back > 0 {
+		parts = append(parts, fmt.Sprintf("%d issue(s) a check had found fixed came back in a later round and were not fixed again", rt.back))
+	}
+	if rt.minor > 0 {
+		parts = append(parts, fmt.Sprintf("%d new low-severity issue(s) the checks found were left for you", rt.minor))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // checkoutRev switches pr's checkout to the commit or branch it reviewed

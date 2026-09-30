@@ -26,7 +26,12 @@ cask "pr-manager-desktop" do
     "git",
   ]
 
+  # The app's executable is also the pr-manager command line, so the
+  # separate pr-manager cask is not needed next to it.
+  conflicts_with cask: "pr-manager"
+
   app "PR Manager.app"
+  binary "#{appdir}/PR Manager.app/Contents/MacOS/pr-manager"
 
   # The app is ad-hoc signed but not notarized.
   postflight_steps do
@@ -35,6 +40,7 @@ cask "pr-manager-desktop" do
 
   caveats <<~EOS
     Run \`gh auth login\` before opening PR Manager.
+    The \`pr-manager\` command comes with the app, e.g. \`pr-manager fix\` in a checkout.
   EOS
 end
 CASK

@@ -35,7 +35,18 @@ func localRepoRef(dir string) triage.PRRef {
 	return triage.PRRef{Owner: "local", Repo: filepath.Base(dir)}
 }
 
+// baseOverride, when set, is the ref local checkouts are diffed from
+// instead of origin's default branch: the fix command's -base, for a CI
+// job whose PR targets another branch. The server never sets it.
+var baseOverride string
+
 func localBase(dir string) (string, string, error) {
+	if baseOverride != "" {
+		if _, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", baseOverride+"^{commit}"); err != nil {
+			return "", "", fmt.Errorf("base %s is not in the checkout; fetch it first (in CI, check out with fetch-depth: 0)", baseOverride)
+		}
+		return baseOverride, strings.TrimPrefix(baseOverride, "origin/"), nil
+	}
 	if s, err := triage.Git(dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
 		return strings.TrimSpace(s), strings.TrimPrefix(strings.TrimSpace(s), "origin/"), nil
 	}

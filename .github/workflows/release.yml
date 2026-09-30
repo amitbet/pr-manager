@@ -143,7 +143,7 @@ jobs:
             mkdir -p Casks bucket
             bash scripts/desktop-cask.sh "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/PR-Manager-macos-arm64.zip" > Casks/pr-manager-desktop.rb
             bash scripts/scoop-manifest.sh cli "$RELEASE_TAG" "$RUNNER_TEMP/checksums.txt" > bucket/pr-manager.json
-            bash scripts/scoop-manifest.sh desktop "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe" > bucket/pr-manager-desktop.json
+            bash scripts/scoop-manifest.sh desktop "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe" "$RUNNER_TEMP/checksums.txt" > bucket/pr-manager-desktop.json
             git add Casks/pr-manager-desktop.rb bucket/pr-manager.json bucket/pr-manager-desktop.json
             if git diff --cached --quiet; then exit 0; fi
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \

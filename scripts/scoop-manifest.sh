@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Writes a Scoop manifest to stdout. bucket/ in this repository is the bucket.
 # Usage: scoop-manifest.sh cli VERSION PATH/TO/checksums.txt
-#        scoop-manifest.sh desktop VERSION PATH/TO/pr-manager-windows-amd64.exe
+#        scoop-manifest.sh desktop VERSION PATH/TO/pr-manager-windows-amd64.exe PATH/TO/checksums.txt
+#
+# The desktop app also installs the command line from the CLI archive: the
+# desktop executable is a GUI program, which Windows gives no console.
 set -euo pipefail
 kind=$1
 version=${2#v}
@@ -38,6 +41,8 @@ JSON
     ;;
   desktop)
     sha=$(shasum -a 256 "$3" | cut -d' ' -f1)
+    cli=$(awk -v f="pr-manager_${version}_windows_amd64.zip" '$2 == f { print $1 }' "${4:?checksums.txt}")
+    [[ -n $cli ]] || { echo "windows amd64 archive missing from $4" >&2; exit 1; }
     cat <<JSON
 {
     "version": "$version",
@@ -47,12 +52,16 @@ JSON
     "depends": ["git", "gh"],
     "architecture": {
         "64bit": {
-            "url": "$base/pr-manager-windows-amd64.exe#/pr-manager-desktop.exe",
-            "hash": "$sha"
+            "url": [
+                "$base/pr-manager-windows-amd64.exe#/pr-manager-desktop.exe",
+                "$base/pr-manager_${version}_windows_amd64.zip"
+            ],
+            "hash": ["$sha", "$cli"]
         }
     },
+    "bin": "pr-manager.exe",
     "shortcuts": [["pr-manager-desktop.exe", "PR Manager"]],
-    "notes": "Run 'gh auth login' before opening PR Manager."
+    "notes": "Run 'gh auth login' before opening PR Manager. The pr-manager command comes with it."
 }
 JSON
     ;;

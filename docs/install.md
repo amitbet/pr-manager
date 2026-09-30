@@ -33,12 +33,20 @@ brew install --cask amitbet/pr-manager/pr-manager-desktop
 ```
 
 It installs `PR Manager.app` into `/Applications` and removes quarantine the same
-way. If you download `PR-Manager-macos-arm64.zip` from GitHub Releases instead,
+way. The app's executable is also the `pr-manager` command, which the cask links
+onto your PATH; the cask therefore conflicts with the `pr-manager` cask, so
+uninstall that one (`brew uninstall --cask pr-manager`) before installing or
+upgrading to a desktop release that includes it. If you download `PR-Manager-macos-arm64.zip` from GitHub Releases instead,
 macOS blocks the first launch because the app is ad-hoc signed and not notarized.
 Allow it under System Settings → Privacy & Security → Open Anyway, or run
 `xattr -dr com.apple.quarantine "/Applications/PR Manager.app"`.
 
 ## Direct downloads, including Windows and Linux
+
+The Linux desktop archive, `pr-manager-linux-amd64.tar.gz`, holds the app
+(`pr-manager-linux-amd64`, which needs GTK 3 and WebKit2GTK 4.1) and the
+`pr-manager` command, which needs neither.
+
 
 Download the archive for your OS and architecture from GitHub Releases and verify
 it against `checksums.txt`. Extract `pr-manager` or `pr-manager.exe` into a directory
@@ -61,7 +69,9 @@ scoop install pr-manager-desktop    # desktop app, amd64
 ```
 
 Both install `git` and `gh` as dependencies. The desktop app gets a Start
-menu shortcut named PR Manager. The binaries are not code-signed, but Scoop
+menu shortcut named PR Manager, and installs the `pr-manager` command from the
+CLI archive next to it, since the desktop executable is a GUI program that
+Windows runs without a console. The binaries are not code-signed, but Scoop
 downloads them itself, so Windows SmartScreen does not block them the way it
 blocks an exe downloaded in a browser.
 
