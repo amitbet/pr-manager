@@ -28,7 +28,7 @@ cask "pr-manager-desktop" do
 
   # The app's executable is also the pr-manager command line, so the
   # separate pr-manager cask is not needed next to it.
-  conflicts_with cask: "pr-manager"
+  conflicts_with cask: "amitbet/pr-manager/pr-manager"
 
   app "PR Manager.app"
   binary "#{appdir}/PR Manager.app/Contents/MacOS/pr-manager"
