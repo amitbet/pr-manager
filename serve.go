@@ -82,6 +82,22 @@ type PRResult struct {
 	// FixWarning says how a local checkout had changed since its triage
 	// when the fix started.
 	FixWarning string `json:"fix_warning,omitempty"`
+	// FixBase is the commit the fix checkout started from: its changes are
+	// the diff from it. FixedIssues is what the checks found fixed, over
+	// this fix and the ones it continued (see fixpush.go).
+	FixBase     string       `json:"fix_base,omitempty"`
+	FixedIssues []fixedIssue `json:"fixed_issues,omitempty"`
+	// FixPushed is the checkout's HEAD when the fix was pushed to the PR,
+	// and FixPushedAs the PR head that push made (another commit when
+	// several fixes went up together).
+	FixPushed   string `json:"fix_pushed,omitempty"`
+	FixPushedAs string `json:"fix_pushed_as,omitempty"`
+	// FixCommit is the commit a fix made on its PR's branch in the
+	// repository's fix checkout (see fixcheckout.go).
+	FixCommit string `json:"fix_commit,omitempty"`
+	// Resolved is what an earlier review of the PR raised that this one,
+	// of other code, no longer does (see resolved.go).
+	Resolved []resolvedIssue `json:"resolved,omitempty"`
 }
 
 // tierPolicy is the budget table the result was triaged with (the
@@ -137,7 +153,11 @@ type triager struct {
 	mu    sync.Mutex
 	jobs  map[string]*job
 	fixMu sync.Mutex
-	trMu  sync.Mutex // guards trLocks
+	// checkouts are the repositories' fix checkouts, where PR fixes run
+	// (see fixcheckout.go); fixMu serializes the fixes of local reviews,
+	// and of PRs fixed before them.
+	checkouts *fixCheckouts
+	trMu      sync.Mutex // guards trLocks
 	// trLocks has a lock per translation file, so one PR is translated once.
 	trLocks map[string]*sync.Mutex
 
@@ -183,6 +203,7 @@ func newTriager(o options) (*triager, error) {
 		jobs:    map[string]*job{},
 		trLocks: map[string]*sync.Mutex{},
 	}
+	t.checkouts = newFixCheckouts(o.cache, t.fetcher)
 	t.root, t.cancelRoot = context.WithCancel(context.Background())
 	d, err := newDismissals(o)
 	if err != nil {
@@ -421,6 +442,14 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	}
 	// Before the overview, so confirmed comments are in it.
 	threads := t.refreshThreads(ctx, info, units, o, pipe.Presorter.Policy.Tiers, pipe.Progress)
+	// After the comments, so a comment that repeats an issue of another
+	// unit is merged into it too; before the counts, which it changes.
+	if pipe.Summarizer != nil {
+		if pipe.Progress != nil {
+			pipe.Progress("dedupe", 0, 0)
+		}
+		pipe.Summarizer.Dedupe(ctx, units, pipe.Presorter.Policy.Tiers)
+	}
 
 	r := &PRResult{
 		Key: key, PR: info, CreatedAt: time.Now(), DurationMS: time.Since(start).Milliseconds(),
@@ -455,6 +484,9 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 		us := byFile[f.Path]
 		sort.SliceStable(us, func(i, j int) bool { return us[i].Line < us[j].Line })
 		r.Files = append(r.Files, resultFile{FileDiff: f, Units: us})
+	}
+	if prev := t.earlierReview(key); prev != nil {
+		r.Resolved = resolvedSince(prev, r)
 	}
 	if err := t.saveResult(r); err != nil {
 		return r, err
@@ -1026,6 +1058,120 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		}
 		writeJSON(w, 202, t.snapshot(j))
 	})
+	// A PR's fix checkouts: what they hold, their changes, and committing,
+	// pushing or discarding them (see fixpush.go).
+	mux.HandleFunc("GET /api/results/{key}/fixes", func(w http.ResponseWriter, r *http.Request) {
+		res, err := t.Load(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		fixes, marks, running, err := t.pendingFixes(r.Context(), res)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		if fixes == nil {
+			fixes = []*pendingFix{}
+		}
+		writeJSON(w, 200, map[string]any{"fixes": fixes, "marks": marks, "running": running})
+	})
+	// The PR's branch in its repository's fix checkout (see fixbranch.go).
+	mux.HandleFunc("GET /api/results/{key}/fixes/commit/{commit}", func(w http.ResponseWriter, r *http.Request) {
+		files, err := t.branchCommitDiff(r.Context(), r.PathValue("key"), r.PathValue("commit"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"files": files})
+	})
+	mux.HandleFunc("POST /api/results/{key}/fixes/push", func(w http.ResponseWriter, r *http.Request) {
+		head, err := t.pushBranch(r.Context(), r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"head": head})
+	})
+	mux.HandleFunc("POST /api/results/{key}/fixes/drop", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Commit string `json:"commit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := t.dropFix(r.Context(), r.PathValue("key"), req.Commit); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /api/results/{key}/fixes/complete", func(w http.ResponseWriter, r *http.Request) {
+		res, err := t.Load(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		if res.PR == nil || res.PR.LocalPath != "" {
+			writeErr(w, 400, errors.New("only a PR's fixes are completed"))
+			return
+		}
+		if err := t.complete(res.PR.PRRef); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("GET /api/results/{key}/fix/diff", func(w http.ResponseWriter, r *http.Request) {
+		res, err := t.loadFix(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		p, err := inspectFix(r.Context(), res, true)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, p)
+	})
+	mux.HandleFunc("POST /api/results/{key}/fix/commit", func(w http.ResponseWriter, r *http.Request) {
+		var jo jobOptions
+		if err := json.NewDecoder(r.Body).Decode(&jo); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		p, err := t.commitFix(r.Context(), t.options(jo), r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, p)
+	})
+	mux.HandleFunc("POST /api/fixes/push", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			jobOptions
+			Keys []string `json:"keys"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		head, err := t.pushFixes(r.Context(), t.options(req.jobOptions), req.Keys)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"head": head})
+	})
+	mux.HandleFunc("POST /api/results/{key}/fix/discard", func(w http.ResponseWriter, r *http.Request) {
+		if err := t.discardFix(r.PathValue("key")); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, t.jobList())
 	})
@@ -1046,6 +1192,22 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		writeJSON(w, 200, threads)
 	})
 
+	// Fixes made each in a worktree of its own move onto their PR's
+	// branch, and PRs nobody fixed for a while are completed.
+	if done := t.track(); done != nil {
+		go func() {
+			defer done()
+			t.migrateFixes(t.root)
+			for {
+				t.autoComplete()
+				select {
+				case <-t.root.Done():
+					return
+				case <-time.After(time.Hour):
+				}
+			}
+		}()
+	}
 	return t.withRoot(mux), func() { t.shutdown(shutdownWait) }, nil
 }
 

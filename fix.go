@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -59,6 +60,15 @@ var fixTool = llm.ToolDefinition{
 	InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 		"patch":  map[string]any{"type": "string"},
 		"reason": map[string]any{"type": "string"},
+		// The other open issues (see sideIssue) the patch resolves too.
+		"also_resolves": map[string]any{"type": "array", "items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":     map[string]any{"type": "integer"},
+				"reason": map[string]any{"type": "string"},
+			},
+			"required": []string{"id", "reason"},
+		}},
 	}, "required": []string{"patch", "reason"}},
 }
 
@@ -280,7 +290,7 @@ func fixTargets(r *PRResult, req fixRequest) []targetedIssue {
 				continue
 			}
 			for i, issue := range u.Issues {
-				if (req.All && !issue.Dismissed) || (u.ID == req.UnitID && i == req.Issue) {
+				if (req.All && issue.Live()) || (u.ID == req.UnitID && i == req.Issue) {
 					out = append(out, targetedIssue{u.ID, f.Path, issue, nil})
 				}
 			}
@@ -299,6 +309,11 @@ func fixTargets(r *PRResult, req fixRequest) []targetedIssue {
 }
 
 func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req fixRequest, progress func(string, int, int)) (_ *PRResult, err error) {
+	// A PR is fixed in its repository's checkout, unless the fix continues
+	// one made before those, in a worktree of its own.
+	if old.PR.LocalPath == "" && (old.LocalFixDir == "" || t.checkouts.isRepoCheckout(old.LocalFixDir)) {
+		return t.runBranchFix(ctx, jobID, old, req, progress)
+	}
 	t.fixMu.Lock()
 	defer t.fixMu.Unlock()
 	if err := checkUncommitted(old, req); err != nil {
@@ -474,6 +489,22 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			return nil, errors.New("fix worktree no longer contains the reviewed PR head")
 		}
 	}
+	// base is the commit the fix's changes are diffed from. A fix that
+	// continues another keeps its base, unless that one was pushed: its
+	// changes are on the PR then, and this fix's start after them.
+	base, fixed := old.FixBase, old.FixedIssues
+	switch {
+	case old.FixPushed != "":
+		base, fixed = old.FixPushed, nil
+	case old.LocalFixDir == "":
+		head, err := triage.Git(fixDir, "rev-parse", "HEAD")
+		if err != nil {
+			return nil, err
+		}
+		base = strings.TrimSpace(head)
+	case base == "":
+		base = old.PR.HeadOid // a fix saved before its base was
+	}
 	// The fixer works in a checkout of code the PR controls: its agent
 	// files must not reach the fixer CLI as the project's instructions.
 	// Only a worktree or clone this app made is stripped; the tracked
@@ -491,7 +522,35 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	if undo != nil {
 		where = ""
 	}
-	issues := fixTargets(old, req)
+	next, _, err := t.fixRounds(ctx, jobID, old, req, o, fixRun{dir: fixDir, branch: fixBranch, location: fixLocation, base: base, fixed: fixed, where: where, warning: warning}, fixTargets(old, req), progress)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.saveFixResult(next); err != nil {
+		return nil, err
+	}
+	succeeded = true
+	return next, nil
+}
+
+// fixRun is the checkout a fix's rounds run in and what they start from.
+type fixRun struct {
+	dir, branch, location string
+	base                  string       // the commit the fix's changes are diffed from
+	fixed                 []fixedIssue // carried from the fix this one continues
+	where                 string       // for errors: the checkout a failed run leaves its changes in
+	warning               string
+	// files, in a shared checkout, are the files the fix claimed: the
+	// rounds keep to them, and the re-triage reviews only their units.
+	files map[string]bool
+}
+
+// fixRounds fixes issues in fr's checkout, round by round, and re-triages
+// the fixed code. It returns the fix's result, unsaved, and how many
+// rounds applied a patch.
+func (t *triager) fixRounds(ctx context.Context, jobID string, old *PRResult, req fixRequest, o options, fr fixRun, issues []targetedIssue, progress func(string, int, int)) (*PRResult, int, error) {
+	ref := old.PR.PRRef
+	fixDir, fixBranch, fixLocation, base, fixed, where, warning := fr.dir, fr.branch, fr.location, fr.base, fr.fixed, fr.where, fr.warning
 	skip := untargeted(old, issues)
 	selected := map[string]bool{}
 	threads := map[string]bool{} // targeted review threads not yet addressed
@@ -515,17 +574,32 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	applied := 0
 	stopped := "" // why the rounds ended early, once one had applied
 	tracker := newRoundTracker()
+	tried := map[string]targetedIssue{} // every issue a round worked on, by scope
+	targetThreads := map[string]bool{}
+	for th := range threads {
+		targetThreads[th] = true
+	}
+	// The fixer is shown the PR's other open issues, and says which of
+	// them its patches resolve too.
+	side := sideIssues(old, issues, targetThreads, fixed)
+	also := map[string]fixedIssue{}
 	for round := 1; round <= rounds && len(issues) > 0; round++ {
+		for _, x := range issues {
+			if s := issueScope(x.UnitID, x.Issue); x.Comment == nil && tried[s].UnitID == "" {
+				tried[s] = x
+			}
+		}
 		progress("fix", round, rounds)
-		changed, err := fixRound(ctx, o, fixDir, current, issues)
+		changed, resolved, err := fixRound(ctx, o, fixDir, current, issues, side)
 		if err != nil {
 			if applied == 0 || ctx.Err() != nil {
-				return nil, fmt.Errorf("round %d: %w%s", round, err, where)
+				return nil, 0, fmt.Errorf("round %d: %w%s", round, err, where)
 			}
 			stopped = fmt.Sprintf("fix round %d failed, so the fix stops at round %d: %v", round, applied, err)
 			break
 		}
 		applied++
+		side = takeResolved(side, resolved, also)
 		progress("check", round, rounds)
 		next, reviewed, err := t.checkFix(ctx, old, current, fixDir, o, selected, changed, threads, old.FixRounds+round)
 		if err == nil {
@@ -533,7 +607,7 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			// The re-triage reviews what the failed check left out.
 			stopped = fmt.Sprintf("checking fix round %d failed: %v", round, err)
@@ -552,6 +626,10 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			}
 		}
 		issues = tracker.next(issues, reviewed, touched, remaining(next, reviewed, threads, skip))
+		if fr.files != nil {
+			// Another fix may hold the other files.
+			issues = slices.DeleteFunc(issues, func(x targetedIssue) bool { return !fr.files[x.File] })
+		}
 	}
 	if left := tracker.warning(); left != "" {
 		if stopped != "" {
@@ -563,9 +641,9 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 		t.warn(ctx, jobID, stopped)
 	}
 	progress("triage", 0, 0)
-	next, err := t.retriageFix(ctx, old, current, fixDir, o)
+	next, err := t.retriageFix(ctx, old, current, fixDir, o, fr.files)
 	if err != nil {
-		return nil, fmt.Errorf("re-triage: %w%s", err, where)
+		return nil, 0, fmt.Errorf("re-triage: %w%s", err, where)
 	}
 	next.LocalFixDir = fixDir
 	if old.PR.SingleCommit {
@@ -577,39 +655,44 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	} else if old.PR.LocalPath != "" {
 		snapshot, err := inspectLocal(ctx, fixDir)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		next.PR = snapshot.info
 	}
 	next.LocalFixBranch = fixBranch
 	next.LocalFixLocation = fixLocation
+	next.FixBase, next.FixPushed, next.FixPushedAs = base, "", ""
+	next.FixedIssues = fixedIssues(fixed, next, tried, tracker.fixed, targetThreads)
+	next.FixedIssues = append(next.FixedIssues, sideFixed(also, old, next, next.FixedIssues)...)
 	next.FixRounds = old.FixRounds + applied
 	next.FixWarning = strings.Join(slices.DeleteFunc([]string{warning, stopped}, func(s string) bool { return s == "" }), "; ")
 	next.Key = "fix__" + ref.FileKey() + "__" + jobID
-	if err := t.saveFixResult(next); err != nil {
-		return nil, err
-	}
-	succeeded = true
-	return next, nil
+	return next, applied, nil
 }
 
 // fixRound asks for a patch and applies it. A patch that does not apply
 // is usually a slip in its format or context: the fixer gets one try to
 // correct it.
-func fixRound(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue) ([]triage.FileDiff, error) {
+// It returns the files the patch changed and which of side the fixer
+// says it resolves too, by ID.
+func fixRound(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue, side []sideIssue) ([]triage.FileDiff, map[int]string, error) {
 	targets := fixFiles(issues)
-	patch, err := makeFixPatch(ctx, o, dir, r, issues, nil)
+	patch, resolved, err := makeFixPatch(ctx, o, dir, r, issues, side, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	changed, err := applyFixPatch(ctx, dir, patch, targets)
+	apply := func(patch string) ([]triage.FileDiff, error) {
+		defer lockTree(ctx)()
+		return applyFixPatch(ctx, dir, patch, targets)
+	}
+	changed, err := apply(patch)
 	if err != nil {
-		patch, err = makeFixPatch(ctx, o, dir, r, issues, &rejectedPatch{patch, err})
+		patch, resolved, err = makeFixPatch(ctx, o, dir, r, issues, side, &rejectedPatch{patch, err})
 		if err == nil {
-			changed, err = applyFixPatch(ctx, dir, patch, targets)
+			changed, err = apply(patch)
 		}
 	}
-	return changed, err
+	return changed, resolved, err
 }
 
 // rejectedPatch is a fixer's patch that did not apply, and why.
@@ -662,6 +745,111 @@ func untargeted(r *PRResult, targets []targetedIssue) map[string]bool {
 			delete(out, issueScope(x.UnitID, x.Issue))
 		}
 	}
+	return out
+}
+
+// sideIssue is an open issue or review thread of the PR that a fix was
+// not asked to work on. The fixer is shown them, numbered from 1, and
+// says which its patch resolves too.
+type sideIssue struct {
+	ID       int    `json:"id"`
+	File     string `json:"file"`
+	Line     int    `json:"line,omitempty"`
+	Title    string `json:"title"`
+	Evidence string `json:"evidence,omitempty"`
+	Scenario string `json:"failure_scenario,omitempty"`
+	rec      fixedIssue
+}
+
+// sideIssues is r's open issues and confirmed review threads that are
+// not in targets or threads, and not already fixed (have). A thread that
+// raises one of the issues is left out with it.
+func sideIssues(r *PRResult, targets []targetedIssue, threads map[string]bool, have []fixedIssue) []sideIssue {
+	skip := map[string]bool{}
+	for _, f := range have {
+		skip[f.Scope] = true
+	}
+	for _, x := range targets {
+		if x.Comment == nil {
+			skip[issueScope(x.UnitID, x.Issue)] = true
+		}
+	}
+	var out []sideIssue
+	add := func(is triage.Issue, rec fixedIssue) {
+		if skip[rec.Scope] {
+			return
+		}
+		skip[rec.Scope] = true
+		out = append(out, sideIssue{ID: len(out) + 1, File: rec.File, Line: is.Line, Title: is.Title, Evidence: is.Evidence, Scenario: is.Scenario, rec: rec})
+	}
+	for _, f := range r.Files {
+		for _, u := range f.Units {
+			for _, is := range u.Issues {
+				if is.Live() {
+					add(is, fixedIssue{Scope: issueScope(u.ID, is), UnitID: u.ID, File: f.Path, Severity: is.Severity, Title: is.Title})
+				}
+			}
+			for i := range u.Threads {
+				th := &u.Threads[i]
+				if th.Status == triage.ThreadValid && !th.Fixed && !threads[th.ID] && th.DuplicateOf == nil {
+					is := th.AsIssue()
+					add(is, fixedIssue{Scope: threadScope(th.ID), UnitID: u.ID, File: f.Path, Severity: is.Severity, Title: is.Title, Thread: th.ID, URL: th.URL})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// takeResolved moves the side issues the fixer said a round resolved
+// into also, and numbers the rest from 1 again for the next round.
+func takeResolved(side []sideIssue, resolved map[int]string, also map[string]fixedIssue) []sideIssue {
+	var left []sideIssue
+	for _, x := range side {
+		if why, ok := resolved[x.ID]; ok {
+			rec := x.rec
+			rec.Swept, rec.Reason = true, why
+			also[rec.Scope] = rec
+			continue
+		}
+		x.ID = len(left) + 1
+		left = append(left, x)
+	}
+	return left
+}
+
+// sideFixed is what the fixer said its patches resolved besides their
+// targets, less what is in have and the issues a review found again in a
+// unit whose diff the fix changed: the fixer was wrong about those.
+func sideFixed(also map[string]fixedIssue, old, next *PRResult, have []fixedIssue) []fixedIssue {
+	done := map[string]bool{}
+	for _, f := range have {
+		done[f.Scope] = true
+	}
+	was := unitsByID(old)
+	for _, u := range resultUnitsWithHunks(next) {
+		if o := was[u.ID]; o == nil || !triage.SameDiff(o, u) {
+			for _, is := range u.Issues {
+				done[issueScope(u.ID, is)] = true
+			}
+		}
+	}
+	var out []fixedIssue
+	for s, f := range also {
+		if !done[s] {
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.UnitID != b.UnitID {
+			return a.UnitID < b.UnitID
+		}
+		return a.Title < b.Title
+	})
 	return out
 }
 
@@ -1010,12 +1198,12 @@ func availableFixBranch(repoDir string, pr *triage.PRInfo, jobID string) string 
 	return fmt.Sprintf("pr-manager/pr-%d-%s", pr.Number, jobID)
 }
 
-// makeFixPatch asks the summarizer for a patch. retry, when set, is its
-// last patch, which was rejected.
-func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue, retry *rejectedPatch) (string, error) {
+// makeFixPatch asks the summarizer for a patch, and which of side it
+// resolves too. retry, when set, is its last patch, which was rejected.
+func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue, side []sideIssue, retry *rejectedPatch) (string, map[int]string, error) {
 	l, err := llm.New(o.summarizer, o.summaryModel)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	llm.SetEffort(l, o.reviewEffort)
 	// Everything from the repository or the PR, file contents, diff hunks
@@ -1024,7 +1212,7 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 	// line of backticks closes a fence, and pass for the prompt's text.
 	nonce, err := promptNonce()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	block := func(attrs, content string) string {
 		return fmt.Sprintf("<untrusted id=%q%s>\n%s\n</untrusted id=%q>", nonce, attrs, content, nonce)
@@ -1043,6 +1231,10 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 		quoted[i] = strconv.Quote(path)
 	}
 	fmt.Fprintf(&prompt, "\nThe patch may change only these files: %s. It may not add, delete, rename or change the mode of any other file.\n", strings.Join(quoted, ", "))
+	if len(side) > 0 {
+		data, _ := json.MarshalIndent(side, "", "  ")
+		fmt.Fprintf(&prompt, "\nThe PR's other open issues, which are not yours to fix: don't change code for them. If your patch resolves one of them anyway, put its id in also_resolves with why; leave out one it only touches or might help.\n%s\n", block(" what=\"other issues\"", string(data)))
+	}
 	if r.FixFromRev != "" {
 		fmt.Fprintf(&prompt, "\nThese issues were found reviewing %s, and the checkout is at other code. The reported units below show the code as it was reviewed: find that code in the checkout as it is now, and leave out an issue that no longer applies to it.\n", r.FixFromRev)
 	}
@@ -1065,11 +1257,11 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 	// a PR can add a link to a file outside it.
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for _, path := range paths {
 		if !safeRepoPath(path) {
-			return "", fmt.Errorf("unsafe issue path %q", path)
+			return "", nil, fmt.Errorf("unsafe issue path %q", path)
 		}
 		content, err := readLocalFile(root, path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1097,14 +1289,30 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 	}
 	args, _, err := llm.CallToolIn(ctx, l, ws, []llm.ChatMessage{{Role: "system", Content: fixSystem}, {Role: "user", Content: prompt.String()}}, fixTool, 16384)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	patch, _ := args["patch"].(string)
 	if strings.TrimSpace(patch) == "" {
 		reason, _ := args["reason"].(string)
-		return "", fmt.Errorf("fixer returned no patch: %s", reason)
+		return "", nil, fmt.Errorf("fixer returned no patch: %s", reason)
 	}
-	return patch, nil
+	return patch, alsoResolves(args, len(side)), nil
+}
+
+// alsoResolves reads the fixer's also_resolves: reasons by ID, 1 to n.
+func alsoResolves(args map[string]any, n int) map[int]string {
+	out := map[int]string{}
+	items, _ := args["also_resolves"].([]any)
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		id, ok := m["id"].(float64)
+		if !ok || id != float64(int(id)) || id < 1 || int(id) > n {
+			continue
+		}
+		why, _ := m["reason"].(string)
+		out[int(id)] = strings.TrimSpace(why)
+	}
+	return out
 }
 
 // promptNonce is a random id for one request's untrusted blocks.
@@ -1661,6 +1869,8 @@ func copyIndex(ctx context.Context, dir string, w io.Writer) (bool, error) {
 // for the diff in a scratch index: in the current branch the checkout is
 // the user's.
 func fixPipeline(ctx context.Context, original *PRResult, dir string, o options) (*triage.Source, *triage.Pipeline, error) {
+	unlock := lockTree(ctx) // a fix next to this one applies no patch meanwhile
+	defer unlock()
 	index, cleanup, err := scratchIndex(ctx, dir, true)
 	if err != nil {
 		return nil, nil, err
@@ -1763,7 +1973,10 @@ func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, di
 // them, and units last checked keep that review, so this pass normally
 // only classifies what the fix changed, lints and scores. A unit whose
 // diff moved since last (a round whose check failed) is reviewed here.
-func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir string, o options) (*PRResult, error) {
+// With own, the files a fix claimed in a shared checkout, the units of
+// other files keep last's review, whatever another fix did to them: it
+// reviews its own.
+func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir string, o options, own map[string]bool) (*PRResult, error) {
 	src, pipe, err := fixPipeline(ctx, original, dir, o)
 	if err != nil {
 		return nil, err
@@ -1778,7 +1991,7 @@ func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir
 	pipe.CarryFrom = func(fresh []*triage.Unit) *triage.ReviewCarry {
 		c := &triage.ReviewCarry{Reuse: map[string]*triage.Unit{}}
 		for _, u := range fresh {
-			if old := prior[u.ID]; old != nil && old.Reviewed && triage.SameDiff(old, u) {
+			if old := prior[u.ID]; old != nil && old.Reviewed && (triage.SameDiff(old, u) || (own != nil && !own[u.File])) {
 				c.Reuse[u.ID] = old
 			}
 		}
@@ -1786,6 +1999,9 @@ func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir
 	}
 	reviewed := map[string]bool{}
 	pipe.ReviewFilter = func(u *triage.Unit) bool {
+		if own != nil && !own[u.File] {
+			return false
+		}
 		if old := prior[u.ID]; old == nil || !triage.SameDiff(old, u) {
 			reviewed[u.ID] = true
 			return true
@@ -1800,12 +2016,15 @@ func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir
 		activity.Printf(ctx, "re-triage reviewed %d units the checks did not", len(reviewed))
 	}
 	placeThreads(units, prior, reviewed)
+	if pipe.Summarizer != nil {
+		pipe.Summarizer.Dedupe(ctx, units, pipe.Presorter.Policy.Tiers)
+	}
 	return fixResult(last, src, units), nil
 }
 
 // placeThreads gives units the review threads prior had: on their unit by
 // ID, else by line. A reviewed unit's issues were found again, so the
-// duplicate links into them are dropped.
+// duplicate links into them are dropped, from whichever unit's comments.
 func placeThreads(units []*triage.Unit, prior map[string]*triage.Unit, reviewed map[string]bool) {
 	var lost []triage.Thread
 	for _, old := range prior {
@@ -1819,9 +2038,11 @@ func placeThreads(units []*triage.Unit, prior map[string]*triage.Unit, reviewed 
 				placed[th.ID] = true
 			}
 		}
-		if reviewed[u.ID] {
-			for i := range u.Threads {
-				u.Threads[i].DuplicateOf = nil
+	}
+	for _, u := range units {
+		for i := range u.Threads {
+			if th := &u.Threads[i]; reviewed[cmp.Or(th.DuplicateUnit, u.ID)] {
+				th.DuplicateOf, th.DuplicateUnit, th.Compared = nil, "", false
 			}
 		}
 	}

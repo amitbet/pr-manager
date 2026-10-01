@@ -24,6 +24,7 @@ import { translate } from "./translate.js";
 import { actions as enActions } from "./entext.js";
 import { loadOverview, actions as overviewActions } from "./overview.js";
 import { issuesHTML, syncDismiss, actions as issueActions } from "./issues.js";
+import { initFixes, actions as pendingActions } from "./fixes.js";
 import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeydown } from "./sequence.js";
 import * as budget from "./budget.js";
 
@@ -44,7 +45,7 @@ function openClaims() {
   let n = 0;
   for (const f of S.result.files) {
     for (const u of f.units || []) {
-      n += (u.issues || []).filter((i) => !i.dismissed).length;
+      n += (u.issues || []).filter((i) => !i.dismissed && !i.same_as).length;
       n += (u.lint || []).filter((x) => !x.dismissed).length;
       n += (u.threads || []).filter((t) => !t.fixed && t.status === "valid" && t.duplicate_of == null).length;
     }
@@ -54,7 +55,7 @@ function openClaims() {
 const MODES = [["walk", "Walkthrough"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...seqActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
   "create-pr": async (el) => {
@@ -230,6 +231,7 @@ document.addEventListener("keydown", seqKeydown);
   initRevPicker();
   initJobs(showKey, loadList);
   initFix(showKey);
+  initFixes(showKey);
   initSettings(() => { if (S.result) { budget.apply(S.result, S.cfg); render(); } }, translate);
   await loadList();
   const q = new URLSearchParams(location.search);

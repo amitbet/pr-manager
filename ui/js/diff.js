@@ -53,7 +53,9 @@ export function prepare(r) {
 }
 
 const headLines = (f) => S.files[`head:${f.path}`];
-const canExpand = (f) => f.status !== "deleted" && f.status !== "added" && !f.binary && !!f._last;
+// A readonly file (a fix's changes, not the PR's) has no context to
+// expand and takes no review comments.
+const canExpand = (f) => !f.readonly && f.status !== "deleted" && f.status !== "added" && !f.binary && !!f._last;
 const fileHunks = (f) => (f.units || []).flatMap((u) => u.hunks || []);
 
 // fullyExpanded reports whether every gap in f, and its tail, is open.
@@ -144,7 +146,7 @@ export function unitRows(f, u) {
 }
 
 function gutter(f, side, line, num, cls, cm) {
-  const btn = cm ? `<button class="cm" title="Add a review comment" data-act="comment" data-path="${esc(f.path)}" data-side="${side}" data-line="${line}">+</button>` : "";
+  const btn = cm && !f.readonly ? `<button class="cm" title="Add a review comment" data-act="comment" data-path="${esc(f.path)}" data-side="${side}" data-line="${line}">+</button>` : "";
   return `<td class="n ${cls}">${btn}${num ?? ""}</td>`;
 }
 
@@ -189,7 +191,7 @@ function unifiedTable(f, rows) {
       ${gutter(f, "LEFT", r.o, r.o, cls, cm && r.t === "del")}
       ${gutter(f, "RIGHT", r.n, r.n, cls, cm && r.t !== "del")}
       <td class="c ${cls}">${esc(r.text)}</td></tr>`;
-    if (!r.x) {
+    if (!r.x && !f.readonly) {
       const anchors = r.t === "ctx" ? [{ side: "LEFT", line: r.o }, { side: "RIGHT", line: r.n }]
         : r.t === "del" ? [{ side: "LEFT", line: r.o }] : [{ side: "RIGHT", line: r.n }];
       out += threadRow(f, anchors, 3);
@@ -228,7 +230,7 @@ function splitTable(f, rows) {
     }
     const x = (p.l || p.r).x;
     out += `<tr ${issAttrs(x, p.r || p.l, p.l?.start || p.r?.start, p.l?.uid || p.r?.uid)}>${cell(p.l, "LEFT")}${cell(p.r, "RIGHT")}</tr>`;
-    if (!x) {
+    if (!x && !f.readonly) {
       const anchors = [];
       if (p.l) anchors.push({ side: "LEFT", line: p.l.o });
       if (p.r) anchors.push({ side: "RIGHT", line: p.r.n });

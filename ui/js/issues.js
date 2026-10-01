@@ -13,7 +13,8 @@ import { S, render, allUnits } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, attLevel } from "./scores.js";
 import { issueDraftButton } from "./comments.js";
 import { issueFixButton, threadFixButton, fixAllHTML } from "./fix.js";
-import { raisedBy, raisedChip } from "./threads.js";
+import { pendingFixesHTML, issueFixMark, fixedBy } from "./fixes.js";
+import { raisedBy, raisedChip, dupTarget } from "./threads.js";
 import { lintLine, LINT_RANK } from "./lint.js";
 import { trText, trDir, english } from "./entext.js";
 import * as budget from "./budget.js";
@@ -24,24 +25,49 @@ const KINDS = [["issue", "Review"], ["lint", "Static analysis"], ["comment", "Re
 // claims is every row the tab can show, most severe first. A row knows
 // where it came from, so dismissing it names the same thing the server
 // does: a unit, a kind and an index.
+//
+// An issue the review raised again from another unit (same_as, see
+// Dedupe in Go) is not a row of its own: it is listed on the row of the
+// issue it repeats.
 function claims() {
   const out = [];
+  const repeats = new Map();
+  const at = (unit, title) => `${unit}\n${title}`;
   for (const { u, f } of allUnits()) {
-    (u.issues || []).forEach((is, i) =>
-      out.push({ kind: "issue", u, f, i, is, sev: is.severity, rank: SEV_RANK[is.severity] ?? 3, dismissed: !!is.dismissed, why: is.dismissed_why, dkey: is.dismiss_key }));
+    (u.issues || []).forEach((is, i) => {
+      if (is.same_as) {
+        const k = at(is.same_as.unit, is.same_as.title);
+        repeats.set(k, [...(repeats.get(k) || []), { u, is }]);
+        return;
+      }
+      out.push({ kind: "issue", u, f, i, is, sev: is.severity, rank: SEV_RANK[is.severity] ?? 3, dismissed: !!is.dismissed, why: is.dismissed_why, dkey: is.dismiss_key });
+    });
     (u.lint || []).forEach((x, i) =>
       out.push({ kind: "lint", u, f, i, lint: x, sev: x.severity === "error" ? "high" : "low", rank: (LINT_RANK[x.severity] ?? 1) + 1, dismissed: !!x.dismissed, why: x.dismissed_why, dkey: x.dismiss_key }));
     (u.threads || []).forEach((t) => {
-      if (t.fixed) return;
+      // A thread that raises an open issue, on this unit or another, is
+      // that issue's row, which links to it (raisedChip).
+      const d = dupTarget(u, t);
+      if (t.fixed || (d && !d.is.dismissed)) return;
       out.push({ kind: "comment", u, f, t, sev: t.issue?.severity || "low", rank: (SEV_RANK[t.issue?.severity] ?? 3) + (t.status === "valid" ? 0 : 0.5), dismissed: false });
     });
   }
-  out.sort((a, b) => a.rank - b.rank || a.u.id.localeCompare(b.u.id));
+  for (const c of out) if (c.kind === "issue") c.repeats = repeats.get(at(c.u.id, c.is.title));
+  // What a pending fix fixed goes last: it is handled until the fix is
+  // pushed and the PR triaged again. After it, what an earlier review
+  // raised that this one no longer does.
+  for (const c of out) c.fixed = !c.dismissed && !!(c.kind === "issue" ? fixedBy(c.u, c.i) : c.kind === "comment" && fixedBy(c.u, null, c.t.id));
+  const units = new Map(allUnits().map(({ u }) => [u.id, u]));
+  for (const x of S.result.resolved || []) {
+    out.push({ kind: "resolved", u: units.get(x.unit_id) || { id: x.unit_id, file: x.file, gone: true }, x, is: x.issue, sev: x.issue.severity, rank: SEV_RANK[x.issue.severity] ?? 3, fixed: true, dismissed: false });
+  }
+  const done = (c) => c.kind === "resolved" ? 2 : c.fixed ? 1 : 0;
+  out.sort((a, b) => done(a) - done(b) || a.rank - b.rank || a.u.id.localeCompare(b.u.id));
   return out;
 }
 
 const hidden = () => S.issueKinds;
-const visible = (c) => !hidden().has(c.kind);
+const visible = (c) => !hidden().has(c.kind === "resolved" ? "issue" : c.kind);
 
 // claimKey identifies a row in the page, so the dismiss form knows which
 // one it is open on.
@@ -49,6 +75,7 @@ const claimKey = (c) => `${c.kind}|${c.u.id}|${c.kind === "comment" ? c.t.id : c
 
 function unitLink(c) {
   const where = c.u.symbol ? `${c.u.file} · ${c.u.symbol}` : c.u.file;
+  if (c.u.gone) return `<span class="muted unit-link">${esc(where)}</span>`;
   return `<button class="linkbtn unit-link" data-act="issue-goto" data-unit="${esc(c.u.id)}" title="Open this change in the Review tab">${esc(where)}</button>`;
 }
 
@@ -70,7 +97,7 @@ function dismissForm(c) {
 // A GitHub comment has no Dismiss: it belongs to the person who wrote it,
 // and resolving the thread there is what makes it stop counting.
 function dismissButton(c) {
-  if (c.kind === "comment" || c.dismissed) return "";
+  if (c.kind === "comment" || c.kind === "resolved" || c.dismissed) return "";
   return `<button class="details-btn" data-act="issue-dismiss" data-ckey="${esc(claimKey(c))}">Dismiss</button>`;
 }
 
@@ -81,7 +108,7 @@ const restoreButton = (c) => c.dkey
 function issueRow(c) {
   const { u, f, is, i } = c;
   const dup = raisedBy(u, i);
-  const act = c.dismissed ? "" : `${dup ? raisedChip(dup) : issueDraftButton(f, u, i)} ${issueFixButton(u, i)}`;
+  const act = c.dismissed ? "" : `${dup ? raisedChip(dup) : issueDraftButton(f, u, i)} ${issueFixMark(u, i) || issueFixButton(u, i)}`;
   return `<div class="claim-head">
       <span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>
       ${is.line ? `<span class="ln">line ${is.line}</span>` : ""}
@@ -90,7 +117,18 @@ function issueRow(c) {
     </div>
     ${unitLink(c)}
     ${is.detail ? `<span class="idetail tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</span>` : ""}
-    ${issueScenarioHTML(is, "idetail", u, i)}`;
+    ${issueScenarioHTML(is, "idetail", u, i)}
+    ${repeatsHTML(c)}`;
+}
+
+// repeatsHTML lists the other units the review raised the same issue on.
+function repeatsHTML(c) {
+  if (!c.repeats?.length) return "";
+  const links = c.repeats.map(({ u, is }) => {
+    const where = (u.symbol ? `${u.file} · ${u.symbol}` : u.file) + (is.line ? `:${is.line}` : "");
+    return `<button class="linkbtn" data-act="issue-goto" data-unit="${esc(u.id)}" title="${esc(`${is.severity}: ${is.title}`)}">${esc(where)}</button>`;
+  });
+  return `<span class="idetail repeats"><span class="muted">Also raised on</span> ${links.join(", ")}</span>`;
 }
 
 function lintRow(c) {
@@ -106,16 +144,31 @@ function commentRow(c) {
   return `<div class="claim-head">${state}${t.line ? `<span class="ln">line ${t.line}</span>` : ""}
       <b>${esc(title)}</b>
       <a class="tauthor" href="${esc(t.url)}" target="_blank" rel="noopener">@${esc(t.author)}</a>
-      <span class="spacer"></span>${threadFixButton(c.u, t)}
+      <span class="spacer"></span>${issueFixMark(c.u, null, t.id) || threadFixButton(c.u, t)}
     </div>
     ${unitLink(c)}
     ${is?.detail ? `<span class="idetail">${esc(is.detail)}</span>` : ""}`;
 }
 
-const rowHTML = { issue: issueRow, lint: lintRow, comment: commentRow };
+// resolvedRow is an issue an earlier review raised that this one, of
+// newer code, no longer does.
+function resolvedRow(c) {
+  const { x, is } = c;
+  const since = /^[0-9a-f]{40}$/.test(x.since) ? x.since.slice(0, 10) : "the last review";
+  const why = x.gone ? "its code is no longer in the PR" : "the review of the new code didn't raise it again";
+  return `<div class="claim-head">
+      <span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>
+      ${is.line ? `<span class="ln">line ${is.line}</span>` : ""}
+      <b>${esc(is.title)}</b>
+      <span class="spacer"></span><span class="dz low" title="Raised on ${esc(since)} (${esc(new Date(x.at).toLocaleString())}); ${esc(why)}">fixed since ${esc(since)}</span>
+    </div>
+    ${unitLink(c)}`;
+}
+
+const rowHTML = { issue: issueRow, lint: lintRow, comment: commentRow, resolved: resolvedRow };
 
 function claimHTML(c) {
-  return `<li class="claim ${c.kind}${c.dismissed ? " dismissed" : ""}">
+  return `<li class="claim ${c.kind}${c.dismissed ? " dismissed" : ""}${c.fixed ? " fixed" : ""}">
       ${rowHTML[c.kind](c)}
       ${c.dismissed ? `<span class="idetail dismissed-why"><b>Dismissed</b>${c.why ? `: ${esc(c.why)}` : ""} · ${restoreButton(c)}</span>` : ""}
       ${dismissForm(c)}
@@ -126,7 +179,7 @@ function claimHTML(c) {
 // says so.
 function counts(all) {
   const c = { issue: 0, lint: 0, comment: 0 };
-  all.forEach((x) => { if (!x.dismissed) c[x.kind]++; });
+  all.forEach((x) => { if (!x.dismissed && x.kind in c) c[x.kind]++; });
   return c;
 }
 
@@ -135,14 +188,17 @@ export function issuesHTML() {
   const n = counts(all);
   const open = all.filter((c) => !c.dismissed && visible(c));
   const gone = all.filter((c) => c.dismissed && visible(c));
+  const standing = open.filter((c) => !c.fixed);
   const weight = { critical: 95, high: 75, medium: 45, low: 15 };
-  const worst = open.reduce((m, c) => Math.max(m, weight[c.sev] || 15), 0);
+  const worst = standing.reduce((m, c) => Math.max(m, weight[c.sev] || 15), 0);
   return `<div class="toolbar">
       ${KINDS.map(([k, label]) => `<span class="filter ${hidden().has(k) ? "off" : ""}" data-act="issues-filter" data-k="${k}"><b>${n[k]}</b> ${label}</span>`).join("")}
       <span class="spacer"></span>
-      ${open.length ? `<span class="dz ${attLevel(worst)}" title="the worst claim still standing">${open.length} open</span>` : ""}
+      ${standing.length ? `<span class="dz ${attLevel(worst)}" title="the worst claim still standing">${standing.length} open</span>` : ""}
+      ${open.length > standing.length ? `<span class="muted" title="fixed by a fix not on the PR yet, or since an earlier review">${open.length - standing.length} fixed</span>` : ""}
       ${fixAllHTML()}
     </div>
+    ${pendingFixesHTML()}
     ${open.length
       ? `<ul class="claims">${open.map(claimHTML).join("")}</ul>`
       : `<div class="empty">${all.length ? "Nothing open: every claim on this PR has been dismissed or fixed." : "The review, static analysis and GitHub have nothing to report on this PR."}</div>`}

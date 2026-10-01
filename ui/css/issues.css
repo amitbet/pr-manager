@@ -13,6 +13,7 @@
 .claim.comment { border-left-color: var(--muted); }
 .claim.dismissed { opacity: .6; border-left-color: var(--muted); }
 .claim.dismissed .claim-head b { text-decoration: line-through; text-decoration-thickness: 1px; }
+.claim.fixed { opacity: .7; border-left-color: var(--none); }
 .claim-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .claim-head .spacer { flex: 1; }
 .claim-head b { font-weight: 600; }
@@ -20,6 +21,7 @@
 .claim .unit-link:hover { color: var(--fg); }
 .claim .idetail { display: block; margin-top: 3px; }
 .claim .dismissed-why { color: var(--muted); }
+.claim .repeats .linkbtn { font-family: ui-monospace, monospace; font-size: 12px; }
 
 .dismiss-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .dismiss-form label { font-size: 12px; color: var(--muted); flex-basis: 100%; }
@@ -35,3 +37,30 @@
 .lint-rule { font-size: 11px; opacity: .8; }
 .lint-msg { }
 .chip.lint-chip { font-variant-numeric: tabular-nums; }
+
+/* Pending fixes: fix checkouts whose changes aren't on the PR yet. */
+.pending-fixes { margin: 12px 0 4px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.pending-fixes > .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pending-fixes .claims { margin-top: 8px; }
+.pf { border: 1px solid var(--border); border-left: 3px solid var(--skim, #c90); border-radius: 6px; padding: 8px 10px; background: var(--bg); }
+.pf.committed { border-left-color: var(--accent); }
+.pf.pushed { border-left-color: var(--none, #2da44e); opacity: .85; }
+.pf.stale { opacity: .75; }
+.pf-where { font-size: 12px; margin: 2px 0 4px; overflow-wrap: anywhere; }
+.pf-where code { font-family: var(--mono); }
+.pf-issues > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.pf-fixed { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.pf-fixed .muted { font-family: var(--mono); font-size: 12px; }
+.pf-diff { margin-top: 8px; }
+.pf-diff > .toolbar { display: flex; align-items: center; margin-bottom: 8px; }
+.pf-diff .file { margin-bottom: 10px; }
+.pf-diff .file:last-child { margin-bottom: 0; }
+.pf-add { color: var(--none, #2da44e); font-variant-numeric: tabular-nums; }
+.pf-del { color: var(--critical, #cf222e); font-variant-numeric: tabular-nums; }
+.fix-state.uncommitted { white-space: nowrap; }
+.muted { color: var(--muted); }
+.pf-running { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.pf-running li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pf-running code, .pf-touches code { font-family: var(--mono); font-size: 12px; }
+.pf-touches { margin: 2px 0 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.chip.warn { color: var(--skim); background: var(--skim-bg); }

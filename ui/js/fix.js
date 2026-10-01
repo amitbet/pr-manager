@@ -1,20 +1,27 @@
 // Local fix jobs. The result stays open while a fix runs, with a banner that
-// shows the job's stage and opens its log. A completed job opens its
-// reviewed result and worktree path.
+// shows the job's stage and opens its log. A PR's fixes run side by side
+// in its repository's checkout, each one ending in the Issues tab's list
+// of the PR's fixes; a local review's run one at a time, and a completed
+// one opens its reviewed result and worktree path.
 import { $, esc, postJSON } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
 import { refreshJobs, showLog, stageText, pollJob } from "./jobs.js";
+import { refreshFixes } from "./fixes.js";
 
 let onDone = async () => {};
-let run = null; // { id, key: the result being fixed, job }
+let runs = []; // { id, key: the result being fixed, local, job }
 
 // initFix sets what opens a finished fix's result (its key).
 export function initFix(done) {
   onDone = done;
 }
 
-const running = () => run && run.job.status === "running";
+// running is whether a fix that blocks another runs: only a local
+// review's do, since they share the user's checkout.
+const running = () => runs.some((r) => r.local && r.job.status === "running");
+const byId = (id) => runs.find((r) => r.id === id);
+const drop = (r) => { runs = runs.filter((x) => x !== r); };
 
 // startFix takes one of: all (with comments to add the confirmed review
 // threads), unit_id and issue, or unit_id and thread. uncommitted is what
@@ -24,18 +31,21 @@ const running = () => run && run.job.status === "running";
 async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "") {
   if (running() || !S.result) return false;
   menuOpen = false;
+  const local = !!S.result.pr.local_path;
   const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
-  if (S.result.pr.local_path) body.location = "worktree";
-  run = { id: "", key: S.result.key, job: { status: "running", stage: "" } };
+  if (local) body.location = "worktree";
+  const run = { id: "", key: S.result.key, local, job: { status: "running", stage: "" } };
+  runs.push(run);
   render();
   try {
     const job = await postJSON("/api/fix", body);
     run.id = job.id;
     refreshJobs();
+    setTimeout(refreshFixes, 1500); // once the fix has claimed its files
     follow(job.id);
   } catch (e) {
     if (e.code === "rev" && !rev) {
-      run = null;
+      drop(run);
       render();
       const choice = await askRev(S.result.pr);
       if (choice) startFix(target, uncommitted, choice);
@@ -46,7 +56,7 @@ async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) 
       paint();
       return;
     }
-    run = null;
+    drop(run);
     render();
     const choice = await askUncommitted();
     if (choice) startFix(target, choice, rev);
@@ -99,17 +109,25 @@ function askUncommitted() {
 async function follow(id) {
   for (;;) {
     const j = await pollJob(id, () => {
-      if (run?.id !== id) return;
+      const run = byId(id);
+      if (!run) return;
       run.job = { ...run.job, lost: true };
       paint();
     }).catch((e) => ({ status: "error", error: `connection lost: ${e.message}` }));
-    if (run?.id !== id) return;
+    const run = byId(id);
+    if (!run) return;
     run.job = j;
     if (j.status === "done") {
-      const key = run.key;
-      run = null;
       refreshJobs();
-      if (j.key && S.result?.key === key) await onDone(j.key);
+      if (!run.local) {
+        // The fix is a commit on the PR's branch now, in the list.
+        if (!j.warning) drop(run);
+        refreshFixes();
+        paint();
+        return;
+      }
+      drop(run);
+      if (j.key && S.result?.key === run.key) await onDone(j.key);
       else paint();
       return;
     }
@@ -124,18 +142,27 @@ async function follow(id) {
 function paint() {
   const el = $("#main .fix-banner");
   if (el) el.outerHTML = fixBanner();
-  else if (run && S.result?.key === run.key) render();
+  else if (runs.some((r) => S.result?.key === r.key)) render();
 }
 
 // fixBanner shows the running or failed fix of the open result.
 export function fixBanner() {
-  if (!run || S.result?.key !== run.key) return "";
-  const log = run.id ? `<button class="linkbtn" data-act="fix-log">View log</button>` : "";
+  const mine = runs.filter((r) => S.result?.key === r.key);
+  if (!mine.length) return "";
+  return `<div class="fix-banner">${mine.map(runBanner).join("")}</div>`;
+}
+
+function runBanner(run) {
+  const log = run.id ? `<button class="linkbtn" data-act="fix-log" data-id="${esc(run.id)}">View log</button>` : "";
+  const dismiss = `<button class="linkbtn" data-act="fix-dismiss" data-id="${esc(run.id)}">dismiss</button>`;
   if (run.job.status === "error") {
-    return `<div class="tr-banner error fix-banner" role="status">Fix failed: ${esc(run.job.error)} <span class="spacer"></span>${log}<button class="linkbtn" data-act="fix-dismiss">dismiss</button></div>`;
+    return `<div class="tr-banner error" role="status">Fix failed: ${esc(run.job.error)} <span class="spacer"></span>${log}${dismiss}</div>`;
+  }
+  if (run.job.status === "done") {
+    return `<div class="tr-banner warn" role="status">Fix done: ${esc(run.job.warning)}<span class="spacer"></span>${log}${dismiss}</div>`;
   }
   const warn = run.job.warning ? `<div class="tr-banner warn" role="status">${esc(run.job.warning)}</div>` : "";
-  return `<div class="fix-banner"><div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.lost ? "connection lost, retrying…" : run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}</div>`;
+  return `<div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.lost ? "connection lost, retrying…" : run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}`;
 }
 
 // fixDisabled disables a fix button while a fix runs and on a PR that
@@ -174,7 +201,7 @@ const fixableComments = () => allUnits().flatMap(({ u }) => (u.threads || []).fi
 // fixAllHTML is the Fix all button, split with a menu to include the
 // confirmed review comments when there are any.
 export function fixAllHTML() {
-  const issues = allUnits().reduce((n, { u }) => n + (u.issues || []).filter((i) => !i.dismissed).length, 0);
+  const issues = allUnits().reduce((n, { u }) => n + (u.issues || []).filter((i) => !i.dismissed && !i.same_as).length, 0);
   const comments = fixableComments().length;
   if (!issues && !comments) return "";
   const dis = fixDisabled();
@@ -199,6 +226,6 @@ export const actions = {
   "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }),
   "fix-all-menu": () => { menuOpen = !menuOpen; },
   "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
-  "fix-log": () => { showLog(run.id); return false; },
-  "fix-dismiss": () => { run = null; },
+  "fix-log": (el) => { showLog(el.dataset.id); return false; },
+  "fix-dismiss": (el) => { const r = byId(el.dataset.id) || runs.find((x) => !x.id); if (r) drop(r); },
 };
