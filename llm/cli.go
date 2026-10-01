@@ -37,7 +37,20 @@ const (
 	ClaudeCodeTranslate = "claude-sonnet-5-5"
 )
 
-const cliTimeout = 5 * time.Minute
+// cliTimeout caps a one-shot answer; workspaceTimeout a call that reads the
+// workspace, an agent session that can take many turns over a large PR.
+const (
+	cliTimeout       = 5 * time.Minute
+	workspaceTimeout = 20 * time.Minute
+)
+
+// callTimeout is how long a CLI call with req may run.
+func callTimeout(req LLMRequest) time.Duration {
+	if req.Workspace != nil {
+		return workspaceTimeout
+	}
+	return cliTimeout
+}
 
 // CodexCLI runs `codex exec` with --output-schema.
 type CodexCLI struct {
@@ -96,7 +109,7 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	if system != "" {
 		prompt = system + "\n\n" + prompt
 	}
-	out, err := runCLI(ctx, orDefault(c.Binary, "codex"), args, cwd, prompt, codexEvent, "OPENAI_API_KEY", "CODEX_API_KEY")
+	out, err := runCLI(ctx, orDefault(c.Binary, "codex"), args, cwd, prompt, callTimeout(req), codexEvent, "OPENAI_API_KEY", "CODEX_API_KEY")
 	if err != nil {
 		return nil, fmt.Errorf("codex/%s: %w", c.ModelID(), err)
 	}
@@ -232,7 +245,7 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	// its .claude/settings*.json and every CLAUDE.md, CLAUDE.local.md and
 	// .claude/rules in it (nested ones included) out of the session.
 	args := []string{
-		"-p", "--output-format", "json", "--json-schema", cmdSafeJSON(schema),
+		"-p", "--output-format", "stream-json", "--verbose", "--json-schema", cmdSafeJSON(schema),
 		"--model", c.ModelID(), "--tools", tools, "--disable-slash-commands",
 		"--strict-mcp-config", "--permission-mode", "dontAsk",
 		"--no-session-persistence", "--setting-sources", "user", "--settings", settingsPath,
@@ -258,13 +271,13 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		}
 		args = append(args, "--effort", e)
 	}
-	// Its one JSON line is the answer, which CallToolIn logs.
-	dropAll := func(string) string { return "" }
-	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, dropAll, claudeCodeUnset()...)
+	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, callTimeout(req), claudeEvent(cwd), claudeCodeUnset()...)
 	if err != nil {
 		return nil, fmt.Errorf("claude-code/%s: %w", c.ModelID(), err)
 	}
-	var res struct {
+	// stream-json prints one event per line; the answer is the result event.
+	type result struct {
+		Type             string         `json:"type"`
 		IsError          bool           `json:"is_error"`
 		Result           string         `json:"result"`
 		StructuredOutput map[string]any `json:"structured_output"`
@@ -275,8 +288,15 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(out, &res); err != nil {
-		return nil, fmt.Errorf("claude-code/%s: decode output: %w", c.ModelID(), err)
+	var res *result
+	for _, line := range strings.Split(string(out), "\n") {
+		var ev result
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Type == "result" {
+			res = &ev
+		}
+	}
+	if res == nil {
+		return nil, fmt.Errorf("claude-code/%s: no result in output: %q", c.ModelID(), truncate(string(out), 200))
 	}
 	if res.IsError {
 		return nil, fmt.Errorf("claude-code/%s: %s", c.ModelID(), res.Result)
@@ -286,6 +306,108 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		OutputTokens: res.Usage.OutputTokens,
 	}
 	return structuredResponse(tool, res.Result, res.StructuredOutput, usage)
+}
+
+// claudeEvent turns a `claude -p --output-format stream-json` event into
+// activity lines: what the agent says and the tools it calls, with paths
+// relative to dir. The answer (the StructuredOutput call and the result) and
+// bookkeeping events are dropped.
+func claudeEvent(dir string) func(string) string {
+	rel := func(p string) string {
+		if r, ok := strings.CutPrefix(p, dir+string(filepath.Separator)); ok {
+			return r
+		}
+		return p
+	}
+	return func(line string) string {
+		var ev struct {
+			Type    string `json:"type"`
+			IsError bool   `json:"is_error"`
+			Result  string `json:"result"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			return line
+		}
+		var blocks []struct {
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			Thinking string          `json:"thinking"`
+			Name     string          `json:"name"`
+			Input    json.RawMessage `json:"input"`
+			IsError  bool            `json:"is_error"`
+			Content  json.RawMessage `json:"content"`
+		}
+		_ = json.Unmarshal(ev.Message.Content, &blocks) // a string for synthetic messages
+		var lines []string
+		switch ev.Type {
+		case "assistant":
+			for _, b := range blocks {
+				switch b.Type {
+				case "thinking":
+					if t := strings.TrimSpace(b.Thinking); t != "" {
+						lines = append(lines, "thinking: "+t)
+					}
+				case "text":
+					if t := strings.TrimSpace(b.Text); t != "" {
+						lines = append(lines, t)
+					}
+				case "tool_use":
+					if b.Name != "StructuredOutput" {
+						lines = append(lines, "→ "+claudeToolCall(b.Name, b.Input, rel))
+					}
+				}
+			}
+		case "user":
+			for _, b := range blocks {
+				if b.Type == "tool_result" && b.IsError {
+					var msg string
+					if json.Unmarshal(b.Content, &msg) != nil {
+						msg = string(b.Content)
+					}
+					lines = append(lines, "  error: "+truncate(strings.TrimSpace(msg), 300))
+				}
+			}
+		case "result":
+			if ev.IsError {
+				lines = append(lines, "error: "+ev.Result)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+}
+
+// claudeToolCall is a one-line summary of a Claude Code tool call.
+func claudeToolCall(name string, input json.RawMessage, rel func(string) string) string {
+	var in struct {
+		FilePath string `json:"file_path"`
+		Path     string `json:"path"`
+		Pattern  string `json:"pattern"`
+		Glob     string `json:"glob"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
+	}
+	_ = json.Unmarshal(input, &in)
+	switch name {
+	case "Read":
+		s := "Read " + rel(in.FilePath)
+		if in.Offset > 0 || in.Limit > 0 {
+			s += fmt.Sprintf(" (from line %d, %d lines)", max(in.Offset, 1), in.Limit)
+		}
+		return s
+	case "Grep", "Glob":
+		s := fmt.Sprintf("%s %q", name, in.Pattern)
+		if in.Glob != "" {
+			s += " --glob " + in.Glob
+		}
+		if in.Path != "" {
+			s += " in " + rel(in.Path)
+		}
+		return s
+	}
+	return name + " " + truncate(string(input), 200)
 }
 
 // cliTool returns the tool whose arguments the CLI's structured output
@@ -458,10 +580,11 @@ func nullable(p map[string]any) map[string]any {
 }
 
 // runCLI runs bin in dir with prompt on stdin and the given env vars unset,
-// and returns stdout. Its output goes to ctx's activity log as it comes,
-// stdout lines through format.
-func runCLI(ctx context.Context, bin string, args []string, dir, prompt string, format func(string) string, unset ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, cliTimeout)
+// for at most timeout, and returns stdout. Its output goes to ctx's activity
+// log as it comes, stdout lines through format.
+func runCLI(ctx context.Context, bin string, args []string, dir, prompt string, timeout time.Duration, format func(string) string, unset ...string) ([]byte, error) {
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if path, err := exec.LookPath(bin); err == nil {
 		if err := cmdUnsafe(path, args); err != nil {
@@ -485,9 +608,14 @@ func runCLI(ctx context.Context, bin string, args []string, dir, prompt string, 
 	}
 	activity.Printf(ctx, "$ %s %s", bin, strings.Join(shown, " "))
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded && parent.Err() == nil {
+			return nil, fmt.Errorf("timed out after %s", timeout)
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
+			// The last event; the first is a stream's start-up noise.
+			out := strings.TrimSpace(stdout.String())
+			msg = out[strings.LastIndexByte(out, '\n')+1:]
 		}
 		return nil, fmt.Errorf("%v: %s", err, truncate(msg, 500))
 	}

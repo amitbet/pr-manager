@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -108,7 +109,7 @@ func main() {
 func TestClaudeCodeWorkspaceEnablesReadOnlyTools(t *testing.T) {
 	tool := ToolDefinition{Name: "submit", Description: "Submit.", InputSchema: map[string]any{"type": "object"}}
 	call := func(ws *Workspace) ([]string, string, string) {
-		bin, argsFile := fakeCLI(t, `{"is_error":false,"result":"","structured_output":{"a":1}}`)
+		bin, argsFile := fakeCLI(t, `{"type":"result","is_error":false,"result":"","structured_output":{"a":1}}`)
 		c := &ClaudeCodeCLI{Binary: bin}
 		var prompt string
 		if _, err := c.Call(context.Background(), LLMRequest{
@@ -172,7 +173,7 @@ func TestClaudeCodeArgsSurviveCmdShim(t *testing.T) {
 			"why": map[string]any{"type": "string", "description": "Say why.\nUse 50% or less | <b> & ^ !"},
 		},
 	}}
-	bin, argsFile := fakeCLI(t, `{"is_error":false,"result":"","structured_output":{"why":"x"}}`)
+	bin, argsFile := fakeCLI(t, `{"type":"result","is_error":false,"result":"","structured_output":{"why":"x"}}`)
 	c := &ClaudeCodeCLI{Binary: bin}
 	if _, err := c.Call(context.Background(), LLMRequest{
 		Messages: []ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: "hi"}},
@@ -261,11 +262,22 @@ func TestRunCLIKillsGrandchildren(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := runCLI(ctx, "sh", []string{"-c", "sleep 30 & sleep 30"}, t.TempDir(), "", nil); err == nil {
+	if _, err := runCLI(ctx, "sh", []string{"-c", "sleep 30 & sleep 30"}, t.TempDir(), "", time.Minute, nil); err == nil {
 		t.Fatal("want a timeout error")
 	}
 	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("runCLI returned after %v", d)
+	}
+}
+
+// A call that runs out its own time says so rather than "signal: killed".
+func TestRunCLITimeoutSaysSo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	_, err := runCLI(context.Background(), "sh", []string{"-c", "sleep 30"}, t.TempDir(), "", 300*time.Millisecond, nil)
+	if err == nil || !strings.Contains(err.Error(), "timed out after 300ms") {
+		t.Fatalf("err = %v, want a timeout", err)
 	}
 }
 
@@ -504,5 +516,30 @@ fi
 	t.Setenv(KeepClaudeCodeEnv, "1")
 	if HasSubscription("claude-code") {
 		t.Fatalf("with %s=1 the probe should see Bedrock", KeepClaudeCodeEnv)
+	}
+}
+
+// Claude Code's stream-json events become what the agent says and calls;
+// the answer and bookkeeping are dropped.
+func TestClaudeEvent(t *testing.T) {
+	ws := filepath.Join(string(filepath.Separator)+"ws", "repo")
+	file := filepath.Join(ws, "main.go")
+	f := claudeEvent(ws)
+	for _, tc := range []struct{ line, want string }{
+		{`{"type":"system","subtype":"init"}`, ""},
+		{`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"x"}]}}`, ""},
+		{`{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff."}]}}`, "Looking at the diff."},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":` + strconv.Quote(file) + `}}]}}`, "→ Read main.go"},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"func main","path":` + strconv.Quote(ws) + `}}]}}`, `→ Grep "func main" in ` + ws},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"a":1}}]}}`, ""},
+		{`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"File does not exist."}]}}`, "  error: File does not exist."},
+		{`{"type":"user","message":{"content":[{"type":"tool_result","content":"1\tpackage main"}]}}`, ""},
+		{`{"type":"user","message":{"content":"[structured-output-enforce] call the tool"}}`, ""},
+		{`{"type":"result","is_error":false,"result":"ok"}`, ""},
+		{`{"type":"result","is_error":true,"result":"rate limited"}`, "error: rate limited"},
+	} {
+		if got := f(tc.line); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.line, got, tc.want)
+		}
 	}
 }
