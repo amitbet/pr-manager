@@ -34,7 +34,7 @@ uncommitted unless you pass `-commit`. A worktree has none of your
 uncommitted changes, so `-in worktree` needs them committed (or `-commit`).
 
 Models come from the usual flags and defaults: a logged-in Codex or Claude
-Code subscription, else a cloud or API key (see [Usage](../README.md#usage)).
+Code subscription, else a cloud or API key (see [models and providers](providers.md)).
 
 ## Output and exit codes
 
