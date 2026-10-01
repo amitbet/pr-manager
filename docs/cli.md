@@ -3,7 +3,7 @@
 ```sh
 go build -o pr-manager .
 
-# default: a logged-in Codex (ChatGPT) or Claude Code subscription on this machine
+# default: a logged-in Claude Code or Codex (ChatGPT) subscription on this machine
 ./pr-manager -C ../some-repo -base origin/main
 
 # Claude Code subscription: Opus 5.5 triages and reviews (Haiku 4.5 translates)

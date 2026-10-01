@@ -6,7 +6,7 @@
 function wzSteps() {
   const v = localStorage.getItem("pr-manager.wz_steps");
   if (v === "unit" || v === "file" || v === "related") return v;
-  return localStorage.getItem("pr-manager.wz_group") === "1" ? "file" : "unit";
+  return localStorage.getItem("pr-manager.wz_group") === "1" ? "file" : "related";
 }
 
 export const S = {

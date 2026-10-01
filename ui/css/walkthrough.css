@@ -86,10 +86,10 @@
 .wz-note.low:not(.open) { opacity: .7; }
 .wz-note.low:hover { opacity: 1; }
 .wz-note-h { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 10px 22px 8px 14px; font-size: 14px; cursor: pointer; }
-.wz-note-h .car { flex: none; width: 14px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.wz-note-h .car { flex: none; width: 20px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
 .wz-note-h .pill, .wz-note-h .dz, .wz-note-h .wz-clean, .wz-note-h .tr-en { flex: none; }
 .wz-note-h .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); overflow-wrap: anywhere; }
-.wz-note-h .h { flex: 1 1 100%; padding-left: 22px; font-size: 16px; line-height: 1.35; font-weight: 650; }
+.wz-note-h .h { flex: 1 1 100%; padding-left: 28px; font-size: 16px; line-height: 1.35; font-weight: 650; }
 .wz-note-h .wz-clean { font-size: 13px; }
 .wz-note-b { padding: 6px 22px 18px; }
 /* Changed definitions the step uses, collapsed to one line each. */
@@ -99,7 +99,7 @@
 .wz-use { border-bottom: 1px solid var(--border); }
 .wz-use-h { display: flex; gap: 10px; align-items: center; padding: 4px 14px; font-size: 13px; }
 .wz-use-t { display: inline-flex; gap: 8px; align-items: baseline; min-width: 0; padding: 2px 0; border: 0; background: none; color: var(--fg); text-align: left; cursor: pointer; }
-.wz-use-t .car { color: var(--muted); width: 10px; }
+.wz-use-t .car { color: var(--muted); width: 16px; font-size: 17px; line-height: 1; align-self: center; }
 .wz-use-t .sym { font-family: var(--mono); font-size: 13.5px; color: var(--accent); }
 .wz-use-t .path { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .wz-use-h .h { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

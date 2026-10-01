@@ -95,7 +95,7 @@ pr-manager -C ../some-repo -base origin/main      # a local branch
 pr-manager fix                                    # review and fix in place
 ```
 
-By default it uses a Codex or Claude Code subscription logged in on this machine.
+By default it uses a Claude Code or Codex subscription logged in on this machine.
 API keys, Bedrock, Vertex AI, Foundry, Azure OpenAI and Ollama work too.
 
 ## Documentation

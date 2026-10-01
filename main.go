@@ -112,7 +112,7 @@ func main() {
 	fs.StringVar(&o.policy, "policy", "", "policy file (default <C>/.triage.yaml)")
 	fs.StringVar(&o.out, "out", "md", "output format: md|json")
 	fs.StringVar(&o.outFile, "o", "", "write the report to this file instead of stdout")
-	fs.StringVar(&o.classifier, "classifier", "auto", "places units when -summarizer is off (with a summarizer, the review call does): auto|codex|claude-code|openjev|openai-api|claude-api|bedrock|vertex|foundry|azure-openai|ollama|off (auto: codex subscription, else claude-code subscription, else a configured cloud (CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY, AZURE_OPENAI_ENDPOINT), else OPENAI_API_KEY, else ANTHROPIC_API_KEY, else ollama; openai and anthropic still work as old names)")
+	fs.StringVar(&o.classifier, "classifier", "auto", "places units when -summarizer is off (with a summarizer, the review call does): auto|codex|claude-code|openjev|openai-api|claude-api|bedrock|vertex|foundry|azure-openai|ollama|off (auto: claude-code subscription, else codex subscription, else a configured cloud (CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY, AZURE_OPENAI_ENDPOINT), else OPENAI_API_KEY, else ANTHROPIC_API_KEY, else ollama; openai and anthropic still work as old names)")
 	fs.StringVar(&o.classifyModel, "classify-model", "", "classifier model (default per provider)")
 	fs.StringVar(&o.fallback, "fallback", "auto", "with -classifier openjev: provider for units OpenJev isn't sure about (off = human)")
 	fs.StringVar(&o.fallbackModel, "fallback-model", "", "fallback model")
@@ -406,17 +406,17 @@ func translatePrefs(provider string) []string {
 
 // resolveProviders replaces "auto" with the best provider that has
 // credentials and fills per-provider default models. A coding-agent
-// subscription on this machine comes first (Codex, then Claude Code), then
+// subscription on this machine comes first (Claude Code, then Codex), then
 // a cloud account the machine is explicitly set up for (Bedrock, Vertex AI,
 // Foundry, Azure OpenAI; see llm.ConfiguredCloud), then an API key (OpenAI,
 // then Anthropic), then local Ollama.
 func resolveProviders(o options) options {
 	auto := "ollama"
 	switch cloud := llm.ConfiguredCloud(); {
-	case llm.HasSubscription("codex"):
-		auto = "codex"
 	case llm.HasSubscription("claude-code"):
 		auto = "claude-code"
+	case llm.HasSubscription("codex"):
+		auto = "codex"
 	case cloud != "":
 		auto = cloud
 	case os.Getenv("OPENAI_API_KEY") != "":
