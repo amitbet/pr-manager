@@ -46,6 +46,12 @@ type Classifier interface {
 	Classify(ctx context.Context, u *Unit) Decision
 }
 
+// Carrier is a Classifier that can decide some units from an earlier
+// result without a model call. Carried units skip the classify stage.
+type Carrier interface {
+	Carry(u *Unit) (Decision, bool)
+}
+
 // BatchClassifier classifies several units in one call, which saves the
 // per-call cost (a CLI start, the system prompt) that dominates a small
 // model's answer. It returns one decision per unit, in order.

@@ -136,3 +136,41 @@ func TestPipelineBatchesAndReusesDecisions(t *testing.T) {
 		t.Errorf("failed decisions were stored: %d entries", len(store.m))
 	}
 }
+
+type carryAll struct{ calls int }
+
+func (c *carryAll) Classify(context.Context, *Unit) Decision {
+	c.calls++
+	return Decision{Bucket: BucketHuman, Source: "llm"}
+}
+
+func (c *carryAll) Carry(u *Unit) (Decision, bool) {
+	return Decision{Bucket: BucketSkim, Source: "carried"}, u.File != "c.go"
+}
+
+func TestPipelineCarriedUnitsSkipClassify(t *testing.T) {
+	files, err := ParseDiff(fileDiff("a.go") + fileDiff("b.go") + fileDiff("c.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &carryAll{}
+	var total int
+	p := &Pipeline{
+		Presorter:   &Presorter{Policy: DefaultPolicy()},
+		Classifier:  c,
+		Concurrency: 4,
+		Progress: func(stage string, _, n int) {
+			if stage == "classify" {
+				total = n
+			}
+		},
+	}
+	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
+		if want := u.File != "c.go"; (u.Decision.Source == "carried") != want {
+			t.Errorf("%s: %+v", u.ID, u.Decision)
+		}
+	}
+	if c.calls != 1 || total != 1 {
+		t.Errorf("classify ran %d calls over %d units, want only c.go", c.calls, total)
+	}
+}

@@ -1894,10 +1894,15 @@ func sameUnits(a, b []*triage.Unit) bool {
 type keptDecisions map[string]*triage.Unit
 
 func (k keptDecisions) Classify(_ context.Context, u *triage.Unit) triage.Decision {
+	d, _ := k.Carry(u)
+	return d
+}
+
+func (k keptDecisions) Carry(u *triage.Unit) (triage.Decision, bool) {
 	if old := k[u.ID]; old != nil {
-		return triage.CarriedDecision(old)
+		return triage.CarriedDecision(old), true
 	}
-	return triage.Decision{Bucket: triage.BucketHuman, Source: "none", Reason: "decided when the fix is re-triaged", Failed: true}
+	return triage.Decision{Bucket: triage.BucketHuman, Source: "none", Reason: "decided when the fix is re-triaged", Failed: true}, true
 }
 
 // carryClassifier keeps the decision the fix started from for units whose
@@ -1909,10 +1914,17 @@ type carryClassifier struct {
 }
 
 func (c *carryClassifier) Classify(ctx context.Context, u *triage.Unit) triage.Decision {
-	if old := c.prior[u.ID]; old != nil && triage.SameDiff(old, u) {
-		return triage.CarriedDecision(old)
+	if d, ok := c.Carry(u); ok {
+		return d
 	}
 	return c.Classifier.Classify(ctx, u)
+}
+
+func (c *carryClassifier) Carry(u *triage.Unit) (triage.Decision, bool) {
+	if old := c.prior[u.ID]; old != nil && triage.SameDiff(old, u) {
+		return triage.CarriedDecision(old), true
+	}
+	return triage.Decision{}, false
 }
 
 func touchesPatch(u *triage.Unit, changed []triage.FileDiff) bool {

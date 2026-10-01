@@ -258,7 +258,14 @@ func (p *Pipeline) classify(ctx context.Context, units []*Unit) {
 	}
 	var todo []*Unit
 	keys := map[*Unit]string{}
+	carrier, _ := p.Classifier.(Carrier)
 	for _, u := range units {
+		if carrier != nil {
+			if d, ok := carrier.Carry(u); ok {
+				u.Decision = d
+				continue
+			}
+		}
 		if p.Decisions != nil {
 			k := decisionKey(p.ClassifyKey, u)
 			if d, ok := p.Decisions.Load(k); ok {
