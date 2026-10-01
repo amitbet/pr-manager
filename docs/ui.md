@@ -28,6 +28,8 @@ A review issue or a lint finding can be **dismissed**. Nothing is deleted: the c
 
 Dismissals are kept per repository, not per PR, under `dismissed/<host>__<owner>__<repo>.json` in the app cache, and applied whenever a result is loaded. So a claim rejected once arrives dismissed after the next push, without re-running the triage. Each record keeps the unit, the quoted evidence, the severity, the reason, and a `pattern`: the significant words of the title, sorted. An issue is matched on the code it quotes rather than the model's wording, so a reworded claim on the same line is still the same claim. `pattern` is written but not matched on yet; it is what a reviewer that learns from its own record will read.
 
+A finding the review raised more than once, from several units or once in review and once in a GitHub comment, is one row (see *Duplicates* in [how it works](how-it-works.md)). The row is the most severe of them. The other units it was raised on are listed under it as **Also raised on**, and a comment that raised it shows as **raised by @author**. In the Review tab, a repeated issue is listed on its own unit, dimmed, with a link to the issue that stands for it. Dismissing the row dismisses the repeats with it, each under its own record, so they stay dismissed if they are no longer linked after a later push. Restoring the row restores them too.
+
 A GitHub comment has no **Dismiss**: it belongs to whoever wrote it, and resolving the thread on GitHub is what makes it stop counting.
 
 ## The Sequence tab

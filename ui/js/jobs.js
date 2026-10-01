@@ -53,6 +53,7 @@ export function stageText(j) {
     commit: "committing the working tree changes",
     comments: j.total ? `checking review comments ${j.done}/${j.total}` : "loading review comments",
     lint: "running static analysis over the changed lines",
+    dedupe: "merging findings raised more than once",
     list: "listing the org's repos",
     fix: `fix round ${j.done} of up to ${j.total}`,
     check: `checking fix round ${j.done} of up to ${j.total}`,
@@ -61,6 +62,7 @@ export function stageText(j) {
     codemap: j.kind === "index" ? "building the code map" : `${repo} is not in the code map: building it before triage (a few minutes the first time)…`,
   }[j.stage];
   if (what) return what;
+  if (j.stage?.startsWith("wait: ")) return `waiting: ${j.stage.slice(6)}`;
   if (!j.stage) return "starting…";
   return `${j.stage} ${j.done}/${j.total}${j.kind === "triage" ? " units" : ""}`;
 }

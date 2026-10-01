@@ -2,6 +2,7 @@
 // and checked like the review's own issues. They sit under the issues;
 // the fix buttons live in fix.js.
 import { esc } from "./util.js";
+import { allUnits } from "./state.js";
 import { SEV_CLASS } from "./scores.js";
 import { threadFixButton } from "./fix.js";
 
@@ -30,7 +31,8 @@ function threadItem(u, t) {
   const is = t.issue;
   const title = is?.title || firstLine(t.comments?.[0]?.body) || "(empty comment)";
   const line = is?.line || t.line;
-  const dup = t.duplicate_of != null && u.issues?.[t.duplicate_of] ? `<span class="chip" title="${esc(u.issues[t.duplicate_of].title)}">same as review issue ${t.duplicate_of + 1}</span>` : "";
+  const d = dupTarget(u, t);
+  const dup = d ? `<span class="chip" title="${esc(d.is.title)}">${d.u === u ? `same as review issue ${d.i + 1}` : `same as a review issue on ${esc(d.u.file)}`}</span>` : "";
   const why = t.fixed ? t.fix_note : t.reason;
   const quoted = (t.comments || []).map((c) => `<div class="tq"><a href="${esc(c.url)}" target="_blank" rel="noopener">@${esc(c.author)}</a>${c.trusted ? "" : ` <span class="chip">${c.pr_author ? "PR author" : "no write access"}</span>`}<blockquote>${esc(c.body)}</blockquote></div>`).join("");
   return `<li class="thread-item"><div>${statusChip(t)}${line ? `<span class="ln">line ${line}</span>` : ""}<b>${esc(title)}</b>
@@ -58,7 +60,23 @@ export function threadsChip(u) {
   return `<span class="chip" title="${esc(open.map((t) => `@${t.author}: ${t.issue?.title || firstLine(t.comments?.[0]?.body)}`).join("\n"))}">${open.length} review comment${open.length > 1 ? "s" : ""}${ok ? ` · ${ok} confirmed` : ""}</span>`;
 }
 
-// raisedBy is the thread that already raises u's issue i, if any.
-export const raisedBy = (u, i) => (u.threads || []).find((t) => t.duplicate_of === i);
+// dupTarget is the review issue thread t on u repeats, if any: one of
+// u's, or of the unit duplicate_unit names.
+export function dupTarget(u, t) {
+  if (t.duplicate_of == null) return null;
+  const o = t.duplicate_unit ? allUnits().find(({ u: x }) => x.id === t.duplicate_unit)?.u : u;
+  const is = o?.issues?.[t.duplicate_of];
+  return is ? { u: o, i: t.duplicate_of, is } : null;
+}
+
+// raisedBy is the thread that already raises u's issue i, if any, from
+// whichever unit it is on.
+export function raisedBy(u, i) {
+  for (const { u: o } of allUnits()) {
+    const t = (o.threads || []).find((t) => t.duplicate_of === i && (t.duplicate_unit || o.id) === u.id);
+    if (t) return t;
+  }
+  return null;
+}
 
 export const raisedChip = (t) => `<a class="chip" href="${esc(t.url)}" target="_blank" rel="noopener" title="A review comment already raises this, so there is nothing to draft">raised by @${esc(t.author)}</a>`;

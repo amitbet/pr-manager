@@ -17,6 +17,7 @@ function issuesHTML(f, u) {
   if (!u.issues?.length) return u.reviewed ? `<p><span class="lbl">Review</span>No issues found.</p>` : "";
   const items = u.issues.map((is, i) => {
     if (is.dismissed) return `<li class="dismissed"><span class="dz unknown">dismissed</span><b>${esc(is.title)}</b>${is.dismissed_why ? `<span class="idetail">${esc(is.dismissed_why)}</span>` : ""}</li>`;
+    if (is.same_as) return repeatHTML(u, is);
     const dup = raisedBy(u, i);
     const draft = dup ? raisedChip(dup) : issueDraftButton(f, u, i);
     const fix = issueFixButton(u, i);
@@ -26,6 +27,16 @@ function issuesHTML(f, u) {
       `${is.detail ? `<span class="idetail tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</span>` : ""}${issueScenarioHTML(is, "idetail", u, i)}</li>`;
   }).join("");
   return `<p><span class="lbl">Issues found in review</span></p><ul class="issues">${items}</ul>`;
+}
+
+// repeatHTML is an issue the review raised again here that another one
+// stands for (see Dedupe in Go): shown, not counted, and fixed with it.
+function repeatHTML(u, is) {
+  const to = is.same_as;
+  const f = fileOfUnit(to.unit);
+  const where = to.unit === u.id ? "this change" : f ? f.path : to.unit;
+  return `<li class="repeat"><span class="dz unknown">repeat</span>${is.line ? `<span class="ln">line ${is.line}</span>` : ""}<b>${esc(is.title)}</b> ` +
+    `<button class="linkbtn" data-act="issue-goto" data-unit="${esc(to.unit)}" title="${esc(to.title)}">same as an issue on ${esc(where)}</button></li>`;
 }
 
 // detailsHTML shows the summary and the review; how the unit was bucketed

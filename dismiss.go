@@ -172,23 +172,31 @@ func (d *dismissals) apply(r *PRResult) {
 	r.Impact, r.Likelihood, r.Attention = rep.Scores()
 }
 
-// add records one dismissal, replacing an earlier one with the same key so
-// a changed reason wins.
-func (d *dismissals) add(ref triage.PRRef, x Dismissal) error {
+// add records dismissals, replacing earlier ones with the same key so a
+// changed reason wins.
+func (d *dismissals) add(ref triage.PRRef, xs ...Dismissal) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	ds, err := d.load(ref)
 	if err != nil {
 		return err
 	}
+	replace := map[string]bool{}
+	for _, x := range xs {
+		replace[x.Key] = true
+	}
 	out := ds[:0]
 	for _, old := range ds {
-		if old.Key != x.Key {
+		if !replace[old.Key] {
 			out = append(out, old)
 		}
 	}
-	x.Created = time.Now()
-	return d.save(ref, append(out, x))
+	now := time.Now()
+	for _, x := range xs {
+		x.Created = now
+		out = append(out, x)
+	}
+	return d.save(ref, out)
 }
 
 // remove restores a dismissed item, dropping every record under keys.
@@ -215,13 +223,19 @@ func (d *dismissals) remove(ref triage.PRRef, keys ...string) error {
 // restoreKeys are the keys to drop to restore the item dismissed under
 // key: an issue can be matched by several records (its own severity, a
 // worse one, the legacy key), and dropping only the one that matched
-// first would leave it dismissed by the next.
+// first would leave it dismissed by the next. Its repeats were dismissed
+// with it, so they come back with it.
 func restoreKeys(r *PRResult, key string) []string {
 	keys := []string{key}
-	for _, u := range resultUnits(r) {
+	units := resultUnits(r)
+	for _, u := range units {
 		for _, is := range u.Issues {
-			if is.DismissKey == key {
-				keys = append(keys, triage.IssueKeys(u.ID, is)...)
+			if is.DismissKey != key {
+				continue
+			}
+			keys = append(keys, triage.IssueKeys(u.ID, is)...)
+			for _, x := range triage.Repeats(units, u.ID, is.Title) {
+				keys = append(keys, triage.IssueKeys(x.Unit.ID, x.Unit.Issues[x.Index])...)
 			}
 		}
 	}
@@ -234,6 +248,28 @@ type dismissRequest struct {
 	Kind   string `json:"kind"` // issue (default) | lint
 	Index  int    `json:"index"`
 	Reason string `json:"reason"`
+}
+
+// records are the stored records for the request: the issue's, and one
+// for each issue that repeats it (see triage.Dedupe), so a repeat stays
+// dismissed if its link to the issue is lost on a later push.
+func (req dismissRequest) records(r *PRResult) ([]Dismissal, error) {
+	x, err := req.record(r)
+	if err != nil {
+		return nil, err
+	}
+	out := []Dismissal{x}
+	if x.Kind != "issue" {
+		return out, nil
+	}
+	units := resultUnits(r)
+	for _, rep := range triage.Repeats(units, x.Unit, x.Title) {
+		y, err := dismissRequest{Unit: rep.Unit.ID, Kind: "issue", Index: rep.Index, Reason: req.Reason}.record(r)
+		if err == nil {
+			out = append(out, y)
+		}
+	}
+	return out, nil
 }
 
 // record builds the stored record from the live issue, so the wording, the
@@ -312,12 +348,12 @@ func (d *dismissals) routes(mux *http.ServeMux, t *triager) {
 			writeErr(w, 404, err)
 			return
 		}
-		x, err := req.record(res)
+		xs, err := req.records(res)
 		if err != nil {
 			writeErr(w, 400, err)
 			return
 		}
-		if err := d.add(res.PR.PRRef, x); err != nil {
+		if err := d.add(res.PR.PRRef, xs...); err != nil {
 			writeErr(w, 500, err)
 			return
 		}

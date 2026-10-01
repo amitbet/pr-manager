@@ -104,6 +104,38 @@ func TestDismissAndRestoreOverHTTP(t *testing.T) {
 	}
 }
 
+// Dismissing an issue dismisses the issues that repeat it, under their
+// own keys, so they stay dismissed if the link is lost on a later push;
+// restoring it brings them back.
+func TestDismissTakesRepeats(t *testing.T) {
+	tr, mux, r := dismissFixture(t)
+	base := "/api/results/" + r.Key + "/dismissals"
+	orig := unitOf(r)
+	rep := &triage.Unit{ID: "b.go:Get", File: "b.go", Reviewed: true, Hunks: []triage.Hunk{{NewStart: 3, Lines: []string{"+\tresp, _ := c.Get(u)"}}}}
+	rep.Issues = []triage.Issue{{Severity: "medium", Line: 3, Title: "Body of the GET response leaks", Evidence: "resp, _ := c.Get(u)",
+		SameAs: &triage.IssueRef{Unit: orig.ID, Title: orig.Issues[0].Title}}}
+	r.Files = append(r.Files, resultFile{FileDiff: triage.FileDiff{Path: "b.go"}, Units: []resultUnit{{Unit: rep, Hunks: rep.Hunks}}})
+	b, _ := json.Marshal(r)
+	if err := os.WriteFile(filepath.Join(tr.results, r.Key+".json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	after := do(t, mux, "POST", base, `{"unit":"a.go:Fetch","kind":"issue","index":0,"reason":"closed by the caller"}`)
+	got := after.Files[1].Units[0].Unit.Issues[0]
+	if !got.Dismissed || got.DismissedWhy != "closed by the caller" {
+		t.Fatalf("repeat not dismissed with its issue: %+v", got)
+	}
+	ds, _ := tr.dismissed.load(r.PR.PRRef)
+	if len(ds) != 2 {
+		t.Errorf("records = %d, want 2 (the issue and its repeat)", len(ds))
+	}
+
+	back := do(t, mux, "DELETE", base+"/"+unitOf(after).Issues[0].DismissKey, "")
+	if back.Files[1].Units[0].Unit.Issues[0].Dismissed {
+		t.Error("restoring the issue left its repeat dismissed")
+	}
+}
+
 func TestDismissLintFinding(t *testing.T) {
 	_, mux, r := dismissFixture(t)
 	base := "/api/results/" + r.Key + "/dismissals"

@@ -130,7 +130,7 @@ func withHeadline(u *Unit, detail string) string {
 
 func writeIssues(w io.Writer, u *Unit) {
 	for _, is := range u.Issues {
-		if is.Dismissed {
+		if !is.Live() {
 			continue
 		}
 		loc := ""

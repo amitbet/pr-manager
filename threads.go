@@ -70,17 +70,33 @@ func (t *triager) withThreads(ctx context.Context, r *PRResult, o options, progr
 	if st == nil {
 		return r
 	}
+	// New comments may repeat issues on other units. Only they are
+	// compared, so a refresh that brought none makes no call.
+	if sum, err := threadJudge(o); err == nil && sum != nil {
+		progress("dedupe", 0, 0)
+		sum.Dedupe(ctx, units, tp)
+	}
 	threads := map[string][]triage.Thread{}
+	links := map[string][]triage.Issue{}
 	for _, u := range units {
 		threads[u.ID] = u.Threads
+		links[u.ID] = u.Issues
 	}
 	setThreads := func(r *PRResult) {
 		units := resultUnits(r)
 		for _, u := range units {
 			if th, ok := threads[u.ID]; ok {
 				u.Threads = th
-				tp.ApplyThreads(u)
 			}
+			// The issues are the saved ones; only the links are new.
+			if is := links[u.ID]; len(is) == len(u.Issues) {
+				for i := range u.Issues {
+					if u.Issues[i].Title == is[i].Title {
+						u.Issues[i].SameAs, u.Issues[i].Compared = is[i].SameAs, is[i].Compared
+					}
+				}
+			}
+			tp.ApplyDismissals(u)
 		}
 		r.Threads = st
 		rep := &triage.Report{Units: units}

@@ -19,6 +19,7 @@
 .details-btn:hover, .details-btn.on { background: var(--accent); color: #fff; }
 .issues { list-style: none; padding: 0 !important; }
 .issues li { margin: 0 0 6px; }
+.issues li.repeat { opacity: .7; }
 .issues .dz { margin-right: 6px; }
 .issues .ln { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-right: 6px; }
 .issues .idetail { display: block; color: var(--muted); font-size: 14px; margin: 2px 0 0 2px; }

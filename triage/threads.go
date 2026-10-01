@@ -47,9 +47,13 @@ type Thread struct {
 	// DuplicateOf is the index in the unit's Issues of the review issue
 	// this comment already raises. DuplicateTitle is that issue's title,
 	// so the index can be found again when a new review reorders or
-	// replaces the issues (see AssignThreads).
+	// replaces the issues (see AssignThreads). DuplicateUnit, when set, is
+	// the other unit whose issue it is (see Dedupe); Compared, that Dedupe
+	// has compared the comment with the PR's issues.
 	DuplicateOf    *int   `json:"duplicate_of,omitempty"`
 	DuplicateTitle string `json:"duplicate_title,omitempty"`
+	DuplicateUnit  string `json:"duplicate_unit,omitempty"`
+	Compared       bool   `json:"compared,omitempty"`
 	// Fixed is set when a local fix round addressed the comment.
 	Fixed    bool   `json:"fixed,omitempty"`
 	FixRound int    `json:"fix_round,omitempty"`
@@ -299,6 +303,7 @@ func MergeThreads(old, fresh []Thread) []Thread {
 		o, ok := byID[t.ID]
 		if ok && o.Updated == t.Updated && o.Status != "" && o.Status != ThreadUnchecked && o.Trusted == t.Trusted {
 			t.Status, t.Issue, t.Reason, t.DuplicateOf, t.DuplicateTitle = o.Status, o.Issue, o.Reason, o.DuplicateOf, o.DuplicateTitle
+			t.DuplicateUnit, t.Compared = o.DuplicateUnit, o.Compared
 		}
 		if ok {
 			t.Fixed, t.FixRound, t.FixNote = o.Fixed, o.FixRound, o.FixNote
@@ -313,6 +318,7 @@ func MergeThreads(old, fresh []Thread) []Thread {
 // returns how many threads have no unit to go on.
 func AssignThreads(units []*Unit, threads []Thread) int {
 	byFile := map[string][]*Unit{}
+	byID := unitIndex(units)
 	for _, u := range units {
 		if len(u.Hunks) > 0 {
 			byFile[u.File] = append(byFile[u.File], u)
@@ -334,39 +340,43 @@ func AssignThreads(units []*Unit, threads []Thread) int {
 				}
 			}
 		}
-		resolveDuplicate(best, &t)
+		target := best
+		if t.DuplicateUnit != "" {
+			target = byID[t.DuplicateUnit]
+		}
+		resolveDuplicate(target, &t)
 		best.Threads = append(best.Threads, t)
 	}
 	return lost
 }
 
 // resolveDuplicate points t's DuplicateOf at the issue of u it was judged
-// to repeat. A thread's verdict outlives the review it was judged against:
-// a re-review can reorder or replace u's issues. The issue is found again
-// by title; if it is gone, the comment is no longer a duplicate and counts
-// on its own. Verdicts saved before DuplicateTitle keep an index that is
-// still in range.
+// to repeat; u is the unit the thread is on, or the one DuplicateUnit
+// names (nil when that unit is gone). A thread's verdict outlives the
+// review it was judged against: a re-review can reorder or replace u's
+// issues. The issue is found again by title; if it is gone, the comment
+// is no longer a duplicate, counts on its own and is compared again.
+// Verdicts saved before DuplicateTitle keep an index that is still in
+// range.
 func resolveDuplicate(u *Unit, t *Thread) {
 	if t.DuplicateOf == nil {
 		return
 	}
 	i := *t.DuplicateOf
-	if t.DuplicateTitle == "" {
+	if u != nil && t.DuplicateTitle == "" {
 		if i < 0 || i >= len(u.Issues) {
-			t.DuplicateOf = nil
+			t.DuplicateOf, t.Compared = nil, false
 		}
 		return
 	}
-	if i >= 0 && i < len(u.Issues) && u.Issues[i].Title == t.DuplicateTitle {
+	if u != nil && i >= 0 && i < len(u.Issues) && u.Issues[i].Title == t.DuplicateTitle {
 		return
 	}
-	for j, is := range u.Issues {
-		if is.Title == t.DuplicateTitle {
-			t.DuplicateOf = &j
-			return
-		}
+	if j := findIssue(u, t.DuplicateTitle); j >= 0 {
+		t.DuplicateOf = &j
+		return
 	}
-	t.DuplicateOf, t.DuplicateTitle = nil, ""
+	t.DuplicateOf, t.DuplicateTitle, t.DuplicateUnit, t.Compared = nil, "", "", false
 }
 
 // lineDistance is how far line is from the unit's new-file hunk ranges
@@ -459,6 +469,7 @@ func (s *Summarizer) judgeThread(ctx context.Context, u *Unit, t *Thread) {
 		critic = s.LLM
 	}
 	t.Status, t.Issue, t.Reason, t.DuplicateOf, t.DuplicateTitle = ThreadUnchecked, nil, "", nil, ""
+	t.DuplicateUnit, t.Compared = "", false
 	if critic == nil {
 		t.Reason = "no review model configured"
 		return

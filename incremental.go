@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"path/filepath"
 	"strings"
@@ -128,10 +129,10 @@ func (t *triager) carryFrom(ctx context.Context, key, base string, o options, fo
 // refresh to match against: a comment whose text has not changed keeps
 // its verdict instead of being sent to the model again.
 //
-// The duplicate link is dropped where this run reviewed the unit again,
-// because it is an index into that unit's issues and those were just
-// rewritten. A unit that kept its review kept its issues with it, so the
-// link still points at the same one.
+// The duplicate link is dropped where this run reviewed the unit it
+// points into again, because it is an index into that unit's issues and
+// those were just rewritten. A unit that kept its review kept its issues
+// with it, so the link still points at the same one.
 func (p *carryPlan) threads(fresh []*triage.Unit) []triage.Thread {
 	if p == nil {
 		return nil
@@ -146,8 +147,8 @@ func (p *carryPlan) threads(fresh []*triage.Unit) []triage.Thread {
 	for _, f := range p.prev.Files {
 		for _, u := range f.Units {
 			for _, th := range u.Threads {
-				if !carried[u.ID] {
-					th.DuplicateOf = nil
+				if target := cmp.Or(th.DuplicateUnit, u.ID); !carried[target] {
+					th.DuplicateOf, th.DuplicateUnit, th.Compared = nil, "", false
 				}
 				out = append(out, th)
 			}

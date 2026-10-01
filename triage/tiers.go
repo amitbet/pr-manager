@@ -34,12 +34,19 @@ type Issue struct {
 	// DismissKey is the stored record to delete to restore it; set only
 	// while the issue is dismissed.
 	DismissKey string `json:"dismiss_key,omitempty"`
+	// SameAs is the issue this one repeats, maybe on another unit (see
+	// Dedupe). A repeat is kept and shown, but only the issue it points
+	// at counts. Compared: Dedupe has compared it with the PR's other
+	// findings, so it is not asked about again.
+	SameAs   *IssueRef `json:"same_as,omitempty"`
+	Compared bool      `json:"compared,omitempty"`
 }
 
-// Live reports whether the issue still counts toward a unit's bucket.
-func (is Issue) Live() bool { return !is.Dismissed }
+// Live reports whether the issue still counts toward a unit's bucket:
+// nobody dismissed it and it does not repeat another.
+func (is Issue) Live() bool { return !is.Dismissed && is.SameAs == nil }
 
-// liveIssues drops the ones a person dismissed.
+// liveIssues drops the ones a person dismissed and the repeats.
 func liveIssues(issues []Issue) []Issue {
 	out := issues[:0:0]
 	for _, is := range issues {
