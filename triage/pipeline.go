@@ -219,8 +219,9 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 				continue
 			}
 			// Rule-placed units the reviewer would see are reviewed under
-			// the rule's bucket.
-			if analyzed[u] || (u.Decision.Source == "rule" && reviewable(u) && (p.ReviewFilter == nil || p.ReviewFilter(u))) {
+			// the rule's bucket. Fixtures are only context for the tests
+			// that read them.
+			if analyzed[u] || (u.Decision.Source == "rule" && reviewable(u) && u.Decision.ChangeKind != "fixture" && (p.ReviewFilter == nil || p.ReviewFilter(u))) {
 				toAnalyze = append(toAnalyze, u)
 				prev[u] = u.Decision.Bucket
 			}

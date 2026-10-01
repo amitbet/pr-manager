@@ -286,6 +286,40 @@ func TestPipelineReviewFilterOnlyReviewsSelectedUnits(t *testing.T) {
 	}
 }
 
+func TestPipelineFixturesAreNotReviewed(t *testing.T) {
+	files, err := ParseDiff(fileDiff("a.go") + fileDiff("testdata/jvm/jdk17.txt") + fileDiff("docs/notes.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed []string
+	var mu sync.Mutex
+	review := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
+		mu.Lock()
+		reviewed = append(reviewed, req.Messages[1].Content)
+		mu.Unlock()
+		return toolResp("submit_analysis", map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r",
+			"summary": "checked", "issues": []any{}}), nil
+	}}
+	p := &Pipeline{
+		Presorter:  &Presorter{Policy: DefaultPolicy()},
+		Summarizer: &Summarizer{LLM: review, Policy: DefaultPolicy()},
+	}
+	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
+		if u.File == "testdata/jvm/jdk17.txt" && (u.Reviewed || u.Decision.ChangeKind != "fixture" || u.Decision.Bucket != BucketSkim) {
+			t.Errorf("fixture: reviewed=%v decision=%+v", u.Reviewed, u.Decision)
+		}
+	}
+	for _, r := range reviewed {
+		if strings.Contains(r, "File: testdata/jvm/jdk17.txt") {
+			t.Errorf("fixture got its own review: %s", r)
+		}
+	}
+	// A .txt outside testdata is still docs, and docs are still reviewed.
+	if len(reviewed) != 2 {
+		t.Errorf("review calls = %d, want a.go and docs/notes.txt", len(reviewed))
+	}
+}
+
 func TestSplitHunkAcrossDecls(t *testing.T) {
 	// One hunk touching Retry (line 7) and (*T).M (line 17).
 	h := Hunk{OldStart: 6, NewStart: 6}

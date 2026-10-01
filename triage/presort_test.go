@@ -329,3 +329,34 @@ func TestPresortWhitespaceContent(t *testing.T) {
 		}
 	}
 }
+
+func TestIsFixture(t *testing.T) {
+	cases := map[string]bool{
+		"testdata/jvm/jdk17.txt":              true,
+		"containers/testdata/cases.go":        true, // Go never builds testdata
+		"src/test/resources/logback-test.xml": true,
+		"svc/src/test/resources/Sample.java":  true,
+		"fixtures/users.json":                 true,
+		"web/__fixtures__/page.html":          true,
+		"test/data/input.csv":                 true,
+		"tests/expected.txt":                  true,
+		"pkg/__tests__/payload.yaml":          true,
+		"spec/fixtures/response.json":         true,
+		"fixtures/factory.js":                 false, // helper code keeps its review
+		"tests/test_api.py":                   false,
+		"test/README.md":                      false, // docs, not data
+		"tests/tsconfig.json":                 false, // changes how tests build
+		"tests/jest.config.json":              false,
+		"tests/.eslintrc.json":                false,
+		"tests/requirements.txt":              false,
+		"test/pytest.ini":                     false,
+		"config/app.yaml":                     false,
+		"latest/notes.txt":                    false, // a segment, not a substring
+		"contest/data.json":                   false,
+	}
+	for f, want := range cases {
+		if got := isFixture(f); got != want {
+			t.Errorf("isFixture(%q) = %v, want %v", f, got, want)
+		}
+	}
+}

@@ -132,7 +132,7 @@ func DefaultTierPolicy() TierPolicy {
 		},
 		KindWeights: map[string]float64{
 			"behavior": 1, "config": 1, "test": 0.8, "refactor": 0.6, "rename": 0.5,
-			"docs": 0.3, "format": 0.3, "generated": 0.3,
+			"docs": 0.3, "fixture": 0.3, "format": 0.3, "generated": 0.3,
 		},
 		CriticalImpact: 85,
 	}

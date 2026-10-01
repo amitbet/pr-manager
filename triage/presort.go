@@ -76,6 +76,9 @@ func (p *Presorter) rule(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 			return d, true
 		}
 	}
+	if isFixture(u.File) {
+		return Decision{Bucket: BucketSkim, ChangeKind: "fixture", Reason: "test fixture", Confidence: 1}, true
+	}
 	if isDocs(u.File) {
 		return Decision{Bucket: BucketSkim, ChangeKind: "docs", Reason: "documentation file", Confidence: 1}, true
 	}
@@ -460,6 +463,48 @@ func hasGeneratedHeader(content ContentFunc, file string) bool {
 		}
 	}
 	return false
+}
+
+// fixtureDirs hold only what the tests read: neither Go (testdata) nor
+// Maven (src/test/resources) builds them, so any file there is a fixture.
+var fixtureDirs = []string{"testdata/", "src/test/resources/"}
+
+// dataDirs hold fixtures next to test or helper code (a JS fixtures/
+// with factory modules, tests/ itself), so only data files there are
+// fixtures; code keeps its review.
+var dataDirs = []string{"fixtures/", "__fixtures__/", "test-fixtures/", "test_fixtures/", "test/", "tests/", "__tests__/", "spec/"}
+
+// dataExts are files a program reads rather than runs.
+var dataExts = map[string]bool{
+	".txt": true, ".json": true, ".jsonl": true, ".ndjson": true, ".yaml": true, ".yml": true, ".xml": true,
+	".csv": true, ".tsv": true, ".html": true, ".htm": true, ".log": true, ".out": true, ".golden": true,
+	".expected": true, ".toml": true, ".properties": true, ".ini": true, ".env": true, ".eml": true, ".har": true,
+}
+
+// testConfigs are files in a test directory that change how the tests
+// build or run, not what they read.
+var testConfigs = []string{"tsconfig*.json", "jest.config.*", "vitest.config.*", "pytest.ini", "tox.ini", "setup.cfg", "*.runsettings"}
+
+// isFixture reports whether file is input or expected output the tests
+// read, never built or shipped. Its diff is context for the tests that
+// use it, not a change to review on its own.
+func isFixture(file string) bool {
+	lower := strings.ToLower(file)
+	base := path.Base(lower)
+	if strings.HasPrefix(base, ".") {
+		return false // tool config: .eslintrc.json, .babelrc
+	}
+	if _, ok := MatchAny(notDocs, lower); ok {
+		return false
+	}
+	if _, ok := MatchAny(testConfigs, lower); ok {
+		return false
+	}
+	if _, ok := MatchAny(fixtureDirs, lower); ok {
+		return true
+	}
+	_, ok := MatchAny(dataDirs, lower)
+	return ok && dataExts[path.Ext(base)]
 }
 
 // notDocs are .txt files that a tool reads: dependency lists, build files
