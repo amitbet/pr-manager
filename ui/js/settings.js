@@ -253,6 +253,7 @@ export function fixSettings() {
     ...jobSettings(),
     location: $("#fix_location").value,
     recursive: $("#recursive_fix").checked,
+    agent: $("#fix_agent").checked,
     max_rounds: Math.max(1, Math.min(10, Number($("#max_fix_rounds").value) || 3)),
   };
 }
@@ -317,6 +318,9 @@ export function initSettings(changed, langChanged) {
   uncommitted.onchange = () => (uncommitted.value ? save("fix_uncommitted", uncommitted.value) : localStorage.removeItem("pr-manager.fix_uncommitted"));
   recursive.checked = saved("recursive_fix") ? saved("recursive_fix") === "1" : S.cfg?.recursive_fix !== false;
   recursive.onchange = () => save("recursive_fix", recursive.checked ? "1" : "0");
+  const agent = $("#fix_agent");
+  agent.checked = saved("fix_agent") ? saved("fix_agent") === "1" : S.cfg?.fix_agent !== false;
+  agent.onchange = () => save("fix_agent", agent.checked ? "1" : "0");
   const rounds = $("#max_fix_rounds");
   rounds.value = saved("max_fix_rounds") || S.cfg?.max_fix_rounds || 3;
   rounds.onchange = () => {

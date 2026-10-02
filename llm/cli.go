@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -88,7 +89,7 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	}
 	args := []string{
 		"exec", "--json", "--ephemeral", "--skip-git-repo-check",
-		"--ignore-user-config", "--ignore-rules", "-s", "read-only",
+		"--ignore-user-config", "--ignore-rules", "-s", codexSandbox(req.Workspace),
 		"--model", c.ModelID(), "--output-schema", schemaPath,
 	}
 	// No AGENTS.md or AGENTS.override.md from the workspace, the untrusted
@@ -105,7 +106,7 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 		args = append(args, "-C", ws.Dir)
 	}
 	args = append(args, "-")
-	system, prompt := cliPrompt(req.Messages, tool, req.Workspace != nil)
+	system, prompt := cliPrompt(req.Messages, tool, req.Workspace)
 	if system != "" {
 		prompt = system + "\n\n" + prompt
 	}
@@ -229,10 +230,13 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	if err != nil {
 		return nil, err
 	}
-	system, prompt := cliPrompt(req.Messages, tool, req.Workspace != nil)
+	system, prompt := cliPrompt(req.Messages, tool, req.Workspace)
 	tools, cwd := "", dir
 	if ws := req.Workspace; ws != nil {
 		tools, cwd = readOnlyTools, ws.Dir
+		if ws.Edit {
+			tools = editTools
+		}
 	}
 	// Anything long or multi-line goes in a file, not on the command line:
 	// an npm install is claude.cmd on Windows, run through cmd.exe, which
@@ -246,13 +250,19 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	// .claude/rules in it (nested ones included) out of the session.
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--json-schema", cmdSafeJSON(schema),
+		"--include-partial-messages", // see claudeStream
 		"--model", c.ModelID(), "--tools", tools, "--disable-slash-commands",
 		"--strict-mcp-config", "--permission-mode", "dontAsk",
 		"--no-session-persistence", "--setting-sources", "user", "--settings", settingsPath,
 	}
 	if ws := req.Workspace; ws != nil {
-		// dontAsk denies anything not allowed up front.
-		args = append(args, "--allowedTools", readOnlyTools)
+		// dontAsk denies anything not allowed up front: edits only in
+		// the working directory.
+		allowed := readOnlyTools
+		if ws.Edit {
+			allowed = editAllowed
+		}
+		args = append(args, "--allowedTools", allowed)
 		for _, d := range ws.ReadDirs {
 			args = append(args, "--add-dir", d)
 		}
@@ -271,7 +281,9 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		}
 		args = append(args, "--effort", e)
 	}
-	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, callTimeout(req), claudeEvent(cwd), claudeCodeUnset()...)
+	stream := newClaudeStream(ctx, cwd)
+	out, err := runCLI(ctx, orDefault(c.Binary, "claude"), args, cwd, prompt, callTimeout(req), stream.line, claudeCodeUnset()...)
+	stream.done(err)
 	if err != nil {
 		return nil, fmt.Errorf("claude-code/%s: %w", c.ModelID(), err)
 	}
@@ -311,72 +323,249 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 // claudeEvent turns a `claude -p --output-format stream-json` event into
 // activity lines: what the agent says and the tools it calls, with paths
 // relative to dir. The answer (the StructuredOutput call and the result) and
-// bookkeeping events are dropped.
+// bookkeeping events are dropped. See claudeStream for what an agent run
+// adds.
 func claudeEvent(dir string) func(string) string {
-	rel := func(p string) string {
-		if r, ok := strings.CutPrefix(p, dir+string(filepath.Separator)); ok {
-			return r
-		}
-		return p
+	return newClaudeStream(context.Background(), dir).line
+}
+
+// claudeStream formats one claude run's events. A subagent's events go to
+// a thread of its own in ctx's activity log, opened when it starts and
+// closed when it ends (or at done). While the model thinks or writes a
+// long answer, which shows nothing until the turn ends (thinking comes
+// back empty), a line every progressEvery says how far it has got.
+type claudeStream struct {
+	ctx  context.Context
+	rel  func(string) string
+	now  func() time.Time
+	mu   sync.Mutex
+	subs map[string]*claudeSub // by the Agent call's tool_use id
+	main claudeProgress
+}
+
+type claudeSub struct {
+	t        *activity.Thread
+	name     string
+	progress claudeProgress
+}
+
+// claudeProgress is a turn's output so far, and when it was last said.
+type claudeProgress struct {
+	thinking, writing int // estimated thinking tokens, chars written
+	said              time.Time
+}
+
+const progressEvery = 15 * time.Second
+
+func newClaudeStream(ctx context.Context, dir string) *claudeStream {
+	// Claude reports paths with the directory's symlinks resolved, as
+	// /private/var for macOS's /var.
+	dirs := []string{dir}
+	if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
+		dirs = append(dirs, real)
 	}
-	return func(line string) string {
-		var ev struct {
-			Type    string `json:"type"`
-			IsError bool   `json:"is_error"`
-			Result  string `json:"result"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal([]byte(line), &ev) != nil {
-			return line
-		}
-		var blocks []struct {
-			Type     string          `json:"type"`
-			Text     string          `json:"text"`
-			Thinking string          `json:"thinking"`
-			Name     string          `json:"name"`
-			Input    json.RawMessage `json:"input"`
-			IsError  bool            `json:"is_error"`
-			Content  json.RawMessage `json:"content"`
-		}
-		_ = json.Unmarshal(ev.Message.Content, &blocks) // a string for synthetic messages
-		var lines []string
-		switch ev.Type {
-		case "assistant":
-			for _, b := range blocks {
-				switch b.Type {
-				case "thinking":
-					if t := strings.TrimSpace(b.Thinking); t != "" {
-						lines = append(lines, "thinking: "+t)
-					}
-				case "text":
-					if t := strings.TrimSpace(b.Text); t != "" {
-						lines = append(lines, t)
-					}
-				case "tool_use":
-					if b.Name != "StructuredOutput" {
-						lines = append(lines, "→ "+claudeToolCall(b.Name, b.Input, rel))
-					}
+	return &claudeStream{
+		ctx: ctx,
+		rel: func(p string) string {
+			for _, d := range dirs {
+				if r, ok := strings.CutPrefix(p, d+string(filepath.Separator)); ok {
+					return r
 				}
 			}
-		case "user":
-			for _, b := range blocks {
-				if b.Type == "tool_result" && b.IsError {
-					var msg string
-					if json.Unmarshal(b.Content, &msg) != nil {
-						msg = string(b.Content)
-					}
-					lines = append(lines, "  error: "+truncate(strings.TrimSpace(msg), 300))
+			return p
+		},
+		now:  time.Now,
+		subs: map[string]*claudeSub{},
+	}
+}
+
+// sub is the thread of the subagent the Agent call id started, opened
+// under name if it has none yet.
+func (c *claudeStream) sub(id, name string) *claudeSub {
+	if s := c.subs[id]; s != nil {
+		return s
+	}
+	if name == "" {
+		name = "subagent"
+	}
+	_, t := activity.Start(c.ctx, "agent", "subagent: %s", name)
+	s := &claudeSub{t: t, name: name}
+	c.subs[id] = s
+	return s
+}
+
+// done closes the subagent threads still open, as when the run died.
+func (c *claudeStream) done(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, s := range c.subs {
+		if err == nil {
+			err = errors.New("the run ended before the subagent did")
+		}
+		s.t.Finish(err)
+		delete(c.subs, id)
+	}
+}
+
+// tick says how far a turn has got, at most every progressEvery.
+func (c *claudeStream) tick(p *claudeProgress) string {
+	now := c.now()
+	if p.said.IsZero() {
+		p.said = now
+		return ""
+	}
+	if now.Sub(p.said) < progressEvery {
+		return ""
+	}
+	p.said = now
+	var parts []string
+	if p.thinking > 0 {
+		parts = append(parts, fmt.Sprintf("thought ~%d tokens", p.thinking))
+	}
+	if p.writing > 0 {
+		parts = append(parts, fmt.Sprintf("wrote %d chars", p.writing))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "… " + strings.Join(parts, ", ") + " so far"
+}
+
+func (c *claudeStream) line(line string) string {
+	var ev struct {
+		Type          string `json:"type"`
+		Subtype       string `json:"subtype"`
+		IsError       bool   `json:"is_error"`
+		Result        string `json:"result"`
+		Parent        string `json:"parent_tool_use_id"`
+		TaskName      string `json:"task_description"`
+		ToolUseID     string `json:"tool_use_id"`
+		Description   string `json:"description"`
+		Prompt        string `json:"prompt"`
+		Status        string `json:"status"`
+		Summary       string `json:"summary"`
+		ThinkingDelta int    `json:"estimated_tokens_delta"`
+		Event         struct {
+			Type  string `json:"type"`
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+		} `json:"event"`
+		Usage struct {
+			ToolUses   int `json:"tool_uses"`
+			DurationMS int `json:"duration_ms"`
+		} `json:"usage"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(line), &ev) != nil {
+		return line
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Where the event's lines go: a subagent's thread, or the run's.
+	var sub *claudeSub
+	progress := &c.main
+	if ev.Parent != "" {
+		sub = c.sub(ev.Parent, ev.TaskName)
+		progress = &sub.progress
+	}
+	out := func(lines []string) string {
+		text := strings.Join(lines, "\n")
+		if sub != nil {
+			if text != "" {
+				sub.t.Printf("%s", text)
+			}
+			return ""
+		}
+		return text
+	}
+	switch ev.Type {
+	case "system":
+		switch ev.Subtype {
+		case "task_started":
+			s := c.sub(ev.ToolUseID, ev.Description)
+			if p := strings.TrimSpace(ev.Prompt); p != "" {
+				s.t.Printf("task: %s", truncate(p, 1500))
+			}
+			return "→ subagent started: " + s.name
+		case "task_notification":
+			s := c.sub(ev.ToolUseID, ev.Description)
+			delete(c.subs, ev.ToolUseID)
+			if sum := strings.TrimSpace(ev.Summary); sum != "" {
+				s.t.Printf("%s", sum)
+			}
+			var err error
+			if ev.Status != "completed" {
+				err = fmt.Errorf("subagent %s", orDefault(ev.Status, "failed"))
+			}
+			s.t.Finish(err)
+			took := time.Duration(ev.Usage.DurationMS) * time.Millisecond
+			return fmt.Sprintf("← subagent %s: %s, %d tool calls in %s", orDefault(ev.Status, "ended"), s.name, ev.Usage.ToolUses, took.Round(time.Second))
+		case "thinking_tokens":
+			progress.thinking += ev.ThinkingDelta
+			return out([]string{c.tick(progress)})
+		}
+		return ""
+	case "stream_event":
+		switch ev.Event.Type {
+		case "message_start":
+			*progress = claudeProgress{said: c.now()}
+		case "content_block_delta":
+			progress.writing += len(ev.Event.Delta.Text) + len(ev.Event.Delta.PartialJSON)
+			return out([]string{c.tick(progress)})
+		}
+		return ""
+	}
+	var blocks []struct {
+		Type     string          `json:"type"`
+		ID       string          `json:"id"`
+		Text     string          `json:"text"`
+		Thinking string          `json:"thinking"`
+		Name     string          `json:"name"`
+		Input    json.RawMessage `json:"input"`
+		IsError  bool            `json:"is_error"`
+		Content  json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(ev.Message.Content, &blocks) // a string for synthetic messages
+	var lines []string
+	switch ev.Type {
+	case "assistant":
+		for _, b := range blocks {
+			switch b.Type {
+			case "thinking":
+				if t := strings.TrimSpace(b.Thinking); t != "" {
+					lines = append(lines, "thinking: "+t)
+				}
+			case "text":
+				if t := strings.TrimSpace(b.Text); t != "" {
+					lines = append(lines, t)
+				}
+			case "tool_use":
+				if b.Name != "StructuredOutput" {
+					lines = append(lines, "→ "+claudeToolCall(b.Name, b.Input, c.rel))
 				}
 			}
-		case "result":
-			if ev.IsError {
-				lines = append(lines, "error: "+ev.Result)
+		}
+	case "user":
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.IsError {
+				var msg string
+				if json.Unmarshal(b.Content, &msg) != nil {
+					msg = string(b.Content)
+				}
+				lines = append(lines, "  error: "+truncate(strings.TrimSpace(msg), 300))
 			}
 		}
-		return strings.Join(lines, "\n")
+	case "result":
+		if ev.IsError {
+			lines = append(lines, "error: "+ev.Result)
+		}
 	}
+	return out(lines)
 }
 
 // claudeToolCall is a one-line summary of a Claude Code tool call.
@@ -395,6 +584,19 @@ func claudeToolCall(name string, input json.RawMessage, rel func(string) string)
 		s := "Read " + rel(in.FilePath)
 		if in.Offset > 0 || in.Limit > 0 {
 			s += fmt.Sprintf(" (from line %d, %d lines)", max(in.Offset, 1), in.Limit)
+		}
+		return s
+	case "Edit", "Write":
+		return name + " " + rel(in.FilePath)
+	case "Agent":
+		var a struct {
+			Description string `json:"description"`
+			Background  *bool  `json:"run_in_background"`
+		}
+		_ = json.Unmarshal(input, &a)
+		s := "Agent: " + a.Description
+		if a.Background != nil && !*a.Background {
+			s += " (waits for it)"
 		}
 		return s
 	case "Grep", "Glob":
@@ -422,9 +624,27 @@ func cliTool(req LLMRequest) (ToolDefinition, error) {
 // readOnlyTools are the Claude Code tools a workspace call gets.
 const readOnlyTools = "Read,Grep,Glob"
 
+// editTools are what an editing workspace gets: the read-only tools, the
+// file editors and subagents, which get the same tools. editAllowed lets
+// the editors change files under the working directory only: an Edit
+// rule covers every file-editing tool, Write included.
+const (
+	editTools   = readOnlyTools + ",Edit,Write,Agent"
+	editAllowed = readOnlyTools + ",Edit(./**),Agent"
+)
+
+// codexSandbox is the codex sandbox for ws: writable in its directory
+// when it edits, read-only otherwise.
+func codexSandbox(ws *Workspace) string {
+	if ws != nil && ws.Edit {
+		return "workspace-write"
+	}
+	return "read-only"
+}
+
 // cliPrompt flattens the chat into a system prompt and one user prompt.
-// canRead says whether the CLI was given a workspace to read.
-func cliPrompt(msgs []ChatMessage, tool ToolDefinition, canRead bool) (string, string) {
+// ws is the workspace the CLI was given to read or edit, if any.
+func cliPrompt(msgs []ChatMessage, tool ToolDefinition, ws *Workspace) (string, string) {
 	var system []string
 	var sb strings.Builder
 	for _, m := range msgs {
@@ -437,9 +657,12 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, canRead bool) (string, s
 			sb.WriteString(m.Content + "\n\n")
 		}
 	}
-	if canRead {
+	switch {
+	case ws != nil && ws.Edit:
+		fmt.Fprintf(&sb, "%s Make your changes by editing the files, then answer only with the JSON object.", tool.Description)
+	case ws != nil:
 		fmt.Fprintf(&sb, "%s Read files if you need to, but do not change anything. Answer only with the JSON object.", tool.Description)
-	} else {
+	default:
 		fmt.Fprintf(&sb, "%s Answer only with the JSON object; do not run commands or read files.", tool.Description)
 	}
 	return strings.Join(system, "\n\n"), sb.String()

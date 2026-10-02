@@ -64,3 +64,4 @@
 .pf-running code, .pf-touches code { font-family: var(--mono); font-size: 12px; }
 .pf-touches { margin: 2px 0 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 .chip.warn { color: var(--skim); background: var(--skim-bg); }
+.claim-head .fix-pick { margin: 0 2px 0 0; }

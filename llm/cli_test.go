@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/amitbet/pr-manager/internal/activity"
 )
 
 func TestStrictSchemaMakesOptionalNullable(t *testing.T) {
@@ -118,7 +121,7 @@ func TestClaudeCodeWorkspaceEnablesReadOnlyTools(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		_, prompt = cliPrompt([]ChatMessage{{Role: "user", Content: "hi"}}, tool, ws != nil)
+		_, prompt = cliPrompt([]ChatMessage{{Role: "user", Content: "hi"}}, tool, ws)
 		b, _ := os.ReadFile(argsFile)
 		cwd, _ := os.ReadFile(argsFile + ".cwd")
 		var args []string
@@ -159,6 +162,17 @@ func TestClaudeCodeWorkspaceEnablesReadOnlyTools(t *testing.T) {
 	}
 	if strings.Contains(prompt, "do not run commands") {
 		t.Errorf("prompt still forbids reading: %q", prompt)
+	}
+	// An editing workspace adds the editors, scoped to it, and subagents.
+	args, _, prompt = call(&Workspace{Dir: repo, Edit: true})
+	if got := flag(args, "--tools"); len(got) != 1 || got[0] != editTools {
+		t.Errorf("edit --tools = %q", got)
+	}
+	if got := flag(args, "--allowedTools"); len(got) != 1 || got[0] != editAllowed || strings.Contains(got[0], "Bash") {
+		t.Errorf("edit --allowedTools = %q", got)
+	}
+	if !strings.Contains(prompt, "editing the files") {
+		t.Errorf("edit prompt = %q", prompt)
 	}
 }
 
@@ -540,6 +554,72 @@ func TestClaudeEvent(t *testing.T) {
 	} {
 		if got := f(tc.line); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.line, got, tc.want)
+		}
+	}
+}
+
+// A subagent's events go to a thread of its own, which its end closes,
+// and a long turn says how far it has got.
+func TestClaudeStreamSubagentsAndProgress(t *testing.T) {
+	log := activity.New()
+	ctx, run := activity.Start(activity.With(context.Background(), log), "llm", "fix")
+	ws := filepath.Join(string(filepath.Separator)+"ws", "repo")
+	c := newClaudeStream(ctx, ws)
+	clock := time.Unix(0, 0)
+	c.now = func() time.Time { return clock }
+	file := strconv.Quote(filepath.Join(ws, "a.go"))
+	var main []string
+	for _, l := range []string{
+		`{"type":"stream_event","event":{"type":"message_start"}}`,
+		`{"type":"system","subtype":"thinking_tokens","estimated_tokens_delta":500}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Agent","input":{"description":"Fix a.go","prompt":"p","run_in_background":false}}]}}`,
+		`{"type":"system","subtype":"task_started","tool_use_id":"tu1","description":"Fix a.go","prompt":"Fix the nil check in a.go"}`,
+		`{"type":"assistant","parent_tool_use_id":"tu1","task_description":"Fix a.go","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":` + file + `}}]}}`,
+		`{"type":"user","parent_tool_use_id":"tu1","message":{"content":[{"type":"tool_result","is_error":true,"content":"old_string not found"}]}}`,
+		`{"type":"system","subtype":"task_notification","tool_use_id":"tu1","status":"completed","summary":"Fixed it.","usage":{"tool_uses":2,"duration_ms":4000}}`,
+	} {
+		if s := c.line(l); s != "" {
+			main = append(main, s)
+		}
+	}
+	// 20s later the turn is still writing its answer.
+	clock = clock.Add(20 * time.Second)
+	if s := c.line(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\"reason\":"}}}`); s != "" {
+		main = append(main, s)
+	}
+	want := []string{"→ Agent: Fix a.go (waits for it)", "→ subagent started: Fix a.go", "← subagent completed: Fix a.go, 2 tool calls in 4s", "… thought ~500 tokens, wrote 10 chars so far"}
+	if strings.Join(main, "\n") != strings.Join(want, "\n") {
+		t.Errorf("main lines:\n%s\nwant:\n%s", strings.Join(main, "\n"), strings.Join(want, "\n"))
+	}
+	c.done(nil)
+	run.Finish(nil)
+	var sub *activity.Thread
+	for _, th := range log.Snapshot() {
+		if th.Kind == "agent" {
+			sub = &th
+		}
+	}
+	if sub == nil || sub.Name != "subagent: Fix a.go" || sub.Status != "done" {
+		t.Fatalf("subagent thread = %+v", sub)
+	}
+	var lines []string
+	for _, l := range sub.Lines {
+		lines = append(lines, l.Text)
+	}
+	got := strings.Join(lines, "\n")
+	for _, w := range []string{"task: Fix the nil check in a.go", "→ Edit a.go", "  error: old_string not found", "Fixed it."} {
+		if !strings.Contains(got, w) {
+			t.Errorf("subagent thread lacks %q:\n%s", w, got)
+		}
+	}
+
+	// A run that dies leaves no subagent running.
+	c = newClaudeStream(ctx, ws)
+	c.line(`{"type":"system","subtype":"task_started","tool_use_id":"tu2","description":"Fix b.go"}`)
+	c.done(errors.New("killed"))
+	for _, th := range log.Snapshot() {
+		if th.Name == "subagent: Fix b.go" && th.Status != "error" {
+			t.Errorf("dead run's subagent is %s", th.Status)
 		}
 	}
 }

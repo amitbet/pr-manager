@@ -115,7 +115,8 @@ type pendingFix struct {
 	Base      string    `json:"base"`
 	Head      string    `json:"head,omitempty"`
 	// State is uncommitted, committed (on top of base, not pushed),
-	// pushed, empty (nothing changed), done (a fix in the user's checkout
+	// pushed, superseded (dropped for the PR's own version of its lines),
+	// empty (nothing changed), done (a fix in the user's checkout
 	// that moved on, so whatever became of it is theirs) or missing.
 	State    string       `json:"state"`
 	Commits  int          `json:"commits,omitempty"`
@@ -131,6 +132,9 @@ type pendingFix struct {
 	Stale bool `json:"stale,omitempty"`
 	// NoPush is why it can't be pushed to the PR, "" when it can.
 	NoPush string `json:"no_push,omitempty"`
+	// SupersededBy is the PR head whose own version of the lines a
+	// superseded fix lost to (see repoCheckout.rebase).
+	SupersededBy string `json:"superseded_by,omitempty"`
 	// Kind "branch" is a commit on the PR's branch in the repository's
 	// fix checkout (see fixbranch.go); Commit is it, and Touches the
 	// earlier fixes whose lines it changed. Other: a commit no fix made,
@@ -356,7 +360,7 @@ func (t *triager) pendingFixes(ctx context.Context, of *PRResult) ([]*pendingFix
 	}
 	for _, p := range branch {
 		out = append(out, p)
-		if !p.Stale {
+		if !p.Stale && p.State != "superseded" {
 			for _, f := range p.Fixed {
 				scopes[f.Scope] = fixedBy{p, f}
 			}

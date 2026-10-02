@@ -55,6 +55,9 @@ type prFixes struct {
 	HeadRef  string     `json:"head_ref"` // the PR's branch on GitHub
 	PushedAs string     `json:"pushed_as,omitempty"`
 	Entries  []fixEntry `json:"entries,omitempty"`
+	// Superseded is the fixes the PR changed the same lines of, in
+	// commits of its own: rebase kept the PR's version and dropped them.
+	Superseded []fixEntry `json:"superseded,omitempty"`
 	// Touched is the last fix, push or switch to the branch.
 	Touched time.Time `json:"touched"`
 }
@@ -67,6 +70,8 @@ type fixEntry struct {
 	Fixed     []fixedIssue `json:"fixed,omitempty"`
 	Rounds    int          `json:"rounds"`
 	CreatedAt time.Time    `json:"created_at"`
+	// By is the PR head that superseded the fix, on a superseded one.
+	By string `json:"by,omitempty"`
 }
 
 // fixClaim is a fix running, or waiting to, in a checkout.
@@ -430,8 +435,10 @@ func (co *repoCheckout) newBranch(ctx context.Context, pr *triage.PRInfo) string
 }
 
 // rebase moves p's branch, checked out, onto head: the fixes the PR
-// doesn't have yet go on top of it, the others are dropped. A review of a
-// head older than the fixes' is refused: fixing it would undo them.
+// doesn't have yet go on top of it, the others are dropped. A fix that
+// conflicts with the PR's own commits is dropped too, as superseded: the
+// PR's version wins. A review of a head older than the fixes' is
+// refused: fixing it would undo them.
 func (co *repoCheckout) rebase(ctx context.Context, p *prFixes, head string) error {
 	if _, err := co.git(ctx, "merge-base", "--is-ancestor", head, p.Base); err == nil {
 		return fmt.Errorf("this review is of an older head of the PR than its fixes (%s): triage the PR again", shortOid(p.Base))
@@ -452,12 +459,35 @@ func (co *repoCheckout) rebase(ctx context.Context, p *prFixes, head string) err
 	if _, err := co.git(ctx, "reset", "-q", "--hard", head); err != nil {
 		return err
 	}
+	byCommit := map[string]fixEntry{}
+	for _, e := range p.Entries {
+		byCommit[e.Commit] = e
+	}
 	moved := map[string]string{}
+	var superseded []fixEntry
 	for _, c := range keep {
 		if _, err := co.git(ctx, "cherry-pick", "--allow-empty", c); err != nil {
-			_, _ = co.git(ctx, "cherry-pick", "--abort")
-			_, _ = co.git(ctx, "reset", "-q", "--hard", tip)
-			return fmt.Errorf("the PR moved on to %s, and the fix in %s conflicts with it: push or discard the PR's fixes, then fix again: %w", shortOid(head), shortOid(c), err)
+			conflicts, _ := co.git(ctx, "diff", "--name-only", "--diff-filter=U")
+			_, same := co.git(ctx, "diff", "--quiet", "HEAD")
+			if strings.TrimSpace(conflicts) == "" && same != nil {
+				_, _ = co.git(ctx, "cherry-pick", "--abort")
+				_, _ = co.git(ctx, "reset", "-q", "--hard", tip)
+				return fmt.Errorf("the PR moved on to %s, and the fix in %s doesn't go on top of it: %w", shortOid(head), shortOid(c), err)
+			}
+			// The PR has the fix's changes already (same), or its own
+			// version of those lines: either way the fix drops.
+			if _, err := co.git(ctx, "cherry-pick", "--skip"); err != nil {
+				return err
+			}
+			if strings.TrimSpace(conflicts) != "" {
+				e, ok := byCommit[c]
+				if !ok {
+					e = fixEntry{Commit: c}
+				}
+				e.By = head
+				superseded = append(superseded, e)
+			}
+			continue
 		}
 		n, err := co.git(ctx, "rev-parse", "HEAD")
 		if err != nil {
@@ -473,6 +503,7 @@ func (co *repoCheckout) rebase(ctx context.Context, p *prFixes, head string) err
 		}
 	}
 	p.Entries, p.Base, p.PushedAs = entries, head, ""
+	p.Superseded = append(p.Superseded, superseded...)
 	return nil
 }
 

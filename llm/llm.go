@@ -56,10 +56,13 @@ type LLMRequest struct {
 
 // Workspace is what a tool-using provider may read: Dir is its working
 // directory (the repo at the reviewed revision), ReadDirs are extra
-// read-only directories such as the Go module cache.
+// read-only directories such as the Go module cache. With Edit it may
+// also change files in Dir, and on Claude Code hand work to subagents;
+// it still runs no commands.
 type Workspace struct {
 	Dir      string
 	ReadDirs []string
+	Edit     bool
 }
 
 // SupportsWorkspace reports whether l can use LLMRequest.Workspace.

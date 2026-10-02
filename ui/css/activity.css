@@ -14,10 +14,12 @@
 .act-thread > summary::before { content: "▸"; color: var(--muted); width: 10px; }
 .act-thread[open] > summary::before { content: "▾"; }
 .act-thread > summary:hover { background: var(--bg3); }
-.act-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-.act-thread[data-status="running"] .act-dot { background: var(--accent); animation: act-pulse 1s infinite alternate; }
-.act-thread[data-status="done"] .act-dot { background: var(--none); }
-.act-thread[data-status="error"] .act-dot { background: var(--human); }
+/* Fixed-size box so the dot and the done checkmark line up the same. */
+.act-dot { width: 12px; height: 12px; flex: none; display: grid; place-items: center; }
+.act-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.act-thread[data-status="running"] .act-dot::before { background: var(--accent); animation: act-pulse 1s infinite alternate; }
+.act-thread[data-status="done"] .act-dot::before { content: "✓"; width: auto; height: auto; border-radius: 0; background: none; color: var(--none); font: 700 13px/1 -apple-system, sans-serif; }
+.act-thread[data-status="error"] .act-dot::before { background: var(--human); }
 @keyframes act-pulse { to { opacity: .3; } }
 .act-kind { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); background: var(--bg3); border-radius: 4px; padding: 0 6px; flex: none; }
 .act-name { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

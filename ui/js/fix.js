@@ -24,7 +24,8 @@ const byId = (id) => runs.find((r) => r.id === id);
 const drop = (r) => { runs = runs.filter((x) => x !== r); };
 
 // startFix takes one of: all (with comments to add the confirmed review
-// threads), unit_id and issue, or unit_id and thread. uncommitted is what
+// threads), unit_id and issue, unit_id and thread, or targets: a list of
+// those to fix together. uncommitted is what
 // to do with a local checkout's uncommitted changes (commit or branch);
 // rev is how a reviewed commit or branch is fixed (checkout or current).
 // Without them, the server asks and the reviewer picks.
@@ -189,6 +190,34 @@ export function threadFixButton(u, t, cls = "details-btn") {
   return `<button class="${cls}" data-act="fix-thread" data-unit="${esc(u.id)}" data-thread="${esc(t.id)}" ${fixDisabled() || (sure ? "" : `title="${why}"`)}>${sure ? "Fix comment" : "Fix anyway"}</button>`;
 }
 
+// The issues and threads picked in the Issues tab to fix together, for
+// the result on screen.
+let picked = { key: "", set: new Set() };
+const pickKey = (unit, issue, thread) => thread ? `${unit}|t|${thread}` : `${unit}|i|${issue}`;
+const picks = () => {
+  if (picked.key !== S.result?.key) picked = { key: S.result?.key, set: new Set() };
+  return picked.set;
+};
+
+// pickBox is a row's checkbox, to fix it along with the other picked ones.
+export function pickBox(u, i, thread) {
+  const k = pickKey(u.id, i, thread);
+  return `<input type="checkbox" class="fix-pick" data-act="fix-pick" data-k="${esc(k)}" ${picks().has(k) ? "checked" : ""} ${fixDisabled() ? "disabled" : ""} aria-label="Pick to fix">`;
+}
+
+// fixPickedHTML is the toolbar's Fix selected and Select all, over the
+// rows that can be picked now: a pick that got fixed or dismissed drops.
+export function fixPickedHTML(rows) {
+  const can = new Set(rows.map((r) => pickKey(r.u.id, r.i, r.thread)));
+  const set = picks();
+  for (const k of set) if (!can.has(k)) set.delete(k);
+  if (!can.size) return "";
+  const all = set.size === can.size;
+  const dis = fixDisabled();
+  return `<button class="linkbtn" data-act="fix-pick-all" data-keys="${esc([...can].join("\n"))}" ${dis}>${all ? "Select none" : "Select all"}</button>` +
+    (set.size ? `<button class="details-btn primary" data-act="fix-picked" ${dis}>Fix ${set.size} selected</button>` : "");
+}
+
 // The Fix all dropdown: whether confirmed review comments go along.
 const INCLUDE = "pr-manager.fix_comments";
 const includeComments = () => localStorage.getItem(INCLUDE) !== "0";
@@ -225,6 +254,26 @@ export const actions = {
   "fix-thread": (el) => startFix({ unit_id: el.dataset.unit, thread: el.dataset.thread }),
   "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }),
   "fix-all-menu": () => { menuOpen = !menuOpen; },
+  "fix-pick": (el) => {
+    const set = picks();
+    if (set.has(el.dataset.k)) set.delete(el.dataset.k);
+    else set.add(el.dataset.k);
+  },
+  "fix-pick-all": (el) => {
+    const set = picks(), keys = el.dataset.keys.split("\n");
+    if (keys.every((k) => set.has(k))) set.clear();
+    else keys.forEach((k) => set.add(k));
+  },
+  "fix-picked": () => {
+    const targets = [...picks()].map((k) => {
+      const [unit_id, kind, ...rest] = k.split("|");
+      const id = rest.join("|");
+      return kind === "t" ? { unit_id, issue: 0, thread: id } : { unit_id, issue: Number(id) };
+    });
+    if (!targets.length) return;
+    picks().clear();
+    return startFix({ targets });
+  },
   "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
   "fix-log": (el) => { showLog(el.dataset.id); return false; },
   "fix-dismiss": (el) => { const r = byId(el.dataset.id) || runs.find((x) => !x.id); if (r) drop(r); },

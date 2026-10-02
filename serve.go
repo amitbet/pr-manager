@@ -882,6 +882,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			"summary_lang":   o.summaryLang,
 			"review_budget":  orDefault(o.reviewBudget, triage.DefaultBudget),
 			"recursive_fix":  true,
+			"fix_agent":      true,
 			"max_fix_rounds": 3,
 			"fix_location":   "worktree",
 			"budgets":        triage.DefaultTierPolicy().OrderedBudgets(),

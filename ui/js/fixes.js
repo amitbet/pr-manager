@@ -67,6 +67,7 @@ const STATE = {
   uncommitted: ["fixed · not committed", "medium"],
   committed: ["fixed · committed, not pushed", "low"],
   pushed: ["fixed · pushed", "low"],
+  superseded: ["superseded by the PR", "unknown"],
   running: ["fix running", "medium"],
   waiting: ["fix waiting", "unknown"],
 };
@@ -156,7 +157,8 @@ function branchRow(p) {
   const title = p.other ? esc(p.subject || "A commit no fix made") : p.fixed?.length ? `${p.fixed.length} fixed` : "Fix";
   const btns = [
     `<button class="details-btn" data-act="pf-diff" data-id="${esc(id)}">${F.shown.has(id) ? "Hide changes" : "Review changes"}</button>`,
-    p.state !== "pushed" ? `<button class="details-btn" data-act="pf-drop" data-id="${esc(id)}" ${dis} title="Take this commit off the PR's branch">${busy === "drop" ? "Dropping…" : "Drop"}</button>` : "",
+    p.state === "superseded" ? `<button class="details-btn" data-act="pf-drop" data-id="${esc(id)}" ${dis} title="Take it off this list">${busy === "drop" ? "Dismissing…" : "Dismiss"}</button>` : "",
+    p.state !== "pushed" && p.state !== "superseded" ? `<button class="details-btn" data-act="pf-drop" data-id="${esc(id)}" ${dis} title="Take this commit off the PR's branch">${busy === "drop" ? "Dropping…" : "Drop"}</button>` : "",
     p.key && p.key !== S.result.key ? `<button class="linkbtn" data-act="pf-open" data-key="${esc(p.key)}">Open fix result</button>` : "",
   ].filter(Boolean).join(" ");
   return `<li class="pf ${esc(p.state)}${p.stale ? " stale" : ""}" id="pf-${esc(id)}">
@@ -166,6 +168,7 @@ function branchRow(p) {
         <span class="spacer"></span>${btns}
       </div>
       ${touchesHTML(p)}
+      ${p.state === "superseded" ? `<div class="hint">The PR changed the same lines in <code>${esc(p.superseded_by.slice(0, 10))}</code>, so its version was kept and this ${p.other ? "commit" : "fix"} was dropped. Fix the issues again if they are still there.</div>` : ""}
       ${p.other ? "" : `<details class="pf-issues"><summary>What it fixed</summary>${fixedList(p)}</details>`}
       ${F.shown.has(id) ? `<div class="pf-diff">${diffHTML(p)}</div>` : ""}
     </li>`;
@@ -316,14 +319,15 @@ export const actions = {
   },
   "pf-drop": (el) => {
     const p = byRow(el.dataset.id);
-    if (!p || !confirm(`Take ${p.other ? "this commit" : "this fix"} off the PR's branch? Its changes are gone; the fixes after it stay.`)) return false;
+    const gone = p?.state === "superseded";
+    if (!p || (!gone && !confirm(`Take ${p.other ? "this commit" : "this fix"} off the PR's branch? Its changes are gone; the fixes after it stay.`))) return false;
     return run(rowId(p), "drop", async () => {
       await postJSON(`/api/results/${encodeURIComponent(S.result.key)}/fixes/drop`, { commit: p.commit });
-      return { text: "Dropped the fix." };
+      return { text: gone ? "Dismissed the superseded fix." : "Dropped the fix." };
     });
   },
   "pf-complete": () => {
-    const unpushed = F.list.filter((p) => p.kind === "branch" && p.state !== "pushed").length;
+    const unpushed = F.list.filter((p) => p.kind === "branch" && p.state !== "pushed" && p.state !== "superseded").length;
     if (!confirm(`Done fixing this PR? Its fix branch and fix results are removed${unpushed ? `, with ${unpushed} fix${unpushed === 1 ? "" : "es"} not pushed` : ""}. This can't be undone.`)) return false;
     return run("branch", "complete", async () => {
       await postJSON(`/api/results/${encodeURIComponent(S.result.key)}/fixes/complete`, {});

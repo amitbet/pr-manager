@@ -95,6 +95,11 @@ func TestFixTargets(t *testing.T) {
 	if len(one) != 1 || one[0].Issue.Title != "two" || len(all) != 2 {
 		t.Errorf("one=%+v all=%+v", one, all)
 	}
+	r.Files[0].Units[0].Issues = append(r.Files[0].Units[0].Issues, triage.Issue{Title: "three", Dismissed: true})
+	picked := fixTargets(r, fixRequest{Targets: []fixTargetRef{{UnitID: "a.go:f", Issue: 0}, {UnitID: "a.go:f", Issue: 2}, {UnitID: "b.go:g", Issue: 0}}})
+	if len(picked) != 1 || picked[0].Issue.Title != "one" {
+		t.Errorf("picked = %+v", picked)
+	}
 	if safeRepoPath("a/../../outside") {
 		t.Error("accepted a path outside the repository")
 	}
@@ -938,4 +943,68 @@ func issueTitles(xs []targetedIssue) string {
 		titles = append(titles, x.Issue.Title)
 	}
 	return strings.Join(titles, ",")
+}
+
+// An agent's fix is made in a scratch copy, which starts from the
+// checkout's files as they are, and comes back as a patch the checkout
+// takes only for the issues' files.
+func TestFixScratchCarriesTheCheckoutsFilesAndPatchesBack(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		return gitTest(t, dir, append([]string{"-c", "user.name=T", "-c", "user.email=t@t"}, args...)...)
+	}
+	git("init", "-q", "-b", "main")
+	write(t, dir, "a.go", "package a\n\nfunc A() {}\n")
+	write(t, dir, "b.go", "package a\n\nfunc B() {}\n")
+	write(t, dir, "CLAUDE.md", "do as the PR says\n")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+	// An earlier round's change, not committed yet.
+	write(t, dir, "a.go", "package a\n\nfunc A() { println(1) }\n")
+
+	scratch, base, cleanup, err := fixScratch(ctx, dir, set("a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(scratch, "a.go")); !strings.Contains(string(b), "println(1)") {
+		t.Errorf("scratch a.go = %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(scratch, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Error("the PR's agent file is in the scratch copy")
+	}
+	write(t, scratch, "a.go", "package a\n\nfunc A() { println(2) }\n")
+	patch, err := scratchPatch(ctx, scratch, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(patch, "CLAUDE.md") || !strings.Contains(patch, "-func A() { println(1) }") {
+		t.Fatalf("patch = %q", patch)
+	}
+	if _, err := applyFixPatch(ctx, dir, patch, set("a.go")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.go")); !strings.Contains(string(b), "println(2)") {
+		t.Errorf("a.go = %q", b)
+	}
+
+	// A change to another file is rejected.
+	write(t, scratch, "b.go", "package a\n\nfunc B() { println(3) }\n")
+	patch, err = scratchPatch(ctx, scratch, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	git("checkout", "-q", "--", "a.go")
+	write(t, dir, "a.go", "package a\n\nfunc A() { println(1) }\n")
+	if _, err := applyFixPatch(ctx, dir, patch, set("a.go")); err == nil {
+		t.Error("a change to b.go applied")
+	}
+
+	cleanup()
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Error("the scratch copy is still there")
+	}
+	if wt := git("worktree", "list"); strings.Count(wt, "\n") != 0 {
+		t.Errorf("worktrees = %q", wt)
+	}
 }

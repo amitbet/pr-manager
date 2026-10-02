@@ -12,7 +12,7 @@ import { esc, api, postJSON } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, attLevel } from "./scores.js";
 import { issueDraftButton } from "./comments.js";
-import { issueFixButton, threadFixButton, fixAllHTML } from "./fix.js";
+import { issueFixButton, threadFixButton, fixAllHTML, pickBox, fixPickedHTML } from "./fix.js";
 import { pendingFixesHTML, issueFixMark, fixedBy } from "./fixes.js";
 import { raisedBy, raisedChip, dupTarget } from "./threads.js";
 import { lintLine, LINT_RANK } from "./lint.js";
@@ -109,7 +109,7 @@ function issueRow(c) {
   const { u, f, is, i } = c;
   const dup = raisedBy(u, i);
   const act = c.dismissed ? "" : `${dup ? raisedChip(dup) : issueDraftButton(f, u, i)} ${issueFixMark(u, i) || issueFixButton(u, i)}`;
-  return `<div class="claim-head">
+  return `<div class="claim-head">${pickable(c) ? pickBox(u, i) : ""}
       <span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>
       ${is.line ? `<span class="ln">line ${is.line}</span>` : ""}
       <b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}
@@ -141,7 +141,7 @@ function commentRow(c) {
   const state = t.status === "valid"
     ? `<span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>`
     : `<span class="dz unknown">${esc(t.status === "rejected" ? "not confirmed" : t.status || "not checked")}</span>`;
-  return `<div class="claim-head">${state}${t.line ? `<span class="ln">line ${t.line}</span>` : ""}
+  return `<div class="claim-head">${pickable(c) ? pickBox(c.u, null, t.id) : ""}${state}${t.line ? `<span class="ln">line ${t.line}</span>` : ""}
       <b>${esc(title)}</b>
       <a class="tauthor" href="${esc(t.url)}" target="_blank" rel="noopener">@${esc(t.author)}</a>
       <span class="spacer"></span>${issueFixMark(c.u, null, t.id) || threadFixButton(c.u, t)}
@@ -163,6 +163,15 @@ function resolvedRow(c) {
       <span class="spacer"></span><span class="dz low" title="Raised on ${esc(since)} (${esc(new Date(x.at).toLocaleString())}); ${esc(why)}">fixed since ${esc(since)}</span>
     </div>
     ${unitLink(c)}`;
+}
+
+// pickable is whether a row can be picked to fix with others: an open
+// issue or a review comment no fix has, or is working on.
+function pickable(c) {
+  if (c.dismissed) return false;
+  if (c.kind === "issue") return !issueFixMark(c.u, c.i);
+  if (c.kind === "comment") return !c.t.fixed && !issueFixMark(c.u, null, c.t.id);
+  return false;
 }
 
 const rowHTML = { issue: issueRow, lint: lintRow, comment: commentRow, resolved: resolvedRow };
@@ -196,6 +205,7 @@ export function issuesHTML() {
       <span class="spacer"></span>
       ${standing.length ? `<span class="dz ${attLevel(worst)}" title="the worst claim still standing">${standing.length} open</span>` : ""}
       ${open.length > standing.length ? `<span class="muted" title="fixed by a fix not on the PR yet, or since an earlier review">${open.length - standing.length} fixed</span>` : ""}
+      ${fixPickedHTML(open.filter(pickable).map((c) => ({ u: c.u, i: c.i, thread: c.kind === "comment" ? c.t.id : "" })))}
       ${fixAllHTML()}
     </div>
     ${pendingFixesHTML()}

@@ -174,7 +174,36 @@ func (t *triager) branchFixes(ctx context.Context, of *PRResult) ([]*pendingFix,
 		}
 		out = append(out, pf)
 	}
+	for _, e := range p.Superseded {
+		pf := &pendingFix{Kind: "branch", Key: e.Key, Commit: e.Commit, CreatedAt: e.CreatedAt, Dir: co.dir, Branch: p.Branch, Location: "repo",
+			Rounds: e.Rounds, Base: p.Base, Head: e.Commit, State: "superseded", Fixed: e.Fixed, Other: e.Key == "", SupersededBy: e.By,
+			NoPush: "the PR changed the same lines in " + shortOid(e.By)}
+		if pf.Other {
+			if subj, err := triage.GitCtx(ctx, co.clone, "log", "-1", "--format=%s", e.Commit); err == nil {
+				pf.Subject = strings.TrimSpace(subj)
+			}
+		}
+		// The commit is off the branch: once git prunes it, only the
+		// files' names are left.
+		if pf.Files, err = commitFiles(ctx, co.clone, e.Commit, false); err != nil {
+			pf.Files = nil
+			for _, f := range e.Files {
+				pf.Files = append(pf.Files, fixFile{Path: f})
+			}
+		}
+		out = append(out, pf)
+	}
 	return out, running, nil
+}
+
+// superseded is p's superseded fix commit, if it is one.
+func (p *prFixes) superseded(commit string) bool {
+	for _, e := range p.Superseded {
+		if e.Commit == commit {
+			return true
+		}
+	}
+	return false
 }
 
 // fixCheckoutOf is of's PR's repository checkout and branch state.
@@ -204,6 +233,13 @@ func (t *triager) branchCommitDiff(ctx context.Context, key, commit string) ([]f
 	_, co, p, err := t.fixCheckoutOf(key)
 	if err != nil {
 		return nil, err
+	}
+	if p.superseded(commit) {
+		files, err := commitFiles(ctx, co.clone, commit, true)
+		if err != nil {
+			return nil, errors.New("git no longer has this superseded fix's changes")
+		}
+		return files, nil
 	}
 	if !isAncestor(co.clone, p.Base, commit) || !isAncestor(co.clone, commit, "refs/heads/"+p.Branch) {
 		return nil, errors.New("not a fix on the PR's branch")
@@ -283,6 +319,19 @@ func (t *triager) dropFix(ctx context.Context, key, commit string) error {
 			p := st.PRs[strconv.Itoa(of.PR.Number)]
 			if p == nil {
 				return errors.New("the PR has no fixes")
+			}
+			// A superseded fix is off the branch already: it leaves the list.
+			if p.superseded(commit) {
+				var keep []fixEntry
+				for _, e := range p.Superseded {
+					if e.Commit != commit {
+						keep = append(keep, e)
+					} else {
+						gone = e.Key
+					}
+				}
+				p.Superseded, p.Touched = keep, time.Now()
+				return nil
 			}
 			if isAncestor(co.dir, commit, p.PushedAs) {
 				return errors.New("this fix is pushed: revert it on the PR instead")

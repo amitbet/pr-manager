@@ -198,6 +198,109 @@ func TestRepoCheckoutStacksFixesOnThePRBranch(t *testing.T) {
 	}
 }
 
+func TestRepoCheckoutDropsAFixThePRTookInItsOwnCommit(t *testing.T) {
+	tr, review, git := repoFixture(t)
+	ctx := context.Background()
+	o := tr.options(jobOptions{})
+	m := tr.checkouts
+	co, rel, err := m.acquire(ctx, o, review.PR, "job1", set("a.go"), nil, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, co.dir, "a.go", "package a\n\nfunc A() { println(1) }\n"+pad)
+	if c, err := co.commitFix(ctx, 7, []string{"a.go"}, fixEntry{Key: "fix1", Files: []string{"a.go"}}); err != nil || c == "" {
+		t.Fatalf("commit: %q %v", c, err)
+	}
+	rel()
+
+	// The PR moved on with the fix's change folded into a commit of its
+	// own, so no patch of it matches the fix's.
+	repo := tr.fetcher.RepoDir(review.PR.PRRef)
+	git(repo, "checkout", "-q", "--detach", review.PR.HeadOid)
+	write(t, repo, "a.go", "package a\n\nfunc A() { println(1) }\n"+pad)
+	write(t, repo, "c.go", "package a\n")
+	git(repo, "add", "-A")
+	git(repo, "commit", "-qm", "theirs, with the fix in it")
+	moved := *review.PR
+	moved.HeadOid = git(repo, "rev-parse", "HEAD")
+	if _, rel, err := m.acquire(ctx, o, &moved, "job2", set("b.go"), nil, func(string) {}); err != nil {
+		t.Fatal(err)
+	} else {
+		rel()
+	}
+	p, _ := co.pr(7)
+	if p.Base != moved.HeadOid || len(p.Entries) != 0 || git(co.dir, "rev-parse", "HEAD") != moved.HeadOid {
+		t.Errorf("after the PR took the fix: %+v", p)
+	}
+}
+
+func TestRepoCheckoutSupersedesAFixThePRRewrote(t *testing.T) {
+	tr, review, git := repoFixture(t)
+	ctx := context.Background()
+	o := tr.options(jobOptions{})
+	m := tr.checkouts
+	co, rel, err := m.acquire(ctx, o, review.PR, "job1", set("a.go", "b.go"), nil, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, co.dir, "a.go", "package a\n\nfunc A() { println(1) }\n"+pad)
+	c1, err := co.commitFix(ctx, 7, []string{"a.go"}, fixEntry{Key: "fix1", Files: []string{"a.go"}, Fixed: []fixedIssue{{Scope: "s1", Title: "A does nothing", File: "a.go"}}})
+	if err != nil || c1 == "" {
+		t.Fatalf("commit 1: %q %v", c1, err)
+	}
+	write(t, co.dir, "b.go", "package a\n\nfunc B() { println(2) }\n")
+	if c, err := co.commitFix(ctx, 7, []string{"b.go"}, fixEntry{Key: "fix2", Files: []string{"b.go"}}); err != nil || c == "" {
+		t.Fatalf("commit 2: %q %v", c, err)
+	}
+	rel()
+	if err := tr.saveResult(review); err != nil {
+		t.Fatal(err)
+	}
+
+	// The PR rewrote fix1's line its own way: its version wins, fix2
+	// goes on top.
+	repo := tr.fetcher.RepoDir(review.PR.PRRef)
+	git(repo, "checkout", "-q", "--detach", review.PR.HeadOid)
+	write(t, repo, "a.go", "package a\n\nfunc A() { println(9) }\n"+pad)
+	git(repo, "add", "-A")
+	git(repo, "commit", "-qm", "theirs")
+	moved := *review.PR
+	moved.HeadOid = git(repo, "rev-parse", "HEAD")
+	if _, rel, err := m.acquire(ctx, o, &moved, "job2", set("c.go"), nil, func(string) {}); err != nil {
+		t.Fatal(err)
+	} else {
+		rel()
+	}
+	p, _ := co.pr(7)
+	if len(p.Entries) != 1 || p.Entries[0].Key != "fix2" || len(p.Superseded) != 1 || p.Superseded[0].Key != "fix1" || p.Superseded[0].By != moved.HeadOid {
+		t.Fatalf("after the PR rewrote fix1: %+v", p)
+	}
+	if !strings.Contains(git(co.dir, "show", "HEAD:a.go"), "println(9)") || !strings.Contains(git(co.dir, "show", "HEAD:b.go"), "println(2)") {
+		t.Error("the branch isn't the PR's a.go and fix2's b.go")
+	}
+
+	review.PR = &moved
+	if err := tr.saveResult(review); err != nil {
+		t.Fatal(err)
+	}
+	fixes, _, err := tr.branchFixes(ctx, review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixes) != 2 || fixes[1].State != "superseded" || fixes[1].Commit != c1 || fixes[1].SupersededBy != moved.HeadOid || len(fixes[1].Files) != 1 || fixes[1].NoPush == "" {
+		t.Fatalf("fixes = %+v", fixes)
+	}
+	if files, err := tr.branchCommitDiff(ctx, review.Key, c1); err != nil || len(files) != 1 {
+		t.Errorf("superseded diff: %+v %v", files, err)
+	}
+	if err := tr.dropFix(ctx, review.Key, c1); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = co.pr(7); len(p.Superseded) != 0 || len(p.Entries) != 1 {
+		t.Errorf("after dismissing it: %+v", p)
+	}
+}
+
 func TestMigrateMovesAWorktreeFixOntoThePRBranch(t *testing.T) {
 	tr, _, fix, git := fixFixture(t)
 	t.Setenv("GIT_AUTHOR_NAME", "Test")
