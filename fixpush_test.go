@@ -314,3 +314,22 @@ func TestSideIssuesTheFixerSaysItResolved(t *testing.T) {
 		t.Errorf("side fixed = %+v", got)
 	}
 }
+
+func TestDiffFilesCutsUnitsLikeAReview(t *testing.T) {
+	src := "package a\n\nfunc F() int {\n\treturn 2\n}\n\nfunc G() int {\n\treturn 4\n}\n"
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,9 +1,9 @@\n package a\n \n func F() int {\n-\treturn 1\n+\treturn 2\n }\n \n func G() int {\n-\treturn 3\n+\treturn 4\n }\n"
+	files, err := diffFiles(diff, true, func(string) ([]byte, error) { return []byte(src), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, u := range files[0].Units {
+		ids = append(ids, u.ID)
+	}
+	if strings.Join(ids, " ") != "a.go:F a.go:G" {
+		t.Fatalf("units = %v, want a.go:F a.go:G", ids)
+	}
+	if h := files[0].Units[1].Hunks[0]; h.NewStart != 7 || !strings.Contains(strings.Join(h.Lines, "\n"), "+\treturn 4") {
+		t.Fatalf("G's hunk = %+v", h)
+	}
+}

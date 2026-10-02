@@ -7,6 +7,7 @@ import { S, render, allUnits, fileByPath } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
 import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions as diffActions } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
+import { issueFixMark } from "./fixes.js";
 import { issueFixButton } from "./fix.js";
 import { threadsHTML, raisedBy, raisedChip } from "./threads.js";
 import { lintHTML } from "./lint.js";
@@ -272,7 +273,7 @@ function issueCard(f, u, is, shown) {
   else if (is.line) acts.push(`<span class="chip">line ${is.line}</span>`);
   const dup = raisedBy(u, i);
   acts.push(dup ? raisedChip(dup) : issueDraftButton(f, u, i));
-  acts.push(issueFixButton(u, i, "linkbtn"));
+  acts.push(issueFixMark(u, i) || issueFixButton(u, i, "linkbtn"));
   const a = acts.join("");
   return `<div class="wz-issue ${sev}"><div class="it"><span class="dz ${sev}">${esc(is.severity)}</span><span class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}${issueCapChip(is)}</span></div>
     ${is.detail ? `<div class="idt tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</div>` : ""}${issueScenarioHTML(is, "idt", u, i)}${a ? `<div class="ia">${a}</div>` : ""}</div>`;

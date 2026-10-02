@@ -6,7 +6,7 @@
 // of its own (and a local review's), are listed as they are, to commit,
 // push or throw away. The issues fixes fixed, or are fixing, say so.
 import { esc, api, postJSON } from "./util.js";
-import { S, render } from "./state.js";
+import { S, render, syncURL } from "./state.js";
 import { SEV_CLASS } from "./scores.js";
 import { fixSettings } from "./settings.js";
 import { triageURL } from "./triage.js";
@@ -20,8 +20,9 @@ export function initFixes(show) {
 }
 
 // F is the fixes of the result on screen: list and marks from the server,
-// diffs by key once asked for, and the action running on each key.
-let F = { key: "", loading: false, list: [], running: [], marks: new Map(), diffs: {}, shown: new Set(), collapsed: new Set(), busy: {}, error: "", note: null };
+// diffs by key once asked for, the issue whose changes a diff shows, and
+// the action running on each key.
+let F = { key: "", loading: false, list: [], running: [], marks: new Map(), diffs: {}, shown: new Set(), focus: new Map(), collapsed: new Set(), busy: {}, error: "", note: null };
 
 // rowId names a listed fix: a commit on the PR's branch, which a fix made
 // or not, or a fix result in a checkout of its own.
@@ -50,10 +51,11 @@ async function load(key) {
   if (S.result?.key === key) render();
 }
 
-// ensureFixes loads the open result's fixes the first time it is shown.
+// ensureFixes loads the open result's fixes the first time it, or an
+// issue a fix marks, is shown.
 function ensureFixes() {
   if (S.result && F.key !== S.result.key) {
-    F = { key: "", loading: false, list: [], running: [], marks: new Map(), diffs: {}, shown: new Set(), collapsed: new Set(), busy: {}, error: "", note: null };
+    F = { key: "", loading: false, list: [], running: [], marks: new Map(), diffs: {}, shown: new Set(), focus: new Map(), collapsed: new Set(), busy: {}, error: "", note: null };
     load(S.result.key);
   }
 }
@@ -87,12 +89,17 @@ export function issueFixMark(u, i, thread) {
     return `<span title="${esc(m.reason ? `Waiting: ${m.reason}` : "A fix is working on this")}">${stateChip(m.state)}</span>`;
   }
   const swept = m.swept ? `<span class="chip" title="${esc(m.reason || "")}">resolved along the way</span> ` : "";
-  return `${swept}${stateChip(m.state)} <button class="linkbtn" data-act="pf-goto" data-key="${esc(m.key)}">Review fix</button>`;
+  const title = thread ? "the review thread" : u.issues?.[i]?.title || "";
+  return `${swept}${stateChip(m.state)} <button class="linkbtn" data-act="pf-goto" data-key="${esc(m.key)}" data-commit="${esc(m.commit || "")}"
+    data-unit="${esc(u.id)}" data-file="${esc(u.file)}" data-title="${esc(title)}" title="The changes the fix made in this code">Review fix</button>`;
 }
 
 // fixMark is the pending fix that fixed an issue or thread, or the fix
 // running on it, if any; fixedBy only the first.
-export const fixMark = (u, i, thread) => (F.key === S.result?.key && F.marks.get(markKey(u.id, i, thread))) || null;
+export const fixMark = (u, i, thread) => {
+  ensureFixes();
+  return (F.key === S.result?.key && F.marks.get(markKey(u.id, i, thread))) || null;
+};
 export const fixedBy = (u, i, thread) => {
   const m = fixMark(u, i, thread);
   return m && m.state !== "running" && m.state !== "waiting" ? m : null;
@@ -108,11 +115,13 @@ function totals(p) {
 }
 
 function fixedList(p) {
+  const id = rowId(p);
   if (!p.fixed?.length) return `<div class="hint">No issue was recorded as fixed. Fixes made before this version don't record what they fixed.</div>`;
   const note = p.inferred ? `<div class="hint">This fix was made before fixes recorded what they fixed: these are the issues of this review its result no longer has.</div>` : "";
   return `${note}<ul class="pf-fixed">${p.fixed.map((f) => `<li><span class="dz ${SEV_CLASS[f.severity] || "unknown"}">${esc(f.severity || "comment")}</span>
       ${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.title)}</a>` : esc(f.title)}
-      <span class="muted">${esc(f.unit_id)}</span>${f.swept ? ` <span class="chip" title="${esc(f.reason || "")}">resolved along the way</span>` : ""}</li>`).join("")}</ul>`;
+      <span class="muted">${esc(f.unit_id)}</span>
+      <button class="linkbtn" data-act="pf-focus" data-id="${esc(id)}" data-unit="${esc(f.unit_id)}" data-file="${esc(f.file)}" data-title="${esc(f.title)}">its changes</button>${f.swept ? ` <span class="chip" title="${esc(f.reason || "")}">resolved along the way</span>` : ""}</li>`).join("")}</ul>`;
 }
 
 // diffHTML is a fix's changes, file by file, in the Review tab's file
@@ -123,20 +132,45 @@ function diffHTML(p) {
   if (!d) return `<div class="hint">Loading the changes…</div>`;
   if (d.error) return `<div class="dismiss-error">${esc(d.error)}</div>`;
   if (!d.files.length) return `<div class="hint">No changes.</div>`;
-  const view = `<div class="toolbar"><span class="spacer"></span>
+  const { shown, note } = focused(p, d);
+  const view = `<div class="toolbar">${note}<span class="spacer"></span>
       <span class="seg"><button class="${S.view === "split" ? "on" : ""}" data-act="view" data-v="split">Split</button><button class="${S.view === "unified" ? "on" : ""}" data-act="view" data-v="unified">Unified</button></span></div>`;
-  return view + d.files.map((f) => {
+  return view + shown.map(({ f, units }) => {
     const collapsed = F.collapsed.has(`${id}|${f.path}`);
-    const rows = f.binary ? [] : unitRows(f, f.units[0]);
+    const hunks = units.flatMap((u) => u.hunks).sort((a, b) => a.new_start - b.new_start || a.old_start - b.old_start);
+    const rows = f.binary ? [] : unitRows(f, { hunks });
+    const n = (c) => hunks.reduce((k, h) => k + h.lines.filter((l) => l[0] === c).length, 0);
+    const [adds, dels] = units === f.units ? [f.adds, f.dels] : [n("+"), n("-")];
     return `<div class="file ${collapsed ? "collapsed" : ""}">
       <div class="file-head" data-act="pf-collapse" data-key="${esc(id)}" data-path="${esc(f.path)}">
         <span class="path">${f.old_path && f.old_path !== f.path ? esc(f.old_path) + " → " : ""}${esc(f.path)}</span>
         <span class="status">${esc(f.status)}${f.binary ? ", binary" : ""}</span>
-        <span class="counts"><span class="pf-add">+${f.adds}</span> <span class="pf-del">−${f.dels}</span></span>
+        <span class="counts"><span class="pf-add">+${adds}</span> <span class="pf-del">−${dels}</span></span>
       </div>
       <div class="units"><div class="diffwrap">${f.binary ? `<div class="nodiff">binary file</div>` : diffTable(f, rows, S.view)}</div></div>
     </div>`;
   }).join("");
+}
+
+// focused is the files and units of a fix's diff to show: when it was
+// opened for an issue, the changes it made in the issue's unit (or file,
+// when the fix's units don't have it), and what note says about them.
+function focused(p, d) {
+  const all = d.files.map((f) => ({ f, units: f.units }));
+  const fo = F.focus.get(rowId(p));
+  if (!fo) return { shown: all, note: "" };
+  const others = (p.fixed?.length || 1) - 1;
+  const rest = others > 0 ? ` The fix's other changes are for the ${others} other issue${others === 1 ? "" : "s"} it fixed.` : "";
+  const what = fo.title ? ` for “${esc(fo.title)}”` : "";
+  const toggle = `<button class="linkbtn" data-act="pf-unfocus" data-id="${esc(rowId(p))}">Show all its changes</button>`;
+  let shown = d.files.map((f) => ({ f, units: f.units.filter((u) => u.uid === fo.unit) })).filter((x) => x.units.length);
+  let where = `<code>${esc(fo.unit)}</code>`;
+  if (!shown.length) {
+    shown = all.filter(({ f }) => f.path === fo.file);
+    where = `<code>${esc(fo.file)}</code>`;
+  }
+  if (!shown.length) return { shown: all, note: `<span class="pf-focus">The fix changed nothing in <code>${esc(fo.file)}</code>${what}; these are all its changes.</span>` };
+  return { shown, note: `<span class="pf-focus">Its changes in ${where}${what}.${rest} ${toggle}</span>` };
 }
 
 // touchesHTML says which earlier fixes' lines a fix on the branch changed.
@@ -254,7 +288,8 @@ async function showDiff(id) {
     // One unit per file, so the Review tab's diff tables can draw it.
     for (const f of d.files) {
       f.readonly = true;
-      f.units = [{ id: `${id}|${f.path}`, hunks: f.hunks || [] }];
+      const units = f.units?.length ? f.units : [{ id: f.path, hunks: f.hunks || [] }];
+      f.units = units.map((u) => ({ id: `${id}|${u.id}`, uid: u.id, hunks: u.hunks || [] }));
     }
     prepare(d);
     F.diffs[id] = d;
@@ -264,8 +299,12 @@ async function showDiff(id) {
   render();
 }
 
-// gotoRow shows a listed fix's changes and scrolls to it.
-function gotoRow(id) {
+// gotoRow shows a listed fix's changes, those for an issue when focus
+// names it, and scrolls to it on the Issues tab.
+function gotoRow(id, focus) {
+  if (S.tab !== "issues") { S.tab = "issues"; syncURL(); }
+  if (focus?.unit) F.focus.set(id, focus);
+  else F.focus.delete(id);
   showDiff(id).then(() => document.getElementById(`pf-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
   return false;
 }
@@ -299,12 +338,19 @@ async function push(keys, busyKey) {
 export const actions = {
   // A fix result's key: its row, a commit on the branch or a checkout.
   "pf-goto": (el) => {
-    const p = F.list.find((x) => x.key === el.dataset.key);
-    return p ? gotoRow(rowId(p)) : false;
+    const { key, commit, unit, file, title } = el.dataset;
+    const p = (commit && F.list.find((x) => x.commit === commit)) || F.list.find((x) => x.key === key);
+    return p ? gotoRow(rowId(p), { unit, file, title }) : false;
   },
+  "pf-focus": (el) => {
+    const { id, unit, file, title } = el.dataset;
+    return gotoRow(id, { unit, file, title });
+  },
+  "pf-unfocus": (el) => { F.focus.delete(el.dataset.id); },
   "pf-goto-row": (el) => gotoRow(el.dataset.id),
   "pf-diff": (el) => {
     const id = el.dataset.id;
+    F.focus.delete(id);
     if (F.shown.has(id)) { F.shown.delete(id); return; }
     showDiff(id);
     return false;

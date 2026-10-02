@@ -4,6 +4,7 @@ import { S, render, syncURL, fileOfUnit } from "./state.js";
 import { SEV_CLASS, issueCapChip, issueScenarioHTML, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
 import { unitRows, diffTable, expandAllButton } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
+import { issueFixMark } from "./fixes.js";
 import { fixAllHTML, issueFixButton } from "./fix.js";
 import { threadsHTML, threadsChip, raisedBy, raisedChip } from "./threads.js";
 import { lintHTML, lintChip } from "./lint.js";
@@ -20,7 +21,7 @@ function issuesHTML(f, u) {
     if (is.same_as) return repeatHTML(u, is);
     const dup = raisedBy(u, i);
     const draft = dup ? raisedChip(dup) : issueDraftButton(f, u, i);
-    const fix = issueFixButton(u, i);
+    const fix = issueFixMark(u, i) || issueFixButton(u, i);
     return `<li><span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>` +
       `${is.line ? `<span class="ln">line ${is.line}</span>` : ""}<b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}` +
       `${draft ? ` ${draft}` : ""} ${fix}` +

@@ -100,7 +100,10 @@ func commitFiles(ctx context.Context, dir, commit string, hunks bool) ([]fixFile
 	if err != nil {
 		return nil, err
 	}
-	return diffFiles(out, hunks)
+	return diffFiles(out, hunks, func(path string) ([]byte, error) {
+		b, err := triage.GitCtx(ctx, dir, "show", commit+":"+path)
+		return []byte(b), err
+	})
 }
 
 func isAncestor(dir, a, b string) bool {

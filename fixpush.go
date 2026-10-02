@@ -102,6 +102,15 @@ type fixFile struct {
 	Adds    int               `json:"adds"`
 	Dels    int               `json:"dels"`
 	Hunks   []triage.Hunk     `json:"hunks,omitempty"`
+	// Units are the hunks cut the way a review cuts them, so an issue's
+	// unit finds the changes a fix made in it.
+	Units []fixUnit `json:"units,omitempty"`
+}
+
+// fixUnit is a unit of a fix's changes to a file.
+type fixUnit struct {
+	ID    string        `json:"id"`
+	Hunks []triage.Hunk `json:"hunks"`
 }
 
 // pendingFix is a fix checkout as it is now.
@@ -152,6 +161,9 @@ type fixMark struct {
 	Issue  *int   `json:"issue,omitempty"`
 	Thread string `json:"thread,omitempty"`
 	Key    string `json:"key"`
+	// Commit is the fix's on the PR's branch, "" for a fix in a checkout
+	// of its own.
+	Commit string `json:"commit,omitempty"`
 	State  string `json:"state"`
 	// Swept and Reason are the fixedIssue's: the fix wasn't asked to work
 	// on it, and the fixer said its patch resolved it too.
@@ -199,12 +211,17 @@ func fixDiff(ctx context.Context, dir, base string, hunks bool) ([]fixFile, erro
 	if err != nil {
 		return nil, err
 	}
-	return diffFiles(out, hunks)
+	return diffFiles(out, hunks, func(path string) ([]byte, error) {
+		if !safeRepoPath(path) {
+			return nil, fmt.Errorf("unsafe path %q", path)
+		}
+		return os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
+	})
 }
 
-// diffFiles is a unified diff by file, with line counts, and its hunks
-// when asked for.
-func diffFiles(out string, hunks bool) ([]fixFile, error) {
+// diffFiles is a unified diff by file, with line counts, and its hunks and
+// units when asked for; content is a file as the diff leaves it.
+func diffFiles(out string, hunks bool, content triage.ContentFunc) ([]fixFile, error) {
 	files, err := triage.ParseDiff(out)
 	if err != nil {
 		return nil, err
@@ -227,6 +244,9 @@ func diffFiles(out string, hunks bool) ([]fixFile, error) {
 		}
 		if hunks {
 			ff.Hunks = f.Hunks
+			for _, u := range triage.BuildUnits([]triage.FileDiff{f}, content, 0) {
+				ff.Units = append(ff.Units, fixUnit{ID: u.ID, Hunks: u.Hunks})
+			}
 		}
 		res = append(res, ff)
 	}
@@ -383,12 +403,12 @@ func (t *triager) pendingFixes(ctx context.Context, of *PRResult) ([]*pendingFix
 		for _, u := range f.Units {
 			for i, is := range u.Issues {
 				if b, ok := scopes[issueScope(u.ID, is)]; ok {
-					marks = append(marks, fixMark{Unit: u.ID, Issue: &i, Key: b.p.Key, State: b.p.State, Swept: b.f.Swept, Reason: b.f.Reason})
+					marks = append(marks, fixMark{Unit: u.ID, Issue: &i, Key: b.p.Key, Commit: b.p.Commit, State: b.p.State, Swept: b.f.Swept, Reason: b.f.Reason})
 				}
 			}
 			for _, th := range u.Threads {
 				if b, ok := scopes[threadScope(th.ID)]; ok {
-					marks = append(marks, fixMark{Unit: u.ID, Thread: th.ID, Key: b.p.Key, State: b.p.State, Swept: b.f.Swept, Reason: b.f.Reason})
+					marks = append(marks, fixMark{Unit: u.ID, Thread: th.ID, Key: b.p.Key, Commit: b.p.Commit, State: b.p.State, Swept: b.f.Swept, Reason: b.f.Reason})
 				}
 			}
 		}
