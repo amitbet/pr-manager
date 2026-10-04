@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/amitbet/pr-manager/llm"
 )
@@ -96,6 +97,26 @@ type Summarizer struct {
 	Tools bool
 	// workspace is what the reviewer may read; nil without Tools.
 	workspace *llm.Workspace
+	// calls caps the review and critic calls in flight; nil: no cap.
+	// Pipeline.Run sets it to the analyze stage's limit, since a group's
+	// critic calls run side by side once its review is in.
+	calls chan struct{}
+}
+
+// callTool is llm.CallToolIn in the summarizer's workspace, waiting for a
+// free call slot. A slot is held only for the call, never while waiting
+// on others, so reviews and their critics cannot deadlock.
+func (s *Summarizer) callTool(ctx context.Context, model llm.LLMTool, msgs []llm.ChatMessage, tool llm.ToolDefinition, maxTokens int32) (map[string]any, error) {
+	if s.calls != nil {
+		select {
+		case s.calls <- struct{}{}:
+			defer func() { <-s.calls }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	args, _, err := llm.CallToolIn(ctx, model, s.workspace, msgs, tool, maxTokens)
+	return args, err
 }
 
 // prompt is the review prompt: the unit's diff, the rest of the PR, the
@@ -134,7 +155,7 @@ func ruleNote(u *Unit) string {
 // decision (unless a rule made it), summary, focus and issues. A medium
 // or worse issue that survives the critic pins the unit in afterReview.
 func (s *Summarizer) Analyze(ctx context.Context, u *Unit) {
-	args, _, err := llm.CallToolIn(ctx, s.LLM, s.workspace, []llm.ChatMessage{
+	args, err := s.callTool(ctx, s.LLM, []llm.ChatMessage{
 		{Role: "system", Content: s.system(analyzeSystem)},
 		{Role: "user", Content: s.prompt(u, ruleNote(u))},
 	}, analyzeTool, reviewMaxTokens)
@@ -248,15 +269,13 @@ func (s *Summarizer) AnalyzeGroup(ctx context.Context, g *ReviewGroup) {
 		return
 	}
 	prompt := s.groupPrompt(g)
-	args, _, err := llm.CallToolIn(ctx, s.LLM, s.workspace, []llm.ChatMessage{
+	args, err := s.callTool(ctx, s.LLM, []llm.ChatMessage{
 		{Role: "system", Content: s.system(analyzeSystem) + groupSystem},
 		{Role: "user", Content: prompt},
 	}, groupAnalyzeTool, groupMaxTokens(len(g.Members)))
 	if err != nil {
 		// One failed call must not drop a whole group's review.
-		for _, u := range g.Members {
-			s.Analyze(ctx, u)
-		}
+		s.eachMember(g, func(u *Unit) { s.Analyze(ctx, u) })
 		return
 	}
 	byID := map[string]map[string]any{}
@@ -271,14 +290,30 @@ func (s *Summarizer) AnalyzeGroup(ctx context.Context, g *ReviewGroup) {
 			}
 		}
 	}
-	for _, u := range g.Members {
+	s.eachMember(g, func(u *Unit) {
 		e, ok := byID[u.ID]
 		if !ok {
 			s.Analyze(ctx, u)
-			continue
+			return
 		}
 		s.applyReview(ctx, u, e, prompt)
+	})
+}
+
+// eachMember runs fn for every member at once. Writing a review back can
+// mean critic calls or a solo re-review, and members share nothing but
+// the read-only summarizer, so one member's calls need not wait for
+// another's.
+func (s *Summarizer) eachMember(g *ReviewGroup, fn func(*Unit)) {
+	var wg sync.WaitGroup
+	for _, u := range g.Members {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(u)
+		}()
 	}
+	wg.Wait()
 }
 
 // groupMaxTokens scales the output cap with the number of units, since one

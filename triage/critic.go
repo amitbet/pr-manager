@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 
 	"github.com/amitbet/pr-manager/llm"
 )
@@ -34,8 +35,11 @@ var criticTool = llm.ToolDefinition{
 	},
 }
 
-// criticize uses a fresh conversation for each issue. A failed or malformed
-// verdict leaves the original issue in place rather than hiding a defect.
+// criticize uses a fresh conversation for each issue, all at once: the
+// calls are independent, and none can reuse another's prompt cache, since
+// the issue is in the same message as the shared context. A failed or
+// malformed verdict leaves the original issue in place rather than hiding
+// a defect.
 // A rejected medium-or-worse issue is kept, capped at low and marked with
 // the critic's reason: the critic reads the PR author's comments too, and
 // one saying "this is intended" must not erase a real finding unseen.
@@ -47,13 +51,24 @@ func (s *Summarizer) criticize(ctx context.Context, u *Unit, issues []Issue, con
 	if critic == nil || len(issues) == 0 {
 		return issues
 	}
+	verdicts := make([]map[string]any, len(issues))
+	errs := make([]error, len(issues))
+	var wg sync.WaitGroup
+	for i, issue := range issues {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			claim, _ := json.Marshal(issue)
+			verdicts[i], errs[i] = s.callTool(ctx, critic, []llm.ChatMessage{
+				{Role: "system", Content: s.system(criticSystem)},
+				{Role: "user", Content: context + "\nReported issue to assess:\n" + string(claim)},
+			}, criticTool, reviewMaxTokens)
+		}()
+	}
+	wg.Wait()
 	kept := make([]Issue, 0, len(issues))
-	for _, issue := range issues {
-		claim, _ := json.Marshal(issue)
-		args, _, err := llm.CallToolIn(ctx, critic, s.workspace, []llm.ChatMessage{
-			{Role: "system", Content: s.system(criticSystem)},
-			{Role: "user", Content: context + "\nReported issue to assess:\n" + string(claim)},
-		}, criticTool, reviewMaxTokens)
+	for i, issue := range issues {
+		args, err := verdicts[i], errs[i]
 		if err != nil {
 			kept = append(kept, issue)
 			continue

@@ -67,6 +67,9 @@ func fixFixture(t *testing.T) (tr *triager, review, fix *PRResult, git func(dir 
 		t.Fatal(err)
 	}
 	git(repo, "init", "-q", "-b", "main")
+	// Windows runners default to core.autocrlf=true, which would check
+	// worktrees of this repo out with CRLF; the tests compare LF bytes.
+	git(repo, "config", "core.autocrlf", "false")
 	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n\nfunc F() {}\n"+pad), 0o644); err != nil {
 		t.Fatal(err)
 	}
