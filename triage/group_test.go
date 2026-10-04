@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -108,6 +109,7 @@ func TestReviewGroupsOffIsOneGroupPerUnit(t *testing.T) {
 // answer places its unit in skim.
 type groupReplyLLM struct {
 	omit  map[string]bool
+	mu    sync.Mutex
 	calls []string
 }
 
@@ -117,7 +119,9 @@ func (f *groupReplyLLM) ModelID() string { return "fake" }
 func (f *groupReplyLLM) Call(_ context.Context, q llm.LLMRequest) (*llm.LLMResponse, error) {
 	prompt := q.Messages[len(q.Messages)-1].Content
 	name := q.Tools[0].Name
+	f.mu.Lock()
 	f.calls = append(f.calls, name)
+	f.mu.Unlock()
 	triage := map[string]any{"bucket": "skim", "change_kind": "refactor", "confidence": 0.9, "reason": "r"}
 	if name != "submit_group_analysis" {
 		return toolResp(name, with(triage, map[string]any{
@@ -210,6 +214,25 @@ func TestAnalyzeGroupOfOneIsAnOrdinaryReview(t *testing.T) {
 	s.AnalyzeGroup(context.Background(), &ReviewGroup{Members: []*Unit{a}})
 	if len(f.calls) != 1 || f.calls[0] != "submit_analysis" {
 		t.Errorf("calls = %v, want the ungrouped review tool", f.calls)
+	}
+}
+
+// The biggest review prompt starts first, without changing any group.
+func TestLargestFirstOrdersByPromptSize(t *testing.T) {
+	small := &ReviewGroup{Members: []*Unit{unit("a.go:A", "a.go", "A", "func A() {")}}
+	big := &ReviewGroup{Members: []*Unit{unit("b.go:B", "b.go", "B", "func B() {\n"+strings.Repeat("\tx++\n", 200))}}
+	pair := &ReviewGroup{Members: []*Unit{
+		unit("c.go:C", "c.go", "C", "func C() {\n"+strings.Repeat("\ty++\n", 40)),
+		unit("d.go:D", "d.go", "D", "func D() {"),
+	}}
+	s := &Summarizer{Policy: DefaultPolicy()}
+	in := []*ReviewGroup{small, pair, big}
+	got := s.largestFirst(in)
+	if len(got) != 3 || got[0] != big || got[1] != pair || got[2] != small {
+		t.Errorf("order = %s, %s, %s; want big, pair, small", got[0].ID(), got[1].ID(), got[2].ID())
+	}
+	if in[0] != small || in[1] != pair || in[2] != big {
+		t.Error("largestFirst reordered its input")
 	}
 }
 
