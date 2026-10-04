@@ -51,9 +51,15 @@ func fixFixture(t *testing.T) (tr *triager, review, fix *PRResult, git func(dir 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The env, not -c, so git run by the code under test (cherry-picks in
+	// combineFixes) has an identity too; CI runners have no global one.
+	for _, k := range []string{"GIT_AUTHOR", "GIT_COMMITTER"} {
+		t.Setenv(k+"_NAME", "Test")
+		t.Setenv(k+"_EMAIL", "test@example.com")
+	}
 	git = func(dir string, args ...string) string {
 		t.Helper()
-		return gitTest(t, dir, append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)...)
+		return gitTest(t, dir, args...)
 	}
 	ref := triage.PRRef{Owner: "acme", Repo: "web", Number: 7}
 	repo := tr.fetcher.RepoDir(ref)
