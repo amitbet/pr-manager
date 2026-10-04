@@ -33,9 +33,11 @@ export const S = {
   seqCopied: false,
   seqText: false,         // show the Mermaid text (no clipboard access)
   seqView: "after",       // the Sequence tab: the flow before | after the PR
-  mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | classic
+  mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | files | classic
   // group: a step is one file's changes (Settings → Walkthrough); usesOpen: "step|unit" of opened definitions.
   wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified", steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map() },
+  // Files mode: the open file, closed directories, files already loaded whole (or tried) and the one loading.
+  fv: { path: null, closed: new Set(), tried: new Set(), loading: null },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both
   trees: {},              // treemap data by repo ("all" = workspace)
 };

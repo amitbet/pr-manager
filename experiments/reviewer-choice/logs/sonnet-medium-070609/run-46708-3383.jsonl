@@ -1,0 +1,12 @@
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "/Users/amit.bezalel/.claude/projects",
+  "configDirectory": "/Users/amit.bezalel/.claude",
+  "email": "amit.bezalel@doit.com",
+  "orgId": "82d1cbda-6e9c-43a9-a330-a2e868d4a84a",
+  "orgName": "DoiT",
+  "subscriptionType": "enterprise"
+}

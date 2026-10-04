@@ -1,0 +1,24 @@
+scored units: 3
+exact:        3 (100.0%)
+MISSES human→none:   0 (0.0%)
+under-reviewed:      0 (0.0%)
+over-escalated:      0 (0.0%)
+
+confusion (rows=label, cols=predicted)
+          human     skim   none
+human         3        0      0
+skim          0        0      0
+none          0        0      0
+
+review budgets (all units; labeled human outside human; must_find defects outside human)
+            human     skim  none  under  defects
+most           22       46     4      0     0/1
+more           22       46     4      0     0/1
+balanced       22       46     4      0     0/1
+less           22       46     4      0     0/1
+least          22       46     4      0     0/1
+
+findings: 1/1 must_find found at the right severity, 0 at the wrong one, 0 missed
+issues on labeled units: 2 (1 expected, 0 false positive, 1 unlabeled), precision 100%
+  issue: inventory-error-cache/store/client.go [expected] medium: Transient and context errors cached for five minutes
+  issue: prometheus-18905/tsdb/head_read.go [unlabeled] medium: Duplicate caller refs produce duplicate series in sorted postings

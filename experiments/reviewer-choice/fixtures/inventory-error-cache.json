@@ -1,0 +1,33 @@
+{
+ "diff": "../../../testdata/eval/inventory-error-cache.diff",
+ "head_dir": "../../../testdata/eval/inventory-error-cache.head",
+ "base_dir": "../../../testdata/eval/inventory-error-cache.base",
+ "labels": {
+  "store/client.go:(*Client).GetRecord": "human",
+  "store/client.go:(*Client).fetchFromServer": "human",
+  "store/loader.go:loadMetadata": "human"
+ },
+ "findings": {
+  "store/client.go": {
+   "must_find": [
+    {
+     "match": "(transient|timeout|deadline|context|cancel\\w*)\\b[^.]{0,40}\\b(errors?|failures?|lookups?)\\b[^.]*\\b(cach|block)|cach\\w* (caller |the )?(deadline|context|transient|timeout|cancel)",
+     "min_severity": "low",
+     "max_severity": "medium",
+     "note": "real: a transient timeout gets the same 5m negative cache and key-only fallback as a permanent FORBIDDEN"
+    }
+   ],
+   "must_not_find": [
+    {
+     "match": "pointer|\\*ReplyError",
+     "note": "false positive: Conn.Get returns ReplyError by value (conn.go), so errors.As with ReplyError catches it"
+    },
+    {
+     "match": "reconnect|re-?dial",
+     "min_severity": "medium",
+     "note": "real but minor and pre-existing: the old GetRecord also closed and retried after a failure; low at most"
+    }
+   ]
+  }
+ }
+}

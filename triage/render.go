@@ -15,8 +15,8 @@ func RenderJSON(w io.Writer, r *Report) error {
 
 func RenderMarkdown(w io.Writer, r *Report) {
 	c := r.Counts()
-	fmt.Fprintf(w, "## PR triage\n\n`%s...%s`: **%d** need human review, **%d** summarized, **%d** skipped.\n\n",
-		r.Base, r.Head, c[BucketHuman], c[BucketSkim], c[BucketNone])
+	fmt.Fprintf(w, "## PR triage\n\n`%s...%s`: **%d** need human review, **%d** summarized, **%d** auxiliary, **%d** skipped.\n\n",
+		r.Base, r.Head, c[BucketHuman], c[BucketSkim], c[BucketAux], c[BucketNone])
 	d, l, att := r.Scores()
 	var top []string
 	if d != nil {
@@ -76,6 +76,19 @@ func RenderMarkdown(w io.Writer, r *Report) {
 			writeWhy(w, u)
 		}
 		fmt.Fprintln(w)
+	}
+	if us := section(BucketAux); len(us) > 0 {
+		fmt.Fprintf(w, "<details><summary>Auxiliary: tests, docs and fixtures (%d)</summary>\n\n", len(us))
+		for _, u := range us {
+			s := u.Summary
+			if s == "" {
+				s = u.Decision.Reason
+			}
+			fmt.Fprintf(w, "- %s: %s\n", unitLink(u), withHeadline(u, s))
+			writeIssues(w, u)
+			writeWhy(w, u)
+		}
+		fmt.Fprintf(w, "\n</details>\n\n")
 	}
 	if us := section(BucketNone); len(us) > 0 {
 		fmt.Fprintf(w, "<details><summary>No review needed (%d)</summary>\n\n", len(us))

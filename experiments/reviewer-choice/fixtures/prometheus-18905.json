@@ -1,0 +1,17 @@
+{
+ "diff": "../../hunk-grouping-prometheus-18905/data/pr.diff",
+ "head_dir": "../../hunk-grouping-prometheus-18905/data/head",
+ "base_dir": "../../hunk-grouping-prometheus-18905/data/base",
+ "labels": {},
+ "findings": {
+  "tsdb/block.go": {},
+  "tsdb/block_test.go": {},
+  "tsdb/compact.go": {},
+  "tsdb/compact_test.go": {},
+  "tsdb/db.go": {},
+  "tsdb/db_test.go": {},
+  "tsdb/head.go": {},
+  "tsdb/head_read.go": {},
+  "tsdb/head_test.go": {}
+ }
+}

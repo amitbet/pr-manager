@@ -42,7 +42,7 @@
 .pending-fixes { margin: 12px 0 4px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .pending-fixes > .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pending-fixes .claims { margin-top: 8px; }
-.pf { border: 1px solid var(--border); border-left: 3px solid var(--skim, #c90); border-radius: 6px; padding: 8px 10px; background: var(--bg); }
+.pf { border: 1px solid var(--border); border-left: 3px solid var(--warn, #c90); border-radius: 6px; padding: 8px 10px; background: var(--bg); }
 .pf.committed { border-left-color: var(--accent); }
 .pf.pushed { border-left-color: var(--none, #2da44e); opacity: .85; }
 .pf.stale { opacity: .75; }
@@ -63,7 +63,7 @@
 .pf-running li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pf-running code, .pf-touches code { font-family: var(--mono); font-size: 12px; }
 .pf-touches { margin: 2px 0 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
-.chip.warn { color: var(--skim); background: var(--skim-bg); }
+.chip.warn { color: var(--warn); background: var(--warn-bg); }
 .claim-head .fix-pick { margin: 0 2px 0 0; }
 .pf-diff > .toolbar .pf-focus { font-size: 13px; }
 .pf-focus code { font-family: var(--mono); font-size: 12px; }

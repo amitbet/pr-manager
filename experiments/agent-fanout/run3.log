@@ -1,0 +1,7 @@
+=== RUN   TestAgentFanout
+    fanout_poc_test.go:369: baseline       prometheus/prometheus#18905  groups=22 wall=   33s agent=    0s fallbacks=0 reviewed=71/71 issues=0 cost=$2.48 runs=23 
+    fanout_poc_test.go:369: agent-1-sonnet prometheus/prometheus#18905  groups=22 wall=   42s agent=   42s fallbacks=0 reviewed=71/71 issues=0 cost=$2.29 runs=1 
+    fanout_poc_test.go:369: agent-1-opus   prometheus/prometheus#18905  groups=22 wall=   56s agent=   56s fallbacks=0 reviewed=71/71 issues=0 cost=$2.49 runs=1 
+--- PASS: TestAgentFanout (132.98s)
+PASS
+ok  	github.com/amitbet/pr-manager/triage	133.412s

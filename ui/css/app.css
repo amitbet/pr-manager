@@ -1,9 +1,10 @@
 /* Theme, layout, header, sidebar and shared widgets (pills, chips, tabs). */
 :root {
   --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eef1f4; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
-  --human: #cf222e; --human-bg: #ffebe9; --skim: #9a6700; --skim-bg: #fff8c5; --none: #1a7f37; --none-bg: #dafbe1;
+  --human: #e5132d; --human-bg: #ffe5e7; --skim: #f2a100; --skim-bg: #fff5d6; --aux: #9cbf00; --aux-bg: #f4fad2; --none: #0f9d58; --none-bg: #d9f6e6;
   --add-bg: #e6ffec; --add-num: #ccffd8; --del-bg: #ffebe9; --del-num: #ffd7d5; --hunk-bg: #ddf4ff; --accent: #0969da;
   --empty-bg: #f6f8fa; --exp-bg: #ddf4ff; --draft-bg: #fff8c5; --high: #bc4c00; --high-bg: #fff1e5;
+  --warn: #9a6700; --warn-bg: #fff8c5;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 /* js/theme.js sets data-theme from the saved choice or the system. */
@@ -11,9 +12,10 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
-  --human: #ff7b72; --human-bg: #3d1417; --skim: #e3b341; --skim-bg: #3a2e0a; --none: #3fb950; --none-bg: #0f2d19;
+  --human: #ff3b3b; --human-bg: #45121a; --skim: #ffb52e; --skim-bg: #3d2c0a; --aux: #c6e43a; --aux-bg: #2a330a; --none: #3ddc84; --none-bg: #0d2e1d;
   --add-bg: #12261e; --add-num: #1b4428; --del-bg: #25171c; --del-num: #542426; --hunk-bg: #121d2f; --accent: #4493f8;
   --empty-bg: #161b22; --exp-bg: #121d2f; --draft-bg: #2b2412; --high: #f0883e; --high-bg: #3d2410;
+  --warn: #e3b341; --warn-bg: #3a2e0a;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); }
@@ -89,10 +91,11 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 .job-kind { font-size: 11px; font-weight: 600; text-transform: uppercase; background: var(--bg3); border-radius: 4px; padding: 0 6px; flex: none; }
 main { padding: 16px 24px 80px; min-width: 0; }
 .pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; }
-.pill.human { color: var(--human); background: var(--human-bg); }
+.pill.human { color: var(--human); background: var(--human-bg); font-weight: 700; }
 .pill.skim { color: var(--skim); background: var(--skim-bg); }
+.pill.aux { color: var(--aux); background: var(--aux-bg); }
 .pill.none { color: var(--none); background: var(--none-bg); }
-.pill.draft { color: var(--skim); background: var(--draft-bg); }
+.pill.draft { color: var(--warn); background: var(--draft-bg); }
 .pr-head h2 { margin: 0 0 4px; font-size: 22px; }
 .pr-head .meta { color: var(--muted); font-size: 14px; }
 .pr-head .meta code { font-family: var(--mono); font-size: 13px; }
@@ -101,7 +104,7 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .filter { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 16px; border: 1px solid var(--border); cursor: pointer; user-select: none; background: var(--bg); }
 .filter.off { opacity: .4; }
 .filter b { font-size: 16px; }
-.filter.human b { color: var(--human); } .filter.skim b { color: var(--skim); } .filter.none b { color: var(--none); }
+.filter.human b { color: var(--human); } .filter.skim b { color: var(--skim); } .filter.aux b { color: var(--aux); } .filter.none b { color: var(--none); }
 .spacer { flex: 1; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; background: var(--bg); padding: 4px 12px; font-size: 13px; }
@@ -110,7 +113,7 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .dz { font-size: 12px; font-weight: 600; border-radius: 10px; padding: 0 8px; line-height: 20px; white-space: nowrap; }
 .dz.critical { color: var(--human); background: var(--human-bg); }
 .dz.high { color: var(--high); background: var(--high-bg); }
-.dz.medium { color: var(--skim); background: var(--skim-bg); }
+.dz.medium { color: var(--warn); background: var(--warn-bg); }
 .dz.low { color: var(--none); background: var(--none-bg); }
 .dz.unknown { color: var(--muted); background: var(--bg3); }
 .esc-chip { font-size: 12px; font-weight: 600; color: var(--human); background: var(--human-bg); border-radius: 10px; padding: 0 8px; line-height: 20px; }

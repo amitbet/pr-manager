@@ -1,0 +1,19 @@
+=== RUN   TestAgentFanout
+    fanout_poc_test.go:368: baseline       grafana/grafana#133630       groups= 9 wall=   24s agent=    0s fallbacks=0 reviewed=36/36 issues=0 cost=$0.88 runs=9 
+    fanout_poc_test.go:368: baseline-b     grafana/grafana#133630       groups= 9 wall=   22s agent=    0s fallbacks=0 reviewed=36/36 issues=0 cost=$0.88 runs=9 
+    fanout_poc_test.go:368: agent-1        grafana/grafana#133630       groups= 9 wall=   70s agent=   61s fallbacks=0 reviewed=36/36 issues=1 cost=$1.02 runs=2 
+    fanout_poc_test.go:368: agent-4        grafana/grafana#133630       groups= 9 wall=   81s agent=   72s fallbacks=0 reviewed=36/36 issues=1 cost=$1.06 runs=2 
+    fanout_poc_test.go:368: agent-1-sonnet grafana/grafana#133630       groups= 9 wall=   37s agent=   37s fallbacks=0 reviewed=36/36 issues=0 cost=$0.95 runs=1 
+    fanout_poc_test.go:368: baseline       kubernetes/kubernetes#142277 groups= 8 wall=   16s agent=    0s fallbacks=0 reviewed=25/25 issues=0 cost=$0.74 runs=8 
+    fanout_poc_test.go:368: baseline-b     kubernetes/kubernetes#142277 groups= 8 wall=   22s agent=    0s fallbacks=0 reviewed=25/25 issues=0 cost=$0.76 runs=8 
+    fanout_poc_test.go:368: agent-1        kubernetes/kubernetes#142277 groups= 8 wall=   63s agent=   63s fallbacks=0 reviewed=25/25 issues=0 cost=$0.78 runs=1 
+    fanout_poc_test.go:368: agent-4        kubernetes/kubernetes#142277 groups= 8 wall=   48s agent=   48s fallbacks=0 reviewed=25/25 issues=0 cost=$0.74 runs=1 
+    fanout_poc_test.go:368: agent-1-sonnet kubernetes/kubernetes#142277 groups= 8 wall=   32s agent=   32s fallbacks=0 reviewed=25/25 issues=0 cost=$0.77 runs=1 
+    fanout_poc_test.go:368: baseline       vercel/next.js#99189         groups= 8 wall=   13s agent=    0s fallbacks=0 reviewed=9/9 issues=0 cost=$0.55 runs=8 
+    fanout_poc_test.go:368: baseline-b     vercel/next.js#99189         groups= 8 wall=   12s agent=    0s fallbacks=0 reviewed=9/9 issues=0 cost=$0.55 runs=8 
+    fanout_poc_test.go:368: agent-1        vercel/next.js#99189         groups= 8 wall=   25s agent=   25s fallbacks=0 reviewed=9/9 issues=0 cost=$0.59 runs=1 
+    fanout_poc_test.go:368: agent-4        vercel/next.js#99189         groups= 8 wall=   30s agent=   30s fallbacks=0 reviewed=9/9 issues=0 cost=$0.57 runs=1 
+    fanout_poc_test.go:368: agent-1-sonnet vercel/next.js#99189         groups= 8 wall=   27s agent=   27s fallbacks=0 reviewed=9/9 issues=0 cost=$0.63 runs=1 
+--- PASS: TestAgentFanout (529.31s)
+PASS
+ok  	github.com/amitbet/pr-manager/triage	530.110s

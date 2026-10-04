@@ -16,7 +16,9 @@ import { overviewHTML, hasOverview } from "./overview.js";
 
 // Units are ranked by bucket, then score, then review attention, then risk
 // (impact times likelihood), then file order. "no review" units only on request.
-const BRANK = { human: 0, skim: 1, none: 2 };
+const BRANK = { human: 0, skim: 1, aux: 2, none: 3 };
+// Auxiliary and no-review units are left out of the steps unless asked for.
+const optional = (u) => u.decision.bucket === "none" || u.decision.bucket === "aux";
 const byRank = (a, b) => BRANK[a.u.decision.bucket] - BRANK[b.u.decision.bucket]
   || (b.u.score?.total ?? 0) - (a.u.score?.total ?? 0)
   || (b.u.attention || 0) - (a.u.attention || 0)
@@ -47,7 +49,7 @@ function steps() {
   const m = stepsMemo;
   if (m && m.result === S.result && m.all === S.wz.all && m.mode === S.wz.steps && m.sig === sig && m.units.length === all.length
     && all.every(({ u, f }, i) => u === m.units[i].u && f === m.units[i].f && u.hunks === m.units[i].hunks)) return m.st;
-  const units = all.map((x, i) => ({ ...x, i })).filter(({ u }) => S.wz.all || u.decision.bucket !== "none");
+  const units = all.map((x, i) => ({ ...x, i })).filter(({ u }) => S.wz.all || !optional(u));
   const groups = S.wz.steps === "file" ? fileGroups(units).map((members) => ({ members }))
     : S.wz.steps === "related" ? relatedGroups(units)
     : units.map((x) => ({ members: [x] }));
@@ -156,6 +158,12 @@ export function loadProgress() {
 // onIntro is whether the overview is the page shown.
 const onIntro = () => S.wz.intro && hasOverview(S.result);
 const save = () => localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
+// markReviewed marks units reviewed, or not, for the Files mode, which
+// shares the walkthrough's progress.
+export function markReviewed(ids, on) {
+  for (const id of ids) on ? S.wz.done.add(id) : S.wz.done.delete(id);
+  save();
+}
 
 // current is the index of the shown step: the one holding the saved unit,
 // else the first unreviewed one. Progress is kept per unit, so it survives
@@ -171,7 +179,7 @@ function current(st) {
 const HEADER_H = 54;
 
 // showStep opens the walkthrough on the step holding unit id, including
-// no-review units if that's what it is, and scrolls to the unit's code;
+// auxiliary and no-review units if that's what it is, and scrolls to the unit's code;
 // false if it isn't in a step even then.
 export function showStep(id) {
   let i = steps().findIndex((s) => has(s, id));
@@ -306,7 +314,7 @@ const noteOpen = (u, alone) => S.wz.noteOpen.get(u.id) ?? (alone || u.decision.b
 // in a lower bucket than the step is dimmed. The header is a div, not a
 // button, because the headline's EN toggle is a button and buttons don't
 // nest.
-function noteHTML(f, u, shown, bucket, alone) {
+export function noteHTML(f, u, shown, bucket, alone) {
   const b = u.decision.bucket, open = noteOpen(u, alone);
   const live = worstFirst(u.issues || []);
   const count = live.length ? `<span class="dz ${SEV_CLASS[live[0].severity] || "high"}">${live.length} issue${live.length > 1 ? "s" : ""}</span>`
@@ -357,22 +365,29 @@ function markIssues(rows, units) {
 
 const byHunkPos = (a, b) => a.new_start - b.new_start || a.old_start - b.old_start;
 
-// fileSectionHTML is one file of a grouped step: its bar, then a row for
-// each of the step's units in it, the unit's review beside its code. alone is whether
-// the step has only this one unit.
-function fileSectionHTML(f, units, bucket, alone) {
+// unitSegmentsHTML is f's rows cut at each of units, a row per unit with
+// its review beside its code. The Files mode (files.js) shows a whole file
+// this way. alone is whether units is a single unit.
+export function unitSegmentsHTML(f, units, bucket, alone) {
   const whole = fullyExpanded(f);
   const mine = units.flatMap((x) => x.hunks || []);
   const rows = whole ? fileRows(f, { hunks: mine }) : stepRows(f, units);
   const hunks = (whole ? (f.units || []).flatMap((x) => x.hunks || []) : mine).sort(byHunkPos);
   const shown = markIssues(rows, units);
-  const fd = S.drafts.filter((d) => d.path === f.path).length;
-  const body = splitAtUnits(rows, hunks, units, whole).map((c) => `<div class="wz-seg">
+  return splitAtUnits(rows, hunks, units, whole).map((c) => `<div class="wz-seg">
       <div class="wz-seg-note">${c.u ? noteHTML(f, c.u, shown, bucket, alone) : ""}</div>
       <div class="wz-seg-code">${c.rows.length ? diffTable(f, c.rows, S.wz.view) : ""}</div></div>`).join("");
+}
+
+// fileSectionHTML is one file of a grouped step: its bar, then a row for
+// each of the step's units in it, the unit's review beside its code. alone is whether
+// the step has only this one unit.
+function fileSectionHTML(f, units, bucket, alone) {
+  const whole = fullyExpanded(f);
+  const fd = S.drafts.filter((d) => d.path === f.path).length;
   return `<section class="wz-code">
     <div class="wz-codebar"><span class="path">${esc(f.path)}</span><span>${units.length} change${units.length > 1 ? "s" : ""}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
-    ${body}</section>`;
+    ${unitSegmentsHTML(f, units, bucket, alone)}</section>`;
 }
 
 // newSide is the code a reader reads as the change: added and context
@@ -536,10 +551,10 @@ function cardHTML(st, i) {
 
 export function walkHTML() {
   const st = steps();
-  const nNone = allUnits().filter(({ u }) => u.decision.bucket === "none").length;
-  // Grouped, no-review units join other steps rather than adding one each,
+  const nNone = allUnits().filter(({ u }) => optional(u)).length;
+  // Grouped, these units join other steps rather than adding one each,
   // so a count would not match the steps it adds.
-  const what = S.wz.steps === "unit" ? `${nNone} no-review unit${nNone > 1 ? "s" : ""}` : "no-review units";
+  const what = S.wz.steps === "unit" ? `${nNone} auxiliary and no-review unit${nNone > 1 ? "s" : ""}` : "auxiliary and no-review units";
   const toggle = nNone ? `<label><input type="checkbox" data-act="wz-all" ${S.wz.all ? "checked" : ""}> include ${what}</label>` : "";
   if (!st.length) return `<div class="wz-top">${toggle}</div>${overviewHTML(S.result, true)}<div class="empty">Nothing in this PR needs review.</div>`;
   const i = current(st);

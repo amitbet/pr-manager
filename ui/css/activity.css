@@ -43,7 +43,7 @@
 .act-arr > li + li { border-top: 1px dashed var(--border); }
 .act-arr > li::marker { color: var(--muted); }
 .act-str { white-space: pre-wrap; }
-.act-lit { color: var(--skim); }
+.act-lit { color: var(--warn); }
 .act-nil { color: var(--muted); font-style: italic; }
 .act-block { white-space: pre-wrap; tab-size: 4; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; max-height: 360px; overflow: auto; }
 .act-diff > span { display: block; min-height: 1.45em; }

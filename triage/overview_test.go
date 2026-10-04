@@ -29,7 +29,7 @@ func TestWriteOverview(t *testing.T) {
 	if want := (&Overview{Why: "Flaky links.", How: []string{"Retry helper"}}); !reflect.DeepEqual(ov, want) {
 		t.Errorf("overview = %+v, want %+v", ov, want)
 	}
-	for _, s := range []string{"Fetch fails on flaky links.", "- Add retry helper\n  \n  Caps at 5.", "- Use it in Fetch", "issue (high): No backoff", "check: callers with deadlines", "1 human review, 0 skim, 1 no review"} {
+	for _, s := range []string{"Fetch fails on flaky links.", "- Add retry helper\n  \n  Caps at 5.", "- Use it in Fetch", "issue (high): No backoff", "check: callers with deadlines", "1 human review, 0 skim, 0 auxiliary, 1 no review"} {
 		if !strings.Contains(prompt, s) {
 			t.Errorf("prompt lacks %q:\n%s", s, prompt)
 		}

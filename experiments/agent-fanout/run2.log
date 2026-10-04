@@ -1,0 +1,7 @@
+=== RUN   TestAgentFanout
+    fanout_poc_test.go:369: agent-1-opus   grafana/grafana#133630       groups= 9 wall=   85s agent=   74s fallbacks=0 reviewed=36/36 issues=1 cost=$1.28 runs=2 
+    fanout_poc_test.go:369: agent-1-opus   kubernetes/kubernetes#142277 groups= 8 wall=   44s agent=   44s fallbacks=0 reviewed=25/25 issues=0 cost=$0.84 runs=1 
+    fanout_poc_test.go:369: agent-1-opus   vercel/next.js#99189         groups= 8 wall=   34s agent=   34s fallbacks=0 reviewed=9/9 issues=0 cost=$0.68 runs=1 
+--- PASS: TestAgentFanout (164.08s)
+PASS
+ok  	github.com/amitbet/pr-manager/triage	165.211s

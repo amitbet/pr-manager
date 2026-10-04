@@ -12,8 +12,8 @@ for (const k of Object.keys(localStorage)) {
 export const $ = (s) => document.querySelector(s);
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-export const BUCKETS = ["human", "skim", "none"];
-export const LABEL = { human: "human review", skim: "skim", none: "no review" };
+export const BUCKETS = ["human", "skim", "aux", "none"];
+export const LABEL = { human: "human review", skim: "skim", aux: "auxiliary", none: "no review" };
 
 export async function api(path, opts) {
   const r = await fetch(path, opts);

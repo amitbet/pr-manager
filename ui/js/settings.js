@@ -1,6 +1,6 @@
 // Settings dialog: provider and model pickers, code map sources, summary
 // language, review budget, walkthrough steps and review tools. Choices are kept in localStorage under pr-manager.<key>.
-import { $, esc, api, LABEL } from "./util.js";
+import { $, esc, api, BUCKETS, LABEL } from "./util.js";
 import { S, render } from "./state.js";
 import * as budget from "./budget.js";
 import { refreshJobs, pollJob } from "./jobs.js";
@@ -142,7 +142,7 @@ function showBudget() {
   let pr = "";
   if (S.result && S.result.files.some((f) => (f.units || []).some((u) => u.score))) {
     const c = budget.counts(S.result, b);
-    pr = `<div>this PR: ${["human", "skim", "none"].map((k) => `<span class="pill ${k}" title="${LABEL[k]}">${c[k]}</span>`).join(" ")} (human · skim · none)</div>`;
+    pr = `<div>this PR: ${BUCKETS.map((k) => `<span class="pill ${k}" title="${LABEL[k]}">${c[k]}</span>`).join(" ")} (human · skim · auxiliary · none)</div>`;
   } else if (S.result) pr = `<div>this PR was triaged before review budgets: re-run it to re-bucket</div>`;
   $("#budget-info").innerHTML = `<div><b>${esc(b.name)}</b>${b.name === budgetDefault() ? " (default)" : ""}: ${esc(rules)}</div>${pr}`;
   showLine();

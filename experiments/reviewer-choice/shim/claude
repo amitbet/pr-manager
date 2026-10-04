@@ -1,0 +1,4 @@
+#!/bin/bash
+# Keeps each claude run's stream-json under $REVIEWER_LOGS.
+set -o pipefail
+/Users/amit.bezalel/.local/bin/claude "$@" | tee "$REVIEWER_LOGS/run-$$-$RANDOM.jsonl"

@@ -55,7 +55,7 @@ export function prepare(r) {
 const headLines = (f) => S.files[`head:${f.path}`];
 // A readonly file (a fix's changes, not the PR's) has no context to
 // expand and takes no review comments.
-const canExpand = (f) => !f.readonly && f.status !== "deleted" && f.status !== "added" && !f.binary && !!f._last;
+export const canExpand = (f) => !f.readonly && f.status !== "deleted" && f.status !== "added" && !f.binary && !!f._last;
 const fileHunks = (f) => (f.units || []).flatMap((u) => u.hunks || []);
 
 // fullyExpanded reports whether every gap in f, and its tail, is open.
@@ -81,6 +81,20 @@ async function ensureHead(f) {
     S.files[k] = (await api(`${prBase()}/file?${q}`)).lines;
   }
   return S.files[k];
+}
+
+// openAll opens every gap in f and its tail; its head lines must be loaded.
+function openAll(f) {
+  fileHunks(f).forEach((h) => { S.above[h._key] = h.new_start - h._gapFrom; });
+  S.below[f.path] = headLines(f).length;
+}
+
+// expandWhole loads f's head lines and opens the whole file, for the Files
+// mode, which always shows it whole.
+export async function expandWhole(f) {
+  if (!canExpand(f) || fullyExpanded(f)) return;
+  await ensureHead(f);
+  openAll(f);
 }
 
 // rowsFor turns a hunk (plus expanded context) into display rows:
@@ -273,9 +287,6 @@ export const actions = {
     }
     S.collapsed.delete(f.path);
     (f.units || []).forEach((u) => S.diffOpen[u.id] = true);
-    return expand(el, () => {
-      fileHunks(f).forEach((h) => { S.above[h._key] = h.new_start - h._gapFrom; });
-      S.below[f.path] = headLines(f).length;
-    });
+    return expand(el, () => openAll(f));
   },
 };

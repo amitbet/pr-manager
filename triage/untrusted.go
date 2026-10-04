@@ -1,6 +1,7 @@
 package triage
 
 import (
+	"fmt"
 	"path"
 	"regexp"
 	"slices"
@@ -186,6 +187,59 @@ func changesCode(u *Unit) bool {
 		}
 	}
 	return !slices.Equal(removed, added)
+}
+
+// assertCall matches a test assertion in code: Go's t.Error and t.Fatal,
+// testify, xUnit's Assert, JS expect, Python assert and self.assert*,
+// Rust assert!.
+var assertCall = regexp.MustCompile(`\b(?:assert\w*!?|require\.\w+|expect\w*\s*\(|t\.(?:Errorf?|Fatalf?|Fail|FailNow)\s*\(|verify\s*\()`)
+
+// skipMarker matches code that turns a test off, or narrows a run to one.
+var skipMarker = regexp.MustCompile(`\bt\.Skip\w*\s*\(|@(?:Ignore|Disabled)\b|(?:^|[^.\w])(?:xit|xdescribe|xtest|fit|fdescribe)\s*\(|\b(?:it|test|describe|context)\.(?:skip|only|todo)\s*\(|@pytest\.mark\.(?:skip|skipif|xfail)\b|@unittest\.skip|#\[ignore\]`)
+
+// weakenedTests says how u weakens the tests it changes, if it does: it
+// removes more assertions than it adds (commenting one out removes it),
+// or adds a skip or an only. A test that checks less is what a planted
+// comment would most want waved through, and nothing here asks the model.
+func weakenedTests(u *Unit) string {
+	style, known := styleOf(u.File)
+	var asserts, skips [2]int // removed, added
+	var marker string
+	for _, h := range u.Hunks {
+		old := &lineScanner{file: u.File, style: style, known: known}
+		cur := &lineScanner{file: u.File, style: style, known: known}
+		for _, l := range h.Lines {
+			if l == "" || l[0] == '\\' {
+				continue
+			}
+			raw := strings.TrimRight(l[1:], " \t\r")
+			side, sc := 1, cur
+			switch l[0] {
+			case '-':
+				side, sc = 0, old
+			case ' ':
+				old.scan(raw)
+				cur.scan(raw)
+				continue
+			}
+			code, _ := sc.scan(raw)
+			asserts[side] += len(assertCall.FindAllString(code, -1))
+			if m := skipMarker.FindString(code); m != "" {
+				skips[side]++
+				if side == 1 && marker == "" {
+					marker = strings.TrimSpace(m)
+				}
+			}
+		}
+	}
+	var why []string
+	if n := asserts[0] - asserts[1]; n > 0 {
+		why = append(why, fmt.Sprintf("removes %d more assertion%s than it adds", n, plural(n)))
+	}
+	if skips[1] > skips[0] {
+		why = append(why, fmt.Sprintf("adds %q", marker))
+	}
+	return strings.Join(why, "; ")
 }
 
 // reviewerDirected matches text written for the reviewer or the triage

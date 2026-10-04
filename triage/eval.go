@@ -380,18 +380,18 @@ func (r *EvalResult) Print(w io.Writer) {
 	fmt.Fprintf(w, "MISSES human→none:   %d (%.1f%%)\n", len(r.Misses), pct(len(r.Misses)))
 	fmt.Fprintf(w, "under-reviewed:      %d (%.1f%%)\n", len(r.Under), pct(len(r.Under)))
 	fmt.Fprintf(w, "over-escalated:      %d (%.1f%%)\n", len(r.Over), pct(len(r.Over)))
-	fmt.Fprintf(w, "\nconfusion (rows=label, cols=predicted)\n%-8s %6s %8s %6s\n", "", "human", "skim", "none")
+	fmt.Fprintf(w, "\nconfusion (rows=label, cols=predicted)\n%-8s %6s %8s %5s %6s\n", "", "human", "skim", "aux", "none")
 	for _, want := range []Bucket{BucketHuman, BucketSkim, BucketNone} {
 		row := r.Confusion[want]
-		fmt.Fprintf(w, "%-8s %6d %8d %6d\n", want, row[BucketHuman], row[BucketSkim], row[BucketNone])
+		fmt.Fprintf(w, "%-8s %6d %8d %5d %6d\n", want, row[BucketHuman], row[BucketSkim], row[BucketAux], row[BucketNone])
 	}
 	for _, id := range r.Misses {
 		fmt.Fprintf(w, "  miss: %s\n", id)
 	}
 	if len(r.Budgets) > 0 {
-		fmt.Fprintf(w, "\nreview budgets (all units; labeled human outside human; must_find defects outside human)\n%-10s %6s %8s %5s %6s %8s\n", "", "human", "skim", "none", "under", "defects")
+		fmt.Fprintf(w, "\nreview budgets (all units; labeled human outside human; must_find defects outside human)\n%-10s %6s %8s %5s %5s %6s %8s\n", "", "human", "skim", "aux", "none", "under", "defects")
 		for _, b := range r.Budgets {
-			fmt.Fprintf(w, "%-10s %6d %8d %5d %6d %5d/%d\n", b.Name, b.Counts[BucketHuman], b.Counts[BucketSkim], b.Counts[BucketNone], b.Under, b.Hidden, b.Defects)
+			fmt.Fprintf(w, "%-10s %6d %8d %5d %5d %6d %5d/%d\n", b.Name, b.Counts[BucketHuman], b.Counts[BucketSkim], b.Counts[BucketAux], b.Counts[BucketNone], b.Under, b.Hidden, b.Defects)
 		}
 	}
 	if r.MustFind > 0 || r.Issues > 0 {

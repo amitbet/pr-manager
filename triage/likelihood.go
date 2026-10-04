@@ -22,6 +22,11 @@ type Likelihood struct {
 	Factors []codemap.Factor `json:"factors,omitempty"`
 	Metrics ChangeMetrics    `json:"metrics"`
 	Notes   []string         `json:"notes,omitempty"`
+	// Complete: the file's history and the complexity of what changed were
+	// measured, or do not apply (a new file has no history). A factor that
+	// could not be measured adds nothing, so an incomplete score reads
+	// lower than it is; only a complete one can place code in none.
+	Complete bool `json:"complete,omitempty"`
 }
 
 // ChangeMetrics are the raw measurements behind a unit's likelihood.
@@ -144,6 +149,7 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 		lk.Notes = []string{"not scored: test code"}
 		return lk
 	}
+	lk.Complete = true
 	m := &lk.Metrics
 	var t codemap.Tally
 	add, del := u.Added()
@@ -166,6 +172,7 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 			}
 		} else {
 			lk.Notes = append(lk.Notes, "file not in the code map: no history")
+			lk.Complete = false
 		}
 		if dir != nil && dir.Hist != nil {
 			own := 0.0
@@ -177,6 +184,7 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 		}
 	} else if lc.cm == nil {
 		lk.Notes = append(lk.Notes, "no code map: no file history")
+		lk.Complete = false
 	}
 
 	// Complexity of what changed.
@@ -190,6 +198,11 @@ func (lc *likelihoodCtx) assess(u *Unit, f FileDiff) *Likelihood {
 			}
 			t.Add("complexity_added", lc.w.CycloDelta.Of(float64(c.delta)), "%s", what)
 		}
+	} else if !lc.parsed(f, oldPath) {
+		// A parsed file whose change is outside its declarations measured
+		// 0; a language without a parser measured nothing.
+		lk.Notes = append(lk.Notes, "no parser or no content: complexity not measured")
+		lk.Complete = false
 	}
 	t.Add("size", lc.w.Size.Of(float64(m.Changed)), "%d changed lines", m.Changed)
 
@@ -329,6 +342,14 @@ func (lc *likelihoodCtx) complexity(u *Unit, f FileDiff, oldPath string) (unitCx
 		}
 	}
 	return c, true
+}
+
+// parsed reports whether either side of f has declarations to measure.
+func (lc *likelihoodCtx) parsed(f FileDiff, oldPath string) bool {
+	if f.Status != StatusDeleted && lc.fileDecls("head", f.Path, lc.src.Content) != nil {
+		return true
+	}
+	return f.Status != StatusAdded && lc.fileDecls("base", oldPath, lc.src.BaseContent) != nil
 }
 
 func (lc *likelihoodCtx) fileDecls(side, p string, content ContentFunc) []cx.Decl {

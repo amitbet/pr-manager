@@ -8,7 +8,7 @@
 .file.collapsed .file-head { border-bottom: 0; border-radius: 6px; }
 .unit { border-left: 4px solid var(--border); }
 .unit + .unit { border-top: 2px solid var(--muted); }
-.unit.human { border-left-color: var(--human); } .unit.skim { border-left-color: var(--skim); } .unit.none { border-left-color: var(--none); }
+.unit.human { border-left-color: var(--human); } .unit.skim { border-left-color: var(--skim); } .unit.aux { border-left-color: var(--aux); } .unit.none { border-left-color: var(--none); }
 .unit-head { padding: 10px 14px 12px; background: var(--bg); }
 .unit-head .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .unit-head .sym { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }

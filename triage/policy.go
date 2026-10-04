@@ -18,7 +18,10 @@ type Bucket string
 const (
 	BucketHuman Bucket = "human"
 	BucketSkim  Bucket = "skim"
-	BucketNone  Bucket = "none"
+	// BucketAux holds what the PR does not ship: tests, docs, fixtures.
+	// A rule or the score puts a unit there, never the model's answer.
+	BucketAux  Bucket = "aux"
+	BucketNone Bucket = "none"
 )
 
 // rank orders buckets by review effort; escalation only ever moves up.
@@ -26,20 +29,24 @@ func (b Bucket) rank() int {
 	switch b {
 	case BucketNone:
 		return 0
-	case BucketSkim:
+	case BucketAux:
 		return 1
-	default:
+	case BucketSkim:
 		return 2
+	default:
+		return 3
 	}
 }
 
+// Valid reports whether b is a bucket the classifier may answer; aux is
+// not one of them.
 func (b Bucket) Valid() bool {
 	return b == BucketHuman || b == BucketSkim || b == BucketNone
 }
 
 // Up returns the next bucket up.
 func (b Bucket) Up() Bucket {
-	if b == BucketNone {
+	if b == BucketNone || b == BucketAux {
 		return BucketSkim
 	}
 	return BucketHuman

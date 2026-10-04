@@ -69,11 +69,12 @@ the CLI and other builds.
 
 ## What it does
 
-PR Manager sorts every change in a PR into one of three buckets:
+PR Manager sorts every change in a PR into one of four buckets:
 
 - **human**: someone has to read it
 - **skim**: the generated summary is enough
-- **none**: can't change behavior (generated code, formatting, a pure rename, comments only)
+- **auxiliary**: tests, docs and fixtures, not the code the PR ships; reviewed, and raised to skim or human when the review finds something or a test is weakened
+- **none**: can't change behavior (generated code, formatting, a pure rename, comments only), or code whose measured impact and likelihood are too low to need a look
 
 When it isn't sure, a change goes up a bucket, never down.
 

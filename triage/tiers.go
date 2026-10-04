@@ -217,10 +217,21 @@ type Score struct {
 	// comments and whitespace can go, set by changesCode and not by the
 	// model, so a comment that talks the model into "none" cannot put code
 	// there. Unlike Floor no budget's lift_floors lifts it, and it raises a
-	// pin that came from the classifier's bucket. Rule-placed units have
-	// none: a rule's none does not rest on the model's answer.
+	// pin that came from the classifier's bucket. Only RiskKnown lets the
+	// unit under it: then Base alone, which no model answer moves, is
+	// under the budget's skim cut-off. Rule-placed units have none: a
+	// rule's none does not rest on the model's answer. On test code it is
+	// set only by weakenedTests, and RiskKnown never lifts it.
 	CodeFloor    Bucket `json:"code_floor,omitempty"`
 	CodeFloorWhy string `json:"code_floor_why,omitempty"`
+	// RiskKnown: impact came from the code map and the likelihood is
+	// complete, so Base rests on measurements alone.
+	RiskKnown bool `json:"risk_known,omitempty"`
+	// Aux is why the unit is auxiliary (test code): not what the PR ships,
+	// so it is never placed under aux. Its likelihood is not scored, so
+	// its total is the review's attention: only the review, floors and
+	// pins raise it.
+	Aux string `json:"aux,omitempty"`
 	// CommentPin is the pin an open, confirmed review comment of medium
 	// or worse sets (see ApplyThreads). It is kept apart from Pin so it
 	// goes away when the comment is resolved or fixed, and it overrides
@@ -244,9 +255,13 @@ func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string
 	t := s.TotalAt(b, attention)
 	if pin, why := s.pin(); pin != "" {
 		why = fmt.Sprintf("%s: %s (any budget)", pin, why)
-		if s.CodeFloor != "" && s.CodeFloor.rank() > pin.rank() {
+		switch {
+		case s.CodeFloor != "" && s.CodeFloor.rank() > pin.rank():
 			pin = s.CodeFloor
 			why = fmt.Sprintf("%s: %s (any budget; the classifier's %s)", pin, s.CodeFloorWhy, s.Pin)
+		case s.Aux != "" && pin.rank() < BucketAux.rank():
+			pin = BucketAux
+			why = fmt.Sprintf("%s: %s (any budget; the classifier's %s)", pin, s.Aux, s.Pin)
 		}
 		return pin, t, why
 	}
@@ -266,9 +281,17 @@ func (s *Score) Place(b Budget, name string, attention int) (Bucket, int, string
 			why += fmt.Sprintf("; raised to %s: %s", bk, s.FloorWhy)
 		}
 	}
+	if s.Aux != "" && bk.rank() < BucketAux.rank() {
+		bk = BucketAux
+		why += fmt.Sprintf("; raised to %s: %s", bk, s.Aux)
+	}
 	if s.CodeFloor != "" && s.CodeFloor.rank() > bk.rank() {
-		bk = s.CodeFloor
-		why += fmt.Sprintf("; raised to %s: %s (no budget lifts this)", bk, s.CodeFloorWhy)
+		if s.RiskKnown && s.Base < b.Skim {
+			why += fmt.Sprintf("; risk %d < %d: measured impact and likelihood alone put it under skim", s.Base, b.Skim)
+		} else {
+			bk = s.CodeFloor
+			why += fmt.Sprintf("; raised to %s: %s (no budget lifts this)", bk, s.CodeFloorWhy)
+		}
 	}
 	return bk, t, why
 }
@@ -320,8 +343,16 @@ func (tp TierPolicy) prior(u *Unit, maxChars int) {
 	// (presort), never by itself: see CodeFloor. Its "none" does not lower
 	// the kind weight of such a unit either.
 	code := d.Source != "rule" && changesCode(u)
-	if code {
-		s.CodeFloor, s.CodeFloorWhy = BucketSkim, "the change is more than comments and whitespace, so only a rule can skip it"
+	test := d.Source != "rule" && isTestPath(u.File)
+	switch {
+	case test:
+		s.Aux = "test code"
+		if why := weakenedTests(u); why != "" {
+			s.CodeFloor, s.CodeFloorWhy = BucketSkim, why
+		}
+	case code:
+		s.CodeFloor, s.CodeFloorWhy = BucketSkim, "the change is more than comments and whitespace, so only a rule or its measured risk can skip it"
+		s.RiskKnown = u.Impact.Known() && u.Likelihood != nil && u.Likelihood.Complete
 	}
 	switch {
 	case d.Bucket == BucketHuman:
@@ -343,10 +374,12 @@ func (tp TierPolicy) prior(u *Unit, maxChars int) {
 		// floor would hold it, which a clean review lifts. A weakened test
 		// is the classifier's call: keep it.
 		s.Pin, s.PinWhy = BucketHuman, "the classifier asked for human review of test code, which is not scored"
-	case !u.Impact.Known():
-		// Without the map the score is mostly a guess: keep the classifier's call.
+	case !u.Impact.Known() && !test:
+		// Without the map the score is mostly a guess: keep the classifier's
+		// call. Test code is not scored for likelihood, so its score is no
+		// guess.
 		s.Pin, s.PinWhy = d.Bucket, "classifier's bucket, impact unknown ("+impactUnknown(u.Impact)+")"
-	case tp.CriticalImpact > 0 && u.Impact.Score >= tp.CriticalImpact:
+	case tp.CriticalImpact > 0 && u.Impact.Known() && u.Impact.Score >= tp.CriticalImpact:
 		s.Pin, s.PinWhy = BucketHuman, fmt.Sprintf("critical impact %d (%s)", u.Impact.Score, impactWhere(u.Impact))
 	}
 	// Text in the change written for the reviewer or the triage is the PR

@@ -1,0 +1,779 @@
+[
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "baseline",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 23.61253,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 16,
+      "none": 1,
+      "skim": 19
+    },
+    "totals": {
+      "cli_runs": 9,
+      "cost_usd": 0.8801478,
+      "input_tokens": 128844,
+      "cache_read_tokens": 26744,
+      "cache_create_tokens": 164838,
+      "output_tokens": 8725,
+      "api_seconds": 78.05,
+      "run_seconds": 68.705,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.129491,
+        "claude-sonnet-5-5": 0.7506567999999999
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "baseline-b",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 21.7161165,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 13,
+      "none": 1,
+      "skim": 22
+    },
+    "totals": {
+      "cli_runs": 9,
+      "cost_usd": 0.8830047999999999,
+      "input_tokens": 128844,
+      "cache_read_tokens": 26744,
+      "cache_create_tokens": 164836,
+      "output_tokens": 9014,
+      "api_seconds": 80.678,
+      "run_seconds": 70.91,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.129516,
+        "claude-sonnet-5-5": 0.7534888
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "agent-1",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 69.907659083,
+    "agent_seconds": 61.297269875,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 1,
+    "issues_by_severity": {
+      "medium": 1
+    },
+    "buckets": {
+      "human": 17,
+      "none": 1,
+      "skim": 18
+    },
+    "totals": {
+      "cli_runs": 2,
+      "cost_usd": 1.0196806000000003,
+      "input_tokens": 14239,
+      "cache_read_tokens": 657149,
+      "cache_create_tokens": 272358,
+      "output_tokens": 21981,
+      "api_seconds": 202.731,
+      "run_seconds": 11.138,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.07468570000000002,
+        "claude-haiku-4-5-20251001": 0.014185,
+        "claude-sonnet-5-5": 0.9308099
+      }
+    },
+    "issue_titles": [
+      "pkg/router/metrics.go:newRouterMetrics: [medium] Verb label can take unbounded client-chosen values"
+    ]
+  },
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "agent-4",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 81.347577459,
+    "agent_seconds": 71.652158042,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 1,
+    "issues_by_severity": {
+      "medium": 1
+    },
+    "buckets": {
+      "human": 19,
+      "none": 1,
+      "skim": 16
+    },
+    "totals": {
+      "cli_runs": 2,
+      "cost_usd": 1.0570512,
+      "input_tokens": 17436,
+      "cache_read_tokens": 603660,
+      "cache_create_tokens": 276429,
+      "output_tokens": 23680,
+      "api_seconds": 219.326,
+      "run_seconds": 48.528000000000006,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.0602843,
+        "claude-haiku-4-5-20251001": 0.017404999999999997,
+        "claude-sonnet-5-5": 0.9793619000000001
+      }
+    },
+    "issue_titles": [
+      "pkg/router/metrics.go:(*routerMetrics).instrument: [medium] Unbounded verb label allows metric cardinality growth"
+    ]
+  },
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "agent-1-sonnet",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 37.4215305,
+    "agent_seconds": 37.419306791,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 20,
+      "none": 1,
+      "skim": 15
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.9493805,
+      "input_tokens": 1237,
+      "cache_read_tokens": 561335,
+      "cache_create_tokens": 255625,
+      "output_tokens": 17037,
+      "api_seconds": 175.538,
+      "run_seconds": 3.512,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001229,
+        "claude-sonnet-5-5": 0.9481514999999999
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "baseline",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 16.135490417,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "none": 1,
+      "skim": 20
+    },
+    "totals": {
+      "cli_runs": 8,
+      "cost_usd": 0.7402487999999999,
+      "input_tokens": 115545,
+      "cache_read_tokens": 23884,
+      "cache_create_tokens": 139279,
+      "output_tokens": 6348,
+      "api_seconds": 60.373999999999995,
+      "run_seconds": 52.98,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.116214,
+        "claude-sonnet-5-5": 0.6240348000000001
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "baseline-b",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 21.959663334,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 5,
+      "none": 1,
+      "skim": 19
+    },
+    "totals": {
+      "cli_runs": 8,
+      "cost_usd": 0.7615780000000001,
+      "input_tokens": 115547,
+      "cache_read_tokens": 43940,
+      "cache_create_tokens": 139875,
+      "output_tokens": 7838,
+      "api_seconds": 69.434,
+      "run_seconds": 62.413,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.116184,
+        "claude-sonnet-5-5": 0.645394
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "agent-1",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 62.6029465,
+    "agent_seconds": 62.601434167,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "none": 1,
+      "skim": 20
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.7759032,
+      "input_tokens": 1285,
+      "cache_read_tokens": 520028,
+      "cache_create_tokens": 215298,
+      "output_tokens": 17125,
+      "api_seconds": 166.9,
+      "run_seconds": 36.618,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.05645590000000001,
+        "claude-haiku-4-5-20251001": 0.001221,
+        "claude-sonnet-5-5": 0.7182262999999999
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "agent-4",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 47.745685041,
+    "agent_seconds": 47.744135292,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "none": 1,
+      "skim": 20
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.7389762999999998,
+      "input_tokens": 1265,
+      "cache_read_tokens": 450615,
+      "cache_create_tokens": 216673,
+      "output_tokens": 15178,
+      "api_seconds": 144.82,
+      "run_seconds": 12.017,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.0699882,
+        "claude-haiku-4-5-20251001": 0.001205,
+        "claude-sonnet-5-5": 0.6677831
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "agent-1-sonnet",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 32.143073417,
+    "agent_seconds": 32.141632625,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "none": 1,
+      "skim": 20
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.7703219000000001,
+      "input_tokens": 1211,
+      "cache_read_tokens": 465297,
+      "cache_create_tokens": 212761,
+      "output_tokens": 12593,
+      "api_seconds": 121.746,
+      "run_seconds": 2.707,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001211,
+        "claude-sonnet-5-5": 0.7691109
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "baseline",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 12.593224375,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 2,
+      "skim": 7
+    },
+    "totals": {
+      "cli_runs": 8,
+      "cost_usd": 0.5522652,
+      "input_tokens": 83412,
+      "cache_read_tokens": 23131,
+      "cache_create_tokens": 106234,
+      "output_tokens": 3997,
+      "api_seconds": 46.855,
+      "run_seconds": 41.7,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.084091,
+        "claude-sonnet-5-5": 0.46817420000000004
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "baseline-b",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 12.459032375,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 1,
+      "skim": 8
+    },
+    "totals": {
+      "cli_runs": 8,
+      "cost_usd": 0.5521132,
+      "input_tokens": 83412,
+      "cache_read_tokens": 23131,
+      "cache_create_tokens": 106231,
+      "output_tokens": 3982,
+      "api_seconds": 45.693000000000005,
+      "run_seconds": 39.721000000000004,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.08408099999999999,
+        "claude-sonnet-5-5": 0.46803220000000006
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "agent-1",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 24.860504583,
+    "agent_seconds": 24.858982292,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 6,
+      "skim": 3
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.5865758,
+      "input_tokens": 1225,
+      "cache_read_tokens": 328194,
+      "cache_create_tokens": 171631,
+      "output_tokens": 11429,
+      "api_seconds": 120.182,
+      "run_seconds": 4.848,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.0389965,
+        "claude-haiku-4-5-20251001": 0.001211,
+        "claude-sonnet-5-5": 0.5463683
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "agent-4",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 30.219336542,
+    "agent_seconds": 30.217903,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 3,
+      "skim": 6
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.5706619999999999,
+      "input_tokens": 1227,
+      "cache_read_tokens": 344932,
+      "cache_create_tokens": 172488,
+      "output_tokens": 10018,
+      "api_seconds": 102.254,
+      "run_seconds": 11.678,
+      "cost_by_model": {
+        "claude-haiku-4-5": 0.05036089999999999,
+        "claude-haiku-4-5-20251001": 0.001205,
+        "claude-sonnet-5-5": 0.5190961
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "agent-1-sonnet",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 27.402928542,
+    "agent_seconds": 27.401436541,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 5,
+      "skim": 4
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.6317076000000001,
+      "input_tokens": 1209,
+      "cache_read_tokens": 403718,
+      "cache_create_tokens": 172358,
+      "output_tokens": 10135,
+      "api_seconds": 124.267,
+      "run_seconds": 1.813,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001216,
+        "claude-sonnet-5-5": 0.6304916000000002
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "grafana/grafana#133630",
+    "arm": "agent-1-opus",
+    "units": 36,
+    "groups": 9,
+    "wall_seconds": 84.695964875,
+    "agent_seconds": 74.447960167,
+    "fallbacks": 0,
+    "units_reviewed": 36,
+    "units_failed": 0,
+    "issues": 1,
+    "issues_by_severity": {
+      "medium": 1
+    },
+    "buckets": {
+      "human": 20,
+      "none": 1,
+      "skim": 15
+    },
+    "totals": {
+      "cli_runs": 2,
+      "cost_usd": 1.2806174000000003,
+      "input_tokens": 14136,
+      "cache_read_tokens": 677777,
+      "cache_create_tokens": 282140,
+      "output_tokens": 27145,
+      "api_seconds": 240.141,
+      "run_seconds": 14.379000000000001,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.014187000000000002,
+        "claude-opus-5-5": 0.24700640000000004,
+        "claude-sonnet-5-5": 1.0194239999999999
+      }
+    },
+    "issue_titles": [
+      "pkg/router/metrics.go:newRouterMetrics: [medium] Unbounded verb label lets clients create new histogram series"
+    ]
+  },
+  {
+    "pr": "kubernetes/kubernetes#142277",
+    "arm": "agent-1-opus",
+    "units": 25,
+    "groups": 8,
+    "wall_seconds": 43.808077417,
+    "agent_seconds": 43.804846459,
+    "fallbacks": 0,
+    "units_reviewed": 25,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "none": 1,
+      "skim": 20
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.8435735000000002,
+      "input_tokens": 1217,
+      "cache_read_tokens": 466950,
+      "cache_create_tokens": 212522,
+      "output_tokens": 12520,
+      "api_seconds": 142.645,
+      "run_seconds": 5.917,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001211,
+        "claude-opus-5-5": 0.178345,
+        "claude-sonnet-5-5": 0.6640174999999999
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "vercel/next.js#99189",
+    "arm": "agent-1-opus",
+    "units": 9,
+    "groups": 8,
+    "wall_seconds": 33.7658505,
+    "agent_seconds": 33.763907708,
+    "fallbacks": 0,
+    "units_reviewed": 9,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 4,
+      "skim": 5
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 0.6796376000000002,
+      "input_tokens": 1199,
+      "cache_read_tokens": 351713,
+      "cache_create_tokens": 171728,
+      "output_tokens": 9665,
+      "api_seconds": 122.942,
+      "run_seconds": 9.304,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001221,
+        "claude-opus-5-5": 0.1447764,
+        "claude-sonnet-5-5": 0.5336402
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "prometheus/prometheus#18905",
+    "arm": "baseline",
+    "units": 71,
+    "groups": 22,
+    "wall_seconds": 32.605724917,
+    "fallbacks": 0,
+    "units_reviewed": 71,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 17,
+      "none": 6,
+      "skim": 48
+    },
+    "totals": {
+      "cli_runs": 23,
+      "cost_usd": 2.4771406000000002,
+      "input_tokens": 372573,
+      "cache_read_tokens": 67033,
+      "cache_create_tokens": 475415,
+      "output_tokens": 19156,
+      "api_seconds": 182.26599999999996,
+      "run_seconds": 162.937,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.37463199999999997,
+        "claude-sonnet-5-5": 2.1025086
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "prometheus/prometheus#18905",
+    "arm": "agent-1-sonnet",
+    "units": 71,
+    "groups": 22,
+    "wall_seconds": 42.098568333,
+    "agent_seconds": 42.093961,
+    "fallbacks": 0,
+    "units_reviewed": 71,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 20,
+      "none": 7,
+      "skim": 44
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 2.2882925999999997,
+      "input_tokens": 1417,
+      "cache_read_tokens": 1412848,
+      "cache_create_tokens": 650652,
+      "output_tokens": 33461,
+      "api_seconds": 326.176,
+      "run_seconds": 2.224,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001323,
+        "claude-sonnet-5-5": 2.2869695999999995
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "prometheus/prometheus#18905",
+    "arm": "agent-1-opus",
+    "units": 71,
+    "groups": 22,
+    "wall_seconds": 56.3252865,
+    "agent_seconds": 56.320503958,
+    "fallbacks": 0,
+    "units_reviewed": 71,
+    "units_failed": 0,
+    "issues": 0,
+    "issues_by_severity": {},
+    "buckets": {
+      "human": 19,
+      "none": 5,
+      "skim": 47
+    },
+    "totals": {
+      "cli_runs": 1,
+      "cost_usd": 2.4941794000000015,
+      "input_tokens": 1421,
+      "cache_read_tokens": 1493082,
+      "cache_create_tokens": 652395,
+      "output_tokens": 35282,
+      "api_seconds": 371.214,
+      "run_seconds": 6.313,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.001333,
+        "claude-opus-5-5": 0.39954140000000005,
+        "claude-sonnet-5-5": 2.0933050000000013
+      }
+    },
+    "issue_titles": null
+  },
+  {
+    "pr": "prometheus/prometheus#18905",
+    "arm": "baseline/claude-opus-5-5",
+    "units": 71,
+    "groups": 22,
+    "wall_seconds": 58.165566875,
+    "fallbacks": 0,
+    "units_reviewed": 71,
+    "units_failed": 0,
+    "issues": 1,
+    "issues_by_severity": {
+      "low": 1
+    },
+    "buckets": {
+      "human": 21,
+      "none": 5,
+      "skim": 45
+    },
+    "totals": {
+      "cli_runs": 23,
+      "cost_usd": 4.756680400000001,
+      "input_tokens": 371097,
+      "cache_read_tokens": 65932,
+      "cache_create_tokens": 474453,
+      "output_tokens": 29161,
+      "api_seconds": 335.127,
+      "run_seconds": 314.402,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.3732460000000001,
+        "claude-opus-5-5": 4.3834344
+      }
+    },
+    "issue_titles": [
+      "tsdb/db_test.go:TestSelectedBlockNotMergedWithNonSelectedBlock: [low] Doc comment says test fails, but this PR ships the fix"
+    ]
+  },
+  {
+    "pr": "prometheus/prometheus#18905",
+    "arm": "agent-1-sonnet/claude-opus-5-5",
+    "units": 71,
+    "groups": 22,
+    "wall_seconds": 91.981054792,
+    "agent_seconds": 84.454234458,
+    "fallbacks": 0,
+    "units_reviewed": 71,
+    "units_failed": 0,
+    "issues": 2,
+    "issues_by_severity": {
+      "low": 2
+    },
+    "buckets": {
+      "human": 24,
+      "none": 2,
+      "skim": 45
+    },
+    "totals": {
+      "cli_runs": 4,
+      "cost_usd": 5.246286399999999,
+      "input_tokens": 53585,
+      "cache_read_tokens": 1745092,
+      "cache_create_tokens": 744020,
+      "output_tokens": 50895,
+      "api_seconds": 595.035,
+      "run_seconds": 19.833,
+      "cost_by_model": {
+        "claude-haiku-4-5-20251001": 0.053764000000000006,
+        "claude-opus-5-5": 4.882844999999998,
+        "claude-sonnet-5-5": 0.30967740000000005
+      }
+    },
+    "issue_titles": [
+      "tsdb/db_test.go:TestCompactSelectedSeries_SkipsSeriesWithOOOData: [low] Test doesn't check which series stayed or any SkippedOOO counter",
+      "tsdb/db_test.go:TestSelectedBlockNotMergedWithNonSelectedBlock: [low] Doc comment says test fails on current implementation, but PR fixes it"
+    ]
+  }
+]

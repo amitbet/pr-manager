@@ -103,7 +103,7 @@ func overviewPrompt(pr *PRInfo, units []*Unit) string {
 	sorted := append([]*Unit(nil), units...)
 	SortByBucket(sorted)
 	c := (&Report{Units: units}).Counts()
-	fmt.Fprintf(&b, "\nChange units (%d: %d human review, %d skim, %d no review), most important first:\n", len(units), c[BucketHuman], c[BucketSkim], c[BucketNone])
+	fmt.Fprintf(&b, "\nChange units (%d: %d human review, %d skim, %d auxiliary, %d no review), most important first:\n", len(units), c[BucketHuman], c[BucketSkim], c[BucketAux], c[BucketNone])
 	n := 0
 	for i, u := range sorted {
 		s := unitNote(u)

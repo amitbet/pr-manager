@@ -1297,8 +1297,8 @@ func runPRs(ctx context.Context, o options) error {
 			fmt.Printf("#%-5d ERROR %v\n", ref.Number, err)
 			continue
 		}
-		fmt.Printf("#%-5d human=%-3d skim=%-3d none=%-3d %5.1fs  %s\n", ref.Number,
-			r.Counts[triage.BucketHuman], r.Counts[triage.BucketSkim], r.Counts[triage.BucketNone],
+		fmt.Printf("#%-5d human=%-3d skim=%-3d aux=%-3d none=%-3d %5.1fs  %s\n", ref.Number,
+			r.Counts[triage.BucketHuman], r.Counts[triage.BucketSkim], r.Counts[triage.BucketAux], r.Counts[triage.BucketNone],
 			time.Since(start).Seconds(), r.PR.Title)
 	}
 	return nil

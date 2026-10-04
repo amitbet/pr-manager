@@ -154,3 +154,27 @@ func TestLikelihoodSkipsRuleNone(t *testing.T) {
 		t.Errorf("rule-none unit = %+v", lk)
 	}
 }
+
+func TestLikelihoodComplete(t *testing.T) {
+	m := testMap(t)
+	src := "package svc\n\nfunc Calm() int {\n\treturn 1\n}\n"
+	content := func(string) ([]byte, error) { return []byte(src), nil }
+	for _, c := range []struct {
+		name string
+		file string
+		cm   *CodeMap
+		want bool
+	}{
+		{"in the map, parsed", "svc/calm.go", &CodeMap{Map: m, Repo: "svc"}, true},
+		{"no code map", "svc/calm.go", nil, false},
+		{"not in the map", "svc/other.go", &CodeMap{Map: m, Repo: "svc"}, false},
+		{"no parser", "svc/calm.yaml", &CodeMap{Map: m, Repo: "svc"}, false},
+	} {
+		u := hunkUnit(c.file, "-x: 1", "+x: 2")
+		f := FileDiff{Path: c.file, Status: StatusModified}
+		s := &Source{Files: []FileDiff{f}, Content: content, BaseContent: content}
+		if lk := newLikelihoodCtx(s, c.cm).assess(u, f); lk.Complete != c.want {
+			t.Errorf("%s: complete = %v, want %v (notes %v)", c.name, lk.Complete, c.want, lk.Notes)
+		}
+	}
+}

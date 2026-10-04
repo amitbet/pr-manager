@@ -165,3 +165,100 @@ func TestCriticRejectionKeepsMediumIssues(t *testing.T) {
 		t.Errorf("rejected issue = %+v", is)
 	}
 }
+
+// TestRiskLiftsCodeFloor: code goes to none only when its measured risk,
+// which no model answer moves, is under the budget's skim cut-off.
+func TestRiskLiftsCodeFloor(t *testing.T) {
+	tp := DefaultTierPolicy()
+	place := func(imp, lk int, complete bool) *Unit {
+		u := hunkUnit("auth.go", "-\tif !allowed {", "+\tif allowed {")
+		u.Impact = &Impact{Score: imp, Level: "low", Matched: "symbol"}
+		u.Likelihood = &Likelihood{Score: lk, Complete: complete}
+		u.Decision = Decision{Bucket: BucketNone, ChangeKind: "docs", Confidence: 0.99, Reason: "comment-only", Source: "claude/opus"}
+		u.Reviewed = true
+		tp.prior(u, 0)
+		tp.afterReview(u, u.Decision.Bucket)
+		return u
+	}
+	low := place(5, 5, true) // risk 5
+	if low.Decision.Bucket != BucketNone || !strings.Contains(low.Score.Why, "risk 5 < 15") {
+		t.Errorf("measured low risk: %s (%s)", low.Decision.Bucket, low.Score.Why)
+	}
+	if err := Rebucket([]*Unit{low}, tp, "most"); err != nil || low.Decision.Bucket != BucketNone {
+		t.Errorf("most (skim ≥ 10): %s (%s)", low.Decision.Bucket, low.Score.Why)
+	}
+	// The model's kind and the clean review take risk 30 under skim; the
+	// risk alone does not get there.
+	mid := place(30, 30, true)
+	if mid.Decision.Bucket != BucketSkim || !strings.Contains(mid.Score.Why, "no budget lifts this") {
+		t.Errorf("risk 30: %s (%s)", mid.Decision.Bucket, mid.Score.Why)
+	}
+	if u := place(5, 5, false); u.Decision.Bucket != BucketSkim {
+		t.Errorf("incomplete likelihood: %s (%s)", u.Decision.Bucket, u.Score.Why)
+	}
+}
+
+func TestAuxiliaryTests(t *testing.T) {
+	tp := DefaultTierPolicy()
+	place := func(u *Unit, issues []Issue) *Unit {
+		u.Impact = &Impact{Score: 40, Level: "medium", Matched: "file"}
+		u.Likelihood = &Likelihood{Level: "low", Notes: []string{"not scored: test code"}}
+		u.Decision = Decision{Bucket: BucketNone, ChangeKind: "test", Confidence: 0.99, Reason: "r", Source: "claude/opus"}
+		u.Reviewed, u.Issues = true, issues
+		tp.prior(u, 0)
+		tp.afterReview(u, u.Decision.Bucket)
+		return u
+	}
+	clean := place(hunkUnit("svc/x_test.go", "+\tassert.Equal(t, 1, f())"), nil)
+	for _, b := range BudgetNames {
+		if err := Rebucket([]*Unit{clean}, tp, b); err != nil {
+			t.Fatal(err)
+		}
+		if clean.Decision.Bucket != BucketAux {
+			t.Errorf("%s: clean test in %s (%s)", b, clean.Decision.Bucket, clean.Score.Why)
+		}
+	}
+	if !strings.Contains(clean.Score.Why, "raised to aux: test code") {
+		t.Errorf("why = %q", clean.Score.Why)
+	}
+	// The review raises it.
+	low := place(hunkUnit("svc/x_test.go", "+\tassert.Equal(t, 1, f())"), []Issue{{Severity: "low", Title: "t"}})
+	if low.Decision.Bucket != BucketSkim {
+		t.Errorf("test with a low issue: %s (%s)", low.Decision.Bucket, low.Score.Why)
+	}
+	// So does weakening it, on any budget.
+	weak := place(hunkUnit("svc/x_test.go", "-\trequire.NoError(t, err)", "+\t// require.NoError(t, err)"), nil)
+	if err := Rebucket([]*Unit{weak}, tp, "least"); err != nil || weak.Decision.Bucket != BucketSkim || !strings.Contains(weak.Score.Why, "removes 1 more assertion than it adds") {
+		t.Errorf("weakened test: %s (%s)", weak.Decision.Bucket, weak.Score.Why)
+	}
+	// The model's "none" with impact unknown is no pin for test code.
+	unknown := hunkUnit("svc/y_test.go", "+\tx := 1")
+	unknown.Decision = Decision{Bucket: BucketNone, ChangeKind: "test", Confidence: 0.99, Reason: "r", Source: "claude/opus"}
+	unknown.Likelihood = &Likelihood{Level: "low"}
+	tp.prior(unknown, 0)
+	if unknown.Decision.Bucket != BucketAux || unknown.Score.Pin != "" {
+		t.Errorf("test without a map: %s (%s)", unknown.Decision.Bucket, unknown.Score.Why)
+	}
+}
+
+func TestWeakenedTests(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		u    *Unit
+		want string
+	}{
+		{"adds assertions", hunkUnit("a_test.go", "+\tassert.Equal(t, 1, x)"), ""},
+		{"moves an assertion", hunkUnit("a_test.go", "-\trequire.NoError(t, err)", "+\t\trequire.NoError(t, err)"), ""},
+		{"deletes one", hunkUnit("a_test.go", "-\tif x != 1 {", "-\t\tt.Fatalf(\"x = %d\", x)", "-\t}"), "removes 1 more assertion than it adds"},
+		{"comments one out", hunkUnit("a_test.go", "-\tassert.True(t, ok)", "+\t// assert.True(t, ok)"), "removes 1 more assertion than it adds"},
+		{"python", hunkUnit("test_a.py", "-    assert x == 1", "-    self.assertEqual(y, 2)"), "removes 2 more assertions than it adds"},
+		{"go skip", hunkUnit("a_test.go", "+\tt.Skip(\"flaky\")"), `adds "t.Skip("`},
+		{"jest only", hunkUnit("a.test.ts", "-  it(\"works\", () => {", "+  it.only(\"works\", () => {"), `adds "it.only("`},
+		{"junit", hunkUnit("ATest.java", "+  @Disabled"), `adds "@Disabled"`},
+		{"model.fit is no focus", hunkUnit("test_m.py", "+    model.fit(x)"), ""},
+	} {
+		if got := weakenedTests(c.u); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}

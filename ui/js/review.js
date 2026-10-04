@@ -10,9 +10,10 @@ import { threadsHTML, threadsChip, raisedBy, raisedChip } from "./threads.js";
 import { lintHTML, lintChip } from "./lint.js";
 import { trText, trShown, trToggle, trDir } from "./entext.js";
 import { showStep } from "./walkthrough.js";
+import { showFileUnit } from "./files.js";
 import { overviewHTML } from "./overview.js";
 
-const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none");
+const diffShown = (u) => S.diffOpen[u.id] ?? (u.decision.bucket !== "none" && u.decision.bucket !== "aux");
 
 function issuesHTML(f, u) {
   if (!u.issues?.length) return u.reviewed ? `<p><span class="lbl">Review</span>No issues found.</p>` : "";
@@ -116,12 +117,13 @@ export function reviewHTML() {
     ${files.map(fileHTML).join("") || `<div class="empty">nothing to show</div>`}`;
 }
 
-// jumpToUnit opens the Review tab on one unit: its walkthrough step, or
-// in the classic list with its details and code.
+// jumpToUnit opens the Review tab on one unit: its walkthrough step, its
+// file in the Files mode, or in the classic list with its details and code.
 export function jumpToUnit(id) {
   S.tab = "review";
   syncURL();
   if (S.mode === "walk" && showStep(id)) return;
+  if (S.mode === "files" && showFileUnit(id)) return;
   S.mode = "classic";
   S.hidden.clear();
   S.details.add(id);

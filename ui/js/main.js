@@ -12,6 +12,7 @@ import { prepare, actions as diffActions } from "./diff.js";
 import { syncComposer, focusComposer, actions as commentActions, onKeydown as composerKeydown } from "./comments.js";
 import { reviewHTML, showDraft, actions as reviewActions } from "./review.js";
 import { walkHTML, loadProgress, actions as walkActions, onKeydown as walkKeydown } from "./walkthrough.js";
+import { filesHTML, mountFiles, actions as filesActions } from "./files.js";
 import { treemapHTML, renderTreemap, actions as treemapActions } from "./treemap.js";
 import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } from "./panel.js";
 import { initSidebar, loadList } from "./sidebar.js";
@@ -30,9 +31,9 @@ import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
 // the page.
-// The Review tab is the walkthrough or the classic list of every unit.
+// The Review tab is the walkthrough, the file tree, or the classic list of every unit.
 const TABS = [
-  { id: "review", label: "Review", html: () => S.mode === "classic" ? reviewHTML() : walkHTML() },
+  { id: "review", label: "Review", html: () => S.mode === "classic" ? reviewHTML() : S.mode === "files" ? filesHTML() : walkHTML(), mount: () => S.mode === "files" && mountFiles() },
   { id: "issues", label: "Issues", html: issuesHTML, count: openClaims },
   { id: "sequence", label: "Sequence", html: sequenceHTML, mount: loadSequence },
   { id: "map", label: "Code map", html: treemapHTML, mount: renderTreemap },
@@ -52,10 +53,10 @@ function openClaims() {
   }
   return n;
 }
-const MODES = [["walk", "Walkthrough"], ["classic", "Classic"]];
+const MODES = [["walk", "Walkthrough"], ["files", "Files"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
   "create-pr": async (el) => {
@@ -179,7 +180,7 @@ async function showKey(key) {
   prepare(r); // before S.result, so no render sees it unprepared
   S.result = r;
   S.drafts = []; // the previous PR's, until this one's arrive
-  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false, seqView: "after" });
+  Object.assign(S, { collapsed: new Set(), details: new Set(), more: new Set(), showEn: new Set(), diffOpen: {}, allHidden: false, above: {}, below: {}, files: {}, composer: null, dismissing: null, showDismissed: false, seqText: false, seqView: "after", fv: { path: null, closed: new Set(), tried: new Set(), loading: null } });
   S.tm.zoom = [];
   loadProgress();
   const drafts = await api(`${prBase()}/drafts`).catch(() => []);

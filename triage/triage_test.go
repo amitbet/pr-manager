@@ -305,8 +305,11 @@ func TestPipelineFixturesAreNotReviewed(t *testing.T) {
 		Summarizer: &Summarizer{LLM: review, Policy: DefaultPolicy()},
 	}
 	for _, u := range p.Run(context.Background(), &Source{Files: files}) {
-		if u.File == "testdata/jvm/jdk17.txt" && (u.Reviewed || u.Decision.ChangeKind != "fixture" || u.Decision.Bucket != BucketSkim) {
+		if u.File == "testdata/jvm/jdk17.txt" && (u.Reviewed || u.Decision.ChangeKind != "fixture" || u.Decision.Bucket != BucketAux) {
 			t.Errorf("fixture: reviewed=%v decision=%+v", u.Reviewed, u.Decision)
+		}
+		if u.File == "docs/notes.txt" && u.Decision.Bucket != BucketAux {
+			t.Errorf("docs: decision=%+v", u.Decision)
 		}
 	}
 	for _, r := range reviewed {

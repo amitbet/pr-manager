@@ -2,7 +2,7 @@
 // re-run. place mirrors Score.Place in triage/tiers.go.
 import { BUCKETS } from "./util.js";
 
-const RANK = { none: 0, skim: 1, human: 2 };
+const RANK = { none: 0, aux: 1, skim: 2, human: 3 };
 const KEY = "pr-manager.review_budget";
 
 // budgets are the result's own steps (its repo policy), else the server's.
@@ -26,8 +26,9 @@ export function place(u, b) {
   // A comment pin wins over any other pin but human (Score.pin in Go).
   const [pin, pinWhy] = s.comment_pin && s.pin !== "human" ? [s.comment_pin, s.comment_pin_why] : [s.pin, s.pin_why];
   if (pin) {
-    // The code floor raises a pin from the classifier's bucket (Score.Place).
+    // The code floor and aux raise a pin from the classifier's bucket (Score.Place).
     if (s.code_floor && RANK[s.code_floor] > RANK[pin]) return { bucket: s.code_floor, total, why: `${s.code_floor}: ${s.code_floor_why} (any budget; the classifier's ${s.pin})` };
+    if (s.aux && RANK[pin] < RANK.aux) return { bucket: "aux", total, why: `aux: ${s.aux} (any budget; the classifier's ${s.pin})` };
     return { bucket: pin, total, why: `${pin}: ${pinWhy} (any budget)` };
   }
   let bucket = "none", cut = `< ${b.skim}`;
@@ -45,10 +46,17 @@ export function place(u, b) {
       why += `; raised to ${bucket}: ${s.floor_why}`;
     }
   }
-  // No budget lifts the code floor.
+  if (s.aux && RANK[bucket] < RANK.aux) {
+    bucket = "aux";
+    why += `; raised to aux: ${s.aux}`;
+  }
+  // No budget lifts the code floor; only a measured risk under skim does.
   if (s.code_floor && RANK[s.code_floor] > RANK[bucket]) {
-    bucket = s.code_floor;
-    why += `; raised to ${bucket}: ${s.code_floor_why} (no budget lifts this)`;
+    if (s.risk_known && s.base < b.skim) why += `; risk ${s.base} < ${b.skim}: measured impact and likelihood alone put it under skim`;
+    else {
+      bucket = s.code_floor;
+      why += `; raised to ${bucket}: ${s.code_floor_why} (no budget lifts this)`;
+    }
   }
   return { bucket, total, why };
 }

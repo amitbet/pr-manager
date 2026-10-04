@@ -77,10 +77,10 @@ func (p *Presorter) rule(u *Unit, f FileDiff, src *Source) (Decision, bool) {
 		}
 	}
 	if isFixture(u.File) {
-		return Decision{Bucket: BucketSkim, ChangeKind: "fixture", Reason: "test fixture", Confidence: 1}, true
+		return Decision{Bucket: BucketAux, ChangeKind: "fixture", Reason: "test fixture", Confidence: 1}, true
 	}
 	if isDocs(u.File) {
-		return Decision{Bucket: BucketSkim, ChangeKind: "docs", Reason: "documentation file", Confidence: 1}, true
+		return Decision{Bucket: BucketAux, ChangeKind: "docs", Reason: "documentation file", Confidence: 1}, true
 	}
 	return Decision{}, false
 }

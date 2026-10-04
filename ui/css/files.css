@@ -1,0 +1,36 @@
+/* Files mode of the Review tab: the tree beside the open file. */
+.fv { --wz-steps-h: 0px; --wz-codebar-h: 46px; --wz-nav-h: 0px; display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.fv-tree { position: sticky; top: 54px; max-height: calc(100vh - 54px); overflow: auto; padding: 6px 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); font-size: 13px; scrollbar-width: thin; }
+.fv-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 4px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.fv-legend .fv-file { width: auto; padding: 0; font-size: 12px; cursor: default; }
+.fv-dir, .fv-file { display: flex; gap: 6px; align-items: center; width: 100%; padding: 3px 10px 3px calc(10px + var(--d, 0) * 14px); border: 0; border-radius: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.fv-dir:hover, .fv-file:hover { background: var(--bg3); }
+.fv-dir { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+.fv-dir .car { flex: none; width: 12px; }
+.fv-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-file .fv-name { font-family: var(--mono); font-size: 12.5px; }
+.fv-file .dz { flex: none; margin-left: auto; font-size: 11px; }
+.fv-done { flex: none; margin-left: auto; color: var(--none); font-weight: 700; }
+.fv-file .dz + .fv-done { margin-left: 0; }
+.fv-file.deleted .fv-name { text-decoration: line-through; }
+.fv-file.cur { background: var(--bg); box-shadow: inset 3px 0 var(--accent); font-weight: 650; }
+/* A file is colored by its most important change. */
+.fv-mark, .fv-dot { flex: none; width: 9px; height: 9px; border-radius: 2px; background: var(--border); }
+.fv-dot { border-radius: 50%; }
+.fv-file.human .fv-name { color: var(--human); font-weight: 650; }
+.fv-file.skim .fv-name { color: var(--skim); }
+.fv-file.aux .fv-name { color: var(--aux); }
+.fv-file.none .fv-name { color: var(--none); }
+.fv-file.human .fv-mark, .fv-dot.human { background: var(--human); }
+.fv-file.skim .fv-mark, .fv-dot.skim { background: var(--skim); }
+.fv-file.aux .fv-mark, .fv-dot.aux { background: var(--aux); }
+.fv-file.none .fv-mark, .fv-dot.none { background: var(--none); }
+.fv-main { min-width: 0; }
+.fv-card { --wz-nav-h: 0px; }
+.fv-card .wz-codebar { min-height: var(--wz-codebar-h); box-sizing: border-box; flex-wrap: wrap; border-radius: 4px 4px 0 0; }
+.fv-card .wz-codebar .details-btn { padding: 0 8px; }
+.fv-card .wz-reviewed { padding: 2px 10px; }
+@media (max-width: 1000px) {
+  .fv { grid-template-columns: minmax(0, 1fr); }
+  .fv-tree { position: static; max-height: 40vh; }
+}
