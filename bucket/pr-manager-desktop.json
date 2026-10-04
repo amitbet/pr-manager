@@ -1,5 +1,5 @@
 {
-    "version": "0.1.36",
+    "version": "0.1.38",
     "description": "Desktop app that sorts pull request changes by the human review they need",
     "homepage": "https://github.com/amitbet/pr-manager",
     "license": "Apache-2.0",
@@ -7,10 +7,10 @@
     "architecture": {
         "64bit": {
             "url": [
-                "https://github.com/amitbet/pr-manager/releases/download/v0.1.36/pr-manager-windows-amd64.exe#/pr-manager-desktop.exe",
-                "https://github.com/amitbet/pr-manager/releases/download/v0.1.36/pr-manager_0.1.36_windows_amd64.zip"
+                "https://github.com/amitbet/pr-manager/releases/download/v0.1.38/pr-manager-windows-amd64.exe#/pr-manager-desktop.exe",
+                "https://github.com/amitbet/pr-manager/releases/download/v0.1.38/pr-manager_0.1.38_windows_amd64.zip"
             ],
-            "hash": ["ced48a95df1257f47e02617666b8829c111eec3e20c57a66acc3c24753055542", "588251ac6e436a4359315a65115ca9924100ee09c9f427617960dbc38d941e29"]
+            "hash": ["e7aa7c2a31eb61ad1bf2765e13e8644aec14ec78965dbba9b590a104ca5f865e", "08644b25086a2bf5c14b068d55c189b562c9698bb5d1da1c4b8c10cbcb8ac77a"]
         }
     },
     "bin": "pr-manager.exe",
