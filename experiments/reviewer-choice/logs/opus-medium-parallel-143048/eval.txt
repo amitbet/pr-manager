@@ -1,0 +1,29 @@
+scored units: 3
+exact:        3 (100.0%)
+MISSES human→none:   0 (0.0%)
+under-reviewed:      0 (0.0%)
+over-escalated:      0 (0.0%)
+
+confusion (rows=label, cols=predicted)
+          human     skim   aux   none
+human         3        0     0      0
+skim          0        0     0      0
+none          0        0     0      0
+
+review budgets (all units; labeled human outside human; must_find defects outside human)
+            human     skim   aux  none  under  defects
+most           23       24    22     3      0     0/1
+more           23       24    22     3      0     0/1
+balanced       23       24    22     3      0     0/1
+less           23       24    22     3      0     0/1
+least          23       24    22     3      0     0/1
+
+findings: 1/1 must_find found at the right severity, 0 at the wrong one, 0 missed
+issues on labeled units: 7 (1 expected, 0 false positive, 6 unlabeled), precision 100%
+  issue: inventory-error-cache/store/client.go [expected] medium: Transient network errors are cached for 5 minutes
+  issue: inventory-error-cache/store/client.go [unlabeled] medium: Comment rationale doesn't match the caching scope
+  issue: prometheus-18905/tsdb/db.go [unlabeled] high: Watermark misses appends opened before capture but committed later
+  issue: prometheus-18905/tsdb/db.go [unlabeled] low: num_skipped_ooo also counts missing and duplicate refs
+  issue: prometheus-18905/tsdb/db.go [unlabeled] low: Series not evicted when head MinTime >= MaxTime
+  issue: prometheus-18905/tsdb/head.go [unlabeled] high: Late commit from a pre-watermark appender gets evicted and tombstoned
+  issue: prometheus-18905/tsdb/head.go [unlabeled] medium: Watermark misses appenders opened before capture but committed later

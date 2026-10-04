@@ -1,0 +1,27 @@
+scored units: 3
+exact:        3 (100.0%)
+MISSES human→none:   0 (0.0%)
+under-reviewed:      0 (0.0%)
+over-escalated:      0 (0.0%)
+
+confusion (rows=label, cols=predicted)
+          human     skim   aux   none
+human         3        0     0      0
+skim          0        0     0      0
+none          0        0     0      0
+
+review budgets (all units; labeled human outside human; must_find defects outside human)
+            human     skim   aux  none  under  defects
+most           21       26    22     3      0     0/1
+more           21       26    22     3      0     0/1
+balanced       21       26    22     3      0     0/1
+less           21       26    22     3      0     0/1
+least          21       26    22     3      0     0/1
+
+findings: 1/1 must_find found at the right severity, 0 at the wrong one, 0 missed
+issues on labeled units: 5 (1 expected, 0 false positive, 4 unlabeled), precision 100%
+  issue: inventory-error-cache/store/client.go [expected] medium: Transient network errors cached for 5 minutes as if permanent
+  issue: prometheus-18905/tsdb/db.go [unlabeled] medium: Watermark misses in-flight appenders; doc 'guarantee' is false
+  issue: prometheus-18905/tsdb/db.go [unlabeled] low: num_skipped_ooo also counts unknown refs
+  issue: prometheus-18905/tsdb/head.go [unlabeled] high: Watermark comparison misses appends from appenders open before capture
+  issue: prometheus-18905/tsdb/head.go [unlabeled] high: Appender opened before watermark but committed after block write gets evicted
