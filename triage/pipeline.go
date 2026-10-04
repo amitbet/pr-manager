@@ -232,7 +232,8 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 		}
 		groups := reviewGroups(toAnalyze, p.Presorter.Policy.Grouping)
 		setGroupContext(groups, units, src.BaseContent, p.Presorter.Policy.ReviewContextChars)
-		runStage(ctx, p, "analyze", limit, groups, (*ReviewGroup).ID, sum.AnalyzeGroup)
+		sum.calls = make(chan struct{}, max(1, limit))
+		runStage(ctx, p, "analyze", limit, sum.largestFirst(groups), (*ReviewGroup).ID, sum.AnalyzeGroup)
 		for _, u := range append(toAnalyze, carried...) {
 			if analyzed[u] {
 				tiers.prior(u, maxChars)

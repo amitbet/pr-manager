@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -275,7 +276,7 @@ func (s *Summarizer) AnalyzeGroup(ctx context.Context, g *ReviewGroup) {
 	}, groupAnalyzeTool, groupMaxTokens(len(g.Members)))
 	if err != nil {
 		// One failed call must not drop a whole group's review.
-		s.eachMember(g, func(u *Unit) { s.Analyze(ctx, u) })
+		eachMember(g, func(u *Unit) { s.Analyze(ctx, u) })
 		return
 	}
 	byID := map[string]map[string]any{}
@@ -290,7 +291,7 @@ func (s *Summarizer) AnalyzeGroup(ctx context.Context, g *ReviewGroup) {
 			}
 		}
 	}
-	s.eachMember(g, func(u *Unit) {
+	eachMember(g, func(u *Unit) {
 		e, ok := byID[u.ID]
 		if !ok {
 			s.Analyze(ctx, u)
@@ -304,7 +305,7 @@ func (s *Summarizer) AnalyzeGroup(ctx context.Context, g *ReviewGroup) {
 // mean critic calls or a solo re-review, and members share nothing but
 // the read-only summarizer, so one member's calls need not wait for
 // another's.
-func (s *Summarizer) eachMember(g *ReviewGroup, fn func(*Unit)) {
+func eachMember(g *ReviewGroup, fn func(*Unit)) {
 	var wg sync.WaitGroup
 	for _, u := range g.Members {
 		wg.Add(1)
@@ -314,6 +315,24 @@ func (s *Summarizer) eachMember(g *ReviewGroup, fn func(*Unit)) {
 		}()
 	}
 	wg.Wait()
+}
+
+// largestFirst orders groups by the size of their review prompt, biggest
+// first. The stage finishes with its slowest call, and the biggest prompts
+// take longest: started last, behind a full set of slots, one sets the
+// finish time. The groups themselves are unchanged.
+func (s *Summarizer) largestFirst(groups []*ReviewGroup) []*ReviewGroup {
+	size := make(map[*ReviewGroup]int, len(groups))
+	for _, g := range groups {
+		if len(g.Members) == 1 {
+			size[g] = len(s.prompt(g.Members[0], ruleNote(g.Members[0])))
+		} else {
+			size[g] = len(s.groupPrompt(g))
+		}
+	}
+	out := slices.Clone(groups)
+	slices.SortStableFunc(out, func(a, b *ReviewGroup) int { return size[b] - size[a] })
+	return out
 }
 
 // groupMaxTokens scales the output cap with the number of units, since one
