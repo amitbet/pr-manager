@@ -2,10 +2,10 @@
 // colored by its most important unit's bucket. The open file shows whole,
 // each unit's review beside its code, as in a grouped walkthrough step.
 import { $, esc, BUCKETS, LABEL } from "./util.js";
-import { S, render, fileOfUnit } from "./state.js";
+import { S, render, fileOfUnit, focusTop } from "./state.js";
 import { SEV_RANK, SEV_CLASS } from "./scores.js";
 import { canExpand, fullyExpanded, expandAllButton, expandWhole } from "./diff.js";
-import { unitSegmentsHTML, noteHTML, markReviewed } from "./walkthrough.js";
+import { unitSegmentsHTML, noteHTML, markReviewed, leadUnit, scrollToSeg } from "./walkthrough.js";
 
 // bucketOf is a file's most important bucket: BUCKETS runs from human
 // review down to no review.
@@ -139,11 +139,28 @@ export function mountFiles() {
   expandWhole(f).then(done, done);
 }
 
-// open shows file path, back at the top of the file when scrolled past it.
+// whenLoaded runs fn now, and again once file f has loaded whole, which
+// moves its units down.
+function whenLoaded(f, fn) {
+  fn();
+  if (S.fv.loading !== f.path) return;
+  const wait = setInterval(() => { if (S.fv.loading !== f.path) { clearInterval(wait); fn(); } }, 50);
+  setTimeout(() => clearInterval(wait), 10000);
+}
+
+// open shows file path, back at the top of the file when scrolled past it,
+// or, with Settings → Review view → focus on, at its highest-ranked change.
 function open(path) {
   S.fv.path = path;
   S.composer = null;
   render();
+  const f = S.result.files.find((x) => x.path === path);
+  // The whole file shows, so even a first change can be far down.
+  if (focusTop() && f?.units?.length) {
+    const id = leadUnit(f.units).id;
+    whenLoaded(f, () => scrollToSeg(id));
+    return;
+  }
   const top = $(".fv-main")?.getBoundingClientRect().top;
   if (top < 54) window.scrollTo({ top: top + window.scrollY - 54 });
 }
@@ -155,16 +172,10 @@ export function showFileUnit(id) {
   S.wz.noteOpen.set(id, true);
   S.fv.path = f.path;
   render();
-  const go = () => {
+  whenLoaded(f, () => {
     const el = document.querySelector(`.wz-note[data-note="${CSS.escape(id)}"]`);
     if (el) { el.closest(".wz-seg").scrollIntoView({ block: "start" }); el.classList.add("flash"); }
-  };
-  go();
-  // The whole file loads after the first render, which moves the unit.
-  if (S.fv.loading === f.path) {
-    const wait = setInterval(() => { if (S.fv.loading !== f.path) { clearInterval(wait); go(); } }, 50);
-    setTimeout(() => clearInterval(wait), 10000);
-  }
+  });
   return true;
 }
 

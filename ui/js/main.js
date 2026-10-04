@@ -58,7 +58,7 @@ const MODES = [["walk", "Walkthrough"], ["files", "Files"], ["classic", "Classic
 const actions = {
   ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
-  mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; localStorage.setItem("pr-manager.reviewmode", S.mode); syncURL(); },
+  mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; syncURL(); },
   "create-pr": async (el) => {
     el.disabled = true;
     el.textContent = "Creating PR…";

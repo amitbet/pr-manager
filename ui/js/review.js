@@ -160,5 +160,5 @@ export const actions = {
     S.allHidden = !S.allHidden;
     S.result.files.forEach((f) => (f.units || []).forEach((u) => S.diffOpen[u.id] = !S.allHidden));
   },
-  view: (el) => { S.view = el.dataset.v; localStorage.setItem("pr-manager.view", S.view); },
+  view: (el) => { S.view = el.dataset.v; },
 };

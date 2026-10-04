@@ -3,7 +3,7 @@
 // related units (Settings → Walkthrough steps).
 import { trText, trDir } from "./entext.js";
 import { $, esc, LABEL, headline } from "./util.js";
-import { S, render, allUnits, fileByPath } from "./state.js";
+import { S, render, allUnits, fileByPath, focusTop } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
 import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions as diffActions } from "./diff.js";
 import { issueDraftButton } from "./comments.js";
@@ -200,17 +200,40 @@ function scrollToUnit(id) {
   if (row) { row.scrollIntoView({ block: "center" }); row.classList.add("flash"); }
 }
 
+// leadUnit is the highest-ranked of units.
+export const leadUnit = (units) => units.map((u, i) => ({ u, i })).sort(byRank)[0].u;
+
+// scrollToSeg puts unit id's review and code at the top, just under the
+// pinned header and step dots. A single-unit step has no review beside its
+// code, so its first changed row is centered instead. False if neither is
+// on the page.
+export function scrollToSeg(id) {
+  const seg = document.querySelector(`.wz-note[data-note="${CSS.escape(id)}"]`)?.closest(".wz-seg");
+  if (!seg) {
+    const row = document.querySelector(".wz-code tr.focus-start");
+    row?.scrollIntoView({ block: "center" });
+    return !!row;
+  }
+  const pinned = HEADER_H + ($(".wz-steps")?.offsetHeight || 0);
+  window.scrollTo({ top: seg.getBoundingClientRect().top + window.scrollY - pinned });
+  return true;
+}
+
 // go shows step i. When the page is scrolled past the card, it scrolls back
 // to the card's top, just under the pinned step dots, so the new step is
-// read from its start.
+// read from its start. With Settings → Review view → focus on, a step of
+// several changes, or one showing its whole file, opens on its
+// highest-ranked change instead.
 function go(i) {
   const st = steps();
   if (!st.length) return;
-  S.wz.cur = st[Math.max(0, Math.min(st.length - 1, i))].members[0].u.id;
+  const s = st[Math.max(0, Math.min(st.length - 1, i))];
+  S.wz.cur = s.members[0].u.id;
   S.wz.finished = S.wz.intro = false;
   S.composer = null;
   save();
   render();
+  if (focusTop() && (s.lead !== s.members[0] || fullyExpanded(s.lead.f)) && scrollToSeg(s.lead.u.id)) return;
   const card = $(".wz-card");
   if (!card) return;
   const top = card.getBoundingClientRect().top + card.clientTop; // inside the colored top border
@@ -577,7 +600,7 @@ export const actions = {
   "wz-toggle": () => { toggleReviewed(); return false; },
   "wz-reset": () => { S.wz.done.clear(); S.wz.cur = null; go(0); return false; },
   "wz-all": (el) => { S.wz.all = el.checked; },
-  "wz-view": (el) => { S.wz.view = el.dataset.v; localStorage.setItem("pr-manager.wzview", S.wz.view); },
+  "wz-view": (el) => { S.wz.view = el.dataset.v; },
   "wz-submit": () => { openPanel(); return false; },
   "wz-unit": (el) => { scrollToUnit(el.dataset.id); return false; },
   "wz-use": (el) => { const k = el.dataset.k; S.wz.usesOpen.has(k) ? S.wz.usesOpen.delete(k) : S.wz.usesOpen.add(k); },

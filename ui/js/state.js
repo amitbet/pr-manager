@@ -9,10 +9,26 @@ function wzSteps() {
   return localStorage.getItem("pr-manager.wz_group") === "1" ? "file" : "related";
 }
 
+// The defaults Settings → Review view picks. The view and mode buttons on
+// the page change them for the session only. diff_view applies to every
+// diff; before it, the classic list and the walkthrough each kept the
+// last one used (pr-manager.view, pr-manager.wzview).
+export const diffViewDefault = () => {
+  const v = localStorage.getItem("pr-manager.diff_view") || localStorage.getItem("pr-manager.wzview");
+  return v === "split" ? "split" : "unified";
+};
+export const reviewModeDefault = () => {
+  const v = localStorage.getItem("pr-manager.reviewmode");
+  return v === "files" || v === "classic" ? v : "walk";
+};
+// focusTop is whether opening a walkthrough step of several changes, or a
+// file in the Files mode, scrolls to the highest-ranked change.
+export const focusTop = () => localStorage.getItem("pr-manager.focus_top") === "1";
+
 export const S = {
   result: null,
   cfg: null,
-  view: localStorage.getItem("pr-manager.view") || "split",
+  view: diffViewDefault(),
   hidden: new Set(),
   collapsed: new Set(),   // file paths
   diffOpen: {},           // unit id -> bool (default: open unless bucket none)
@@ -33,9 +49,9 @@ export const S = {
   seqCopied: false,
   seqText: false,         // show the Mermaid text (no clipboard access)
   seqView: "after",       // the Sequence tab: the flow before | after the PR
-  mode: localStorage.getItem("pr-manager.reviewmode") || "walk", // the Review tab: walk(through) | files | classic
+  mode: reviewModeDefault(), // the Review tab: walk(through) | files | classic
   // group: a step is one file's changes (Settings → Walkthrough); usesOpen: "step|unit" of opened definitions.
-  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: localStorage.getItem("pr-manager.wzview") || "unified", steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map() },
+  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: diffViewDefault(), steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map() },
   // Files mode: the open file, closed directories, files already loaded whole (or tried) and the one loading.
   fv: { path: null, closed: new Set(), tried: new Set(), loading: null },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both

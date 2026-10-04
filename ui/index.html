@@ -96,6 +96,16 @@
       <h4>Walkthrough steps <span class="info" tabindex="0" aria-label="About walkthrough steps">i<span class="tip" role="tooltip">What one step of the walkthrough holds. None: a single declaration. By file: a file&#39;s changes in file order; a file over 400 changed lines is split between declarations. By relation: declarations that name each other (caller and callee), a test and the code it is named after, and small changes in one file, up to 8 declarations and 400 changed lines a step. In a step with several changes, each change&#39;s review sits above its code, and reviews without issues start collapsed unless the change is in human review. Every step lists the changed definitions it uses from elsewhere, collapsed. Only changes how the walkthrough is shown, so it applies at once. It is separate from the grouping the reviewer model uses to save calls.</span></span></h4>
       <label class="check">Grouping <select id="wz_steps" aria-label="walkthrough grouping"><option value="unit">none</option><option value="file">by file</option><option value="related">by relation</option></select></label>
     </section>
+    <section>
+      <h4>Review view <span class="info" tabindex="0" aria-label="About review view">i<span class="tip" role="tooltip">What the app opens with. The buttons on the page switch the mode and the diff view until the next reload. With focus on, a walkthrough step of several changes (or showing a whole file), or any file in the Files mode, opens scrolled to its highest-ranked change (by bucket, then score) instead of its top.</span></span></h4>
+      <div class="grid review-view">
+        <label for="review_mode">Open PRs in</label>
+        <select id="review_mode" aria-label="default review mode"><option value="walk">Walkthrough</option><option value="files">Files</option><option value="classic">Classic</option></select>
+        <label for="diff_view">Diffs</label>
+        <select id="diff_view" aria-label="default diff view"><option value="unified">Unified</option><option value="split">Split</option></select>
+      </div>
+      <label class="check"><input type="checkbox" id="focus_top"> scroll to the highest-ranked change when opening a step or file</label>
+    </section>
     <section class="classify-only">
       <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="classify_batch"> classify several units per call</label>

@@ -1,7 +1,7 @@
 // Settings dialog: provider and model pickers, code map sources, summary
 // language, review budget, walkthrough steps and review tools. Choices are kept in localStorage under pr-manager.<key>.
 import { $, esc, api, BUCKETS, LABEL } from "./util.js";
-import { S, render } from "./state.js";
+import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state.js";
 import * as budget from "./budget.js";
 import { refreshJobs, pollJob } from "./jobs.js";
 
@@ -300,6 +300,17 @@ export function initSettings(changed, langChanged) {
   const steps = $("#wz_steps");
   steps.value = S.wz.steps;
   steps.onchange = () => { S.wz.steps = steps.value; save("wz_steps", steps.value); if (S.result) render(); };
+  // Review view defaults. A changed diff view applies at once, a changed
+  // mode at the next reload.
+  const mode = $("#review_mode");
+  mode.value = reviewModeDefault();
+  mode.onchange = () => save("reviewmode", mode.value);
+  const view = $("#diff_view");
+  view.value = diffViewDefault();
+  view.onchange = () => { save("diff_view", view.value); S.view = S.wz.view = view.value; if (S.result) render(); };
+  const focus = $("#focus_top");
+  focus.checked = focusTop();
+  focus.onchange = () => save("focus_top", focus.checked ? "1" : "0");
   const batch = $("#classify_batch");
   batch.checked = saved("classify_batch") ? saved("classify_batch") === "1" : S.cfg?.classify_batch !== false;
   batch.onchange = () => save("classify_batch", batch.checked ? "1" : "0");
