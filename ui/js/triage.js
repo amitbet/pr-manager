@@ -1,12 +1,12 @@
 // Header triage form: starts a job and shows it in the job view.
-import { $, esc, postJSON } from "./util.js";
+import { $, esc, postJSON, ask } from "./util.js";
 import { jobSettings } from "./settings.js";
 import { watchJob, refreshJobs } from "./jobs.js";
 
 // triage starts a job for the form's PR link or local path. A PR already
-// triaged at this commit reopens its saved result; with ask set, the user
+// triaged at this commit reopens its saved result; with offer set, the user
 // is offered to run it again instead.
-async function triage(ask, force = false) {
+async function triage(offer, force = false) {
   const url = $("#url").value.trim();
   if (!url) return;
   const isPath = isLocalPath(url);
@@ -16,11 +16,11 @@ async function triage(ask, force = false) {
   try {
     const job = await postJSON("/api/triage", body);
     refreshJobs();
-    watchJob(job.id, ask && ((j) => {
+    watchJob(job.id, offer && (async (j) => {
       const when = new Date(j.cached).toLocaleString();
       // A saved result from another model is offered, but named as such.
       const model = j.cached_by ? `\n\nThe saved result was made with ${j.cached_by}; your settings now use ${j.runs_with}.` : "";
-      if (!confirm(`This ${isPath ? "state" : "commit"} was already triaged (${when}). Run it again?${model}\n\nOK runs it again; Cancel opens the saved result.`)) return true;
+      if (!(await ask(`This ${isPath ? "state" : "commit"} was already triaged (${when}). Run it again?${model}\n\nRun again triages it from scratch; Cancel opens the saved result.`, "Run again"))) return true;
       triage(false, true);
       return false;
     }));

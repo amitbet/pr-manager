@@ -1,5 +1,5 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
-import { $, esc, api, pills } from "./util.js";
+import { $, esc, api, pills, say } from "./util.js";
 import { S, repoName, localSrc } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
@@ -33,7 +33,7 @@ export function initSidebar(pick) {
   });
   $("#list").addEventListener("click", (e) => {
     const item = e.target.closest(".pr-item");
-    if (item) { Promise.resolve(onPick(item.dataset.key, item.dataset.src)).catch((err) => alert(err.message)); return; }
+    if (item) { Promise.resolve(onPick(item.dataset.key, item.dataset.src)).catch((err) => say(err.message)); return; }
     const head = e.target.closest(".repo-head");
     if (!head) return;
     const repo = head.dataset.repo;

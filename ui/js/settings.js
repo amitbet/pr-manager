@@ -1,6 +1,6 @@
 // Settings dialog: provider and model pickers, code map sources, summary
 // language, review budget, walkthrough steps and review tools. Choices are kept in localStorage under pr-manager.<key>.
-import { $, esc, api, BUCKETS, LABEL } from "./util.js";
+import { $, esc, api, BUCKETS, LABEL, askText } from "./util.js";
 import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state.js";
 import * as budget from "./budget.js";
 import { refreshJobs, pollJob } from "./jobs.js";
@@ -74,10 +74,10 @@ async function loadProviders(refresh) {
     fillProviders(r);
     fillModels(r);
     $(`#${r.role}`).onchange = (e) => { save(r.role, e.target.value); fillModels(r); if (r.role === "translator") fillEffort(); showLine(); };
-    $(`#${r.model}`).onchange = (e) => {
+    $(`#${r.model}`).onchange = async (e) => {
       const prov = $(`#${r.role}`).value || P[r.role];
       if (e.target.value === "__custom") {
-        const id = (prompt(`Model id for ${prov}`) || "").trim();
+        const id = ((await askText(`Model id for ${prov}`)) || "").trim();
         save(`${r.model}.${prov}`, id);
         fillModels(r);
       } else save(`${r.model}.${prov}`, e.target.value);

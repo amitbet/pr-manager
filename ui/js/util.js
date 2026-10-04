@@ -38,3 +38,31 @@ function firstSentence(t) {
 export function headline(u) {
   return u.headline || u.decision.headline || firstSentence(u.summary) || firstSentence(u.decision.reason) || "(no description)";
 }
+
+// ask, say and askText stand in for confirm, alert and prompt, which the
+// desktop app's macOS webview (Wails) doesn't implement: there confirm
+// answers false without showing anything, alert shows nothing and prompt
+// returns null. ask resolves true for OK; askText resolves the text, or
+// null when cancelled.
+function dialog(message, { ok = "OK", cancel = "Cancel", input = null } = {}) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "settings-dlg ask-dlg";
+  dlg.innerHTML = `<form method="dialog"><p class="ask-msg">${esc(message)}</p>
+    ${input === null ? "" : `<input class="ask-input" spellcheck="false" value="${esc(input)}">`}
+    <div class="dlg-actions">${cancel ? `<button value="">${esc(cancel)}</button> ` : ""}<button class="primary" value="ok">${esc(ok)}</button></div></form>`;
+  document.body.append(dlg);
+  const field = dlg.querySelector(".ask-input");
+  return new Promise((resolve) => {
+    dlg.addEventListener("close", () => {
+      resolve(dlg.returnValue === "ok" ? (field ? field.value : true) : (field ? null : false));
+      dlg.remove();
+    });
+    // Enter in the field submits as OK, not as the first button (Cancel).
+    field?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dlg.close("ok"); } });
+    dlg.showModal();
+    (field || dlg.querySelector(".primary")).focus();
+  });
+}
+export const ask = (message, ok = "OK") => dialog(message, { ok });
+export const say = (message) => dialog(message, { cancel: "" });
+export const askText = (message, value = "") => dialog(message, { input: value });

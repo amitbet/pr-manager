@@ -8,7 +8,7 @@
 // the same claim arrives dismissed on the next push. The reasons pile up
 // in one file per repository, which is what a reviewer that learns from
 // feedback will read (see the dismissals store in dismiss.go).
-import { esc, api, postJSON } from "./util.js";
+import { esc, api, postJSON, say } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, attLevel } from "./scores.js";
 import { issueDraftButton } from "./comments.js";
@@ -299,6 +299,6 @@ export const actions = {
     el.disabled = true;
     try {
       merge(await api(`${url()}/${encodeURIComponent(el.dataset.key)}`, { method: "DELETE" }));
-    } catch (err) { alert(err.message); }
+    } catch (err) { say(err.message); }
   },
 };

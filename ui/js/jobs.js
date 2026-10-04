@@ -106,7 +106,7 @@ export async function watchJob(id, onCached) {
       if (!view.isConnected) return;
       if (j.status === "done" && j.key) {
         refreshJobs();
-        if (!j.cached || !onCached || onCached(j)) await onDone(j.key);
+        if (!j.cached || !onCached || (await onCached(j))) await onDone(j.key);
         return;
       }
       const p = view.querySelector(".progress");

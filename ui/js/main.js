@@ -5,13 +5,13 @@
 // export `actions`: handlers keyed by data-act. A handler changes state and
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
-import { $, esc, api, postJSON } from "./util.js";
+import { $, esc, api, postJSON, say } from "./util.js";
 import { S, onRender, render, syncURL, prBase, repoName, localSrc } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
 import { syncComposer, focusComposer, actions as commentActions, onKeydown as composerKeydown } from "./comments.js";
 import { reviewHTML, showDraft, actions as reviewActions } from "./review.js";
-import { walkHTML, loadProgress, actions as walkActions, onKeydown as walkKeydown } from "./walkthrough.js";
+import { walkHTML, loadProgress, syncDots, actions as walkActions, onKeydown as walkKeydown } from "./walkthrough.js";
 import { filesHTML, mountFiles, actions as filesActions } from "./files.js";
 import { treemapHTML, renderTreemap, actions as treemapActions } from "./treemap.js";
 import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } from "./panel.js";
@@ -67,7 +67,7 @@ const actions = {
       S.result.pr.url = out.url;
       render();
       triageURL(out.url);
-    } catch (e) { alert(e.message); el.disabled = false; el.textContent = "Create PR"; }
+    } catch (e) { say(e.message); el.disabled = false; el.textContent = "Create PR"; }
     return false;
   },
 };
@@ -159,7 +159,9 @@ onRender(() => {
   const kept = keepTyping(() => {
     const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
     updateReviewButton();
+    const dotsX = $(".wz-steps")?.scrollLeft;
     $("#main").innerHTML = prHeadHTML(r) + translateBanner(r) + fixBanner() + tabsHTML() + tab.html();
+    syncDots(dotsX);
     $("#main").classList.toggle("translating", !!r.translating);
     tab.mount?.();
     if (panelOpen()) renderPanel();

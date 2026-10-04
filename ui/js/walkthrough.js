@@ -487,6 +487,19 @@ function progressHTML(st, i, toggle) {
     <div class="wz-steps">${dots}</div>`;
 }
 
+// syncDots puts the step dots back where they were scrolled sideways before
+// a re-render (x), then scrolls just enough to show the current dot.
+export function syncDots(x) {
+  const row = $(".wz-steps");
+  if (!row) return;
+  if (x != null) row.scrollLeft = x;
+  const cur = row.querySelector(".wz-dot.cur");
+  if (!cur) return;
+  const l = cur.offsetLeft, r = l + cur.offsetWidth, pad = 8;
+  if (l - pad < row.scrollLeft) row.scrollLeft = l - pad;
+  else if (r + pad > row.scrollLeft + row.clientWidth) row.scrollLeft = r + pad - row.clientWidth;
+}
+
 function finishHTML(st) {
   const nd = S.drafts.length;
   return `<div class="wz-card none"><div class="wz-finish">

@@ -5,7 +5,7 @@
 // completes the PR. Fixes made before that, each in a worktree or clone
 // of its own (and a local review's), are listed as they are, to commit,
 // push or throw away. The issues fixes fixed, or are fixing, say so.
-import { esc, api, postJSON } from "./util.js";
+import { esc, api, postJSON, ask } from "./util.js";
 import { S, render, syncURL } from "./state.js";
 import { SEV_CLASS } from "./scores.js";
 import { fixSettings } from "./settings.js";
@@ -328,7 +328,7 @@ async function run(key, what, fn) {
 async function push(keys, busyKey) {
   const branch = S.result.pr.head_ref;
   const n = keys.length;
-  if (!confirm(`Commit ${n === 1 ? "this fix" : `these ${n} fixes`} and push ${n === 1 ? "it" : "them"} to ${branch} on GitHub? It becomes the PR's new head.`)) return false;
+  if (!(await ask(`Commit ${n === 1 ? "this fix" : `these ${n} fixes`} and push ${n === 1 ? "it" : "them"} to ${branch} on GitHub? It becomes the PR's new head.`, "Commit and push"))) return false;
   return run(busyKey, "push", async () => {
     const out = await postJSON("/api/fixes/push", { ...fixSettings(), keys });
     return { text: `Pushed to ${branch}: the PR's head is ${out.head.slice(0, 10)} now. Triage it again to review the new head.`, retriage: true };
@@ -355,26 +355,26 @@ export const actions = {
     showDiff(id);
     return false;
   },
-  "pf-push-branch": () => {
+  "pf-push-branch": async () => {
     const branch = S.result.pr.head_ref;
-    if (!confirm(`Push the PR's fixes to ${branch} on GitHub? They become the PR's new commits.`)) return false;
+    if (!(await ask(`Push the PR's fixes to ${branch} on GitHub? They become the PR's new commits.`, "Push"))) return false;
     return run("branch", "push", async () => {
       const out = await postJSON(`/api/results/${encodeURIComponent(S.result.key)}/fixes/push`, {});
       return { text: `Pushed to ${branch}: the PR's head is ${out.head.slice(0, 10)} now. Triage it again to review the new head.`, retriage: true };
     });
   },
-  "pf-drop": (el) => {
+  "pf-drop": async (el) => {
     const p = byRow(el.dataset.id);
     const gone = p?.state === "superseded";
-    if (!p || (!gone && !confirm(`Take ${p.other ? "this commit" : "this fix"} off the PR's branch? Its changes are gone; the fixes after it stay.`))) return false;
+    if (!p || (!gone && !(await ask(`Take ${p.other ? "this commit" : "this fix"} off the PR's branch? Its changes are gone; the fixes after it stay.`, "Drop")))) return false;
     return run(rowId(p), "drop", async () => {
       await postJSON(`/api/results/${encodeURIComponent(S.result.key)}/fixes/drop`, { commit: p.commit });
       return { text: gone ? "Dismissed the superseded fix." : "Dropped the fix." };
     });
   },
-  "pf-complete": () => {
+  "pf-complete": async () => {
     const unpushed = F.list.filter((p) => p.kind === "branch" && p.state !== "pushed" && p.state !== "superseded").length;
-    if (!confirm(`Done fixing this PR? Its fix branch and fix results are removed${unpushed ? `, with ${unpushed} fix${unpushed === 1 ? "" : "es"} not pushed` : ""}. This can't be undone.`)) return false;
+    if (!(await ask(`Done fixing this PR? Its fix branch and fix results are removed${unpushed ? `, with ${unpushed} fix${unpushed === 1 ? "" : "es"} not pushed` : ""}. This can't be undone.`, "Done fixing"))) return false;
     return run("branch", "complete", async () => {
       await postJSON(`/api/results/${encodeURIComponent(S.result.key)}/fixes/complete`, {});
       return { text: "Completed: the PR's fixes are cleaned up." };
@@ -394,9 +394,9 @@ export const actions = {
   }),
   "pf-push": (el) => push([el.dataset.key], el.dataset.key),
   "pf-push-all": () => push(F.list.filter(pushable).map((p) => p.key), "*"),
-  "pf-discard": (el) => {
+  "pf-discard": async (el) => {
     const p = F.list.find((x) => x.key === el.dataset.key);
-    if (!p || !confirm(`Throw away this fix's changes${p.state === "committed" ? " and commits" : ""}, its ${where(p)} and branch ${p.branch}? This can't be undone.`)) return false;
+    if (!p || !(await ask(`Throw away this fix's changes${p.state === "committed" ? " and commits" : ""}, its ${where(p)} and branch ${p.branch}? This can't be undone.`, "Throw away"))) return false;
     if (p.key !== S.result.key) {
       return run(p.key, "discard", async () => {
         await postJSON(`/api/results/${encodeURIComponent(p.key)}/fix/discard`, {});

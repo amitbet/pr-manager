@@ -1,12 +1,14 @@
 /* Walkthrough tab. */
-:root { --wz-steps-h: 36px; }
+:root { --wz-steps-h: 44px; }
 .wz-top { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 14px 0 8px; font-size: 14px; color: var(--muted); }
 .wz-top b { color: var(--fg); }
 .wz-prog { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
 .wz-prog > div { height: 100%; background: var(--none); transition: width .3s; }
 /* Step dots stay pinned under the page header; one row that scrolls
-   sideways, so its height is fixed and the sticky bars below can sit under it. */
-.wz-steps { position: sticky; top: 54px; z-index: 6; height: var(--wz-steps-h); display: flex; gap: 5px; align-items: center; overflow-x: auto; overflow-y: hidden; padding: 0 4px; margin: 0 -4px 10px; background: var(--bg); scrollbar-width: thin; }
+   sideways, so its height is fixed and the sticky bars below can sit under it.
+   Dots sit at the top, leaving the bottom for the scrollbar so it never
+   clips them or the current dot's ring. */
+.wz-steps { position: sticky; top: 54px; z-index: 6; height: var(--wz-steps-h); display: flex; gap: 5px; align-items: flex-start; overflow-x: auto; overflow-y: hidden; padding: 6px 4px 0; margin: 0 -4px 10px; background: var(--bg); scrollbar-width: thin; }
 .wz-dot { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid var(--border); background: var(--bg); font: 700 11px/20px -apple-system, sans-serif; text-align: center; color: var(--muted); }
 .wz-dot.human { border-color: var(--human); color: var(--human); border-width: 3px; line-height: 18px; font-weight: 900; }
 .wz-dot.skim { border-color: var(--skim); color: var(--skim); }

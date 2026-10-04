@@ -168,3 +168,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .rev-item .rev-add { color: #1a7f37; } .rev-item .rev-del { color: #cf222e; }
 .rev-dlg .rev-list > .hint, .rev-dlg .rev-list > .error { padding: 0 18px; }
 #fix-rev code { overflow-wrap: anywhere; }
+.ask-dlg form { padding: 18px 18px 14px; }
+.ask-msg { margin: 0 0 14px; white-space: pre-wrap; line-height: 1.5; }
+.ask-input { width: 100%; box-sizing: border-box; margin-bottom: 14px; font-family: var(--mono); }
+.ask-dlg .dlg-actions { margin: 0; }

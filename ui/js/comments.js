@@ -1,6 +1,6 @@
 // Pending review comments: the threads under diff lines, the composer, and
 // the actions that create, edit and delete drafts.
-import { $, esc, api, postJSON } from "./util.js";
+import { $, esc, api, postJSON, ask, say } from "./util.js";
 import { S, prBase, render, fileOfUnit } from "./state.js";
 
 const draftsAt = (path, side, line) => S.drafts.filter((d) => d.path === path && d.side === side && d.line === line);
@@ -72,7 +72,7 @@ async function saveComposer() {
     S.drafts = await postJSON(`${prBase()}/drafts`, { id: c.id, path: c.path, side: c.side, line: c.line, body: c.body });
     S.composer = null;
     render();
-  } catch (e) { alert(e.message); }
+  } catch (e) { say(e.message); }
 }
 
 export const actions = {
@@ -81,9 +81,9 @@ export const actions = {
   cancel: () => { S.composer = null; },
   save: async () => { await saveComposer(); return false; },
   delete: async (el) => {
-    if (!confirm("Delete this pending comment?")) return false;
+    if (!(await ask("Delete this pending comment?", "Delete"))) return false;
     try { S.drafts = await api(`${prBase()}/drafts/${el.dataset.id}`, { method: "DELETE" }); }
-    catch (err) { alert(err.message); return false; }
+    catch (err) { say(err.message); return false; }
   },
   "issue-draft": async (el) => {
     const f = fileOfUnit(el.dataset.unit);
@@ -91,7 +91,7 @@ export const actions = {
     const is = u.issues[+el.dataset.idx];
     const body = `**${is.severity}**: ${is.title}${is.detail ? `\n\n${is.detail}` : ""}`;
     try { S.drafts = await postJSON(`${prBase()}/drafts`, { path: f.path, side: "RIGHT", line: is.line, body }); }
-    catch (err) { alert(err.message); return false; }
+    catch (err) { say(err.message); return false; }
     S.diffOpen[u.id] = true;
   },
 };
