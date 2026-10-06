@@ -18,7 +18,7 @@ import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } fro
 import { initSidebar, loadList } from "./sidebar.js";
 import { initTriage, triageURL } from "./triage.js";
 import { initRevPicker } from "./revpicker.js";
-import { initSettings, refreshSettings } from "./settings.js";
+import { initSettings, refreshSettings, jobSettings } from "./settings.js";
 import { fixBanner, initFix, actions as fixActions } from "./fix.js";
 import { initJobs, triageJobFor, watchJob } from "./jobs.js";
 import { translate } from "./translate.js";
@@ -64,9 +64,9 @@ const actions = {
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; syncURL(); },
   "create-pr": async (el) => {
     el.disabled = true;
-    el.textContent = "Creating PR…";
+    el.textContent = "Writing description…";
     try {
-      const out = await postJSON(`/api/local/${encodeURIComponent(S.result.key)}/publish`, {});
+      const out = await postJSON(`/api/local/${encodeURIComponent(S.result.key)}/publish`, jobSettings());
       S.result.pr.url = out.url;
       render();
       triageURL(out.url);

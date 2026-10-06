@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -1043,7 +1044,14 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 404, err)
 			return
 		}
-		url, err := publishLocal(res)
+		var jo jobOptions
+		if err := json.NewDecoder(r.Body).Decode(&jo); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, 400, err)
+			return
+		}
+		url, err := publishLocal(res, func(p *triage.PRInfo) string {
+			return t.prDescription(r.Context(), res.Key, jo, p.LocalPath)
+		})
 		if err != nil {
 			writeErr(w, 400, err)
 			return
