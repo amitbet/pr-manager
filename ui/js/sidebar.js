@@ -1,5 +1,5 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
-import { $, esc, api, pills, say, kindBadge, USED_EVENT } from "./util.js";
+import { $, esc, api, postJSON, pills, ask, say, kindBadge, USED_EVENT } from "./util.js";
 import { S, repoName, localSrc, render } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
@@ -25,6 +25,10 @@ export const sideKeepDays = () => {
   return v === null || v === "" ? 10 : Math.max(0, Number(v) || 0);
 };
 let showStale = false; // "show" on the hidden-changes line, until reload
+
+// confirmRemove: whether a row's x asks before deleting the change
+// (settings, off by default).
+export const confirmRemove = () => localStorage.getItem("pr-manager.side_confirm_remove") === "1";
 
 // Each change's last use (a PR, branch, commit or working tree): when a
 // person last changed something on it (marked units reviewed, dismissed an
@@ -63,6 +67,7 @@ export function initSidebar(pick) {
     const collapsed = !document.documentElement.classList.contains("side-collapsed");
     setSideCollapsed(collapsed);
     localStorage.setItem(SIDE_KEY, collapsed ? "1" : "0");
+    reportShown();
   });
   watchStates();
   document.addEventListener(USED_EVENT, (e) => {
@@ -74,6 +79,12 @@ export function initSidebar(pick) {
     if (shownList) renderList(shownList);
   });
   $("#list").addEventListener("click", (e) => {
+    const del = e.target.closest(".pr-del");
+    if (del) {
+      e.preventDefault();
+      removeChange(del.closest(".pr-item").dataset.key).catch((err) => say(err.message));
+      return;
+    }
     const item = e.target.closest(".pr-item");
     if (item) { Promise.resolve(onPick(item.dataset.key, item.dataset.src)).catch((err) => say(err.message)); return; }
     if (e.target.closest(".side-stale button")) { showStale = !showStale; if (shownList) renderList(shownList); return; }
@@ -84,6 +95,7 @@ export function initSidebar(pick) {
       sec.classList.toggle("all", all);
       more.textContent = all ? "Show less" : more.dataset.more;
       all ? expandedRepos.add(more.dataset.repo) : expandedRepos.delete(more.dataset.repo);
+      reportShown();
       return;
     }
     const head = e.target.closest(".repo-head");
@@ -95,7 +107,46 @@ export function initSidebar(pick) {
     head.querySelector(".caret").textContent = collapse ? "▸" : "▾";
     collapse ? collapsedRepos.add(repo) : collapsedRepos.delete(repo);
     saveCollapsedRepos();
+    reportShown();
   });
+}
+
+// removeChange deletes a change's results (every triage of the PR, branch,
+// commit or working tree) from the cache, after asking if the setting is
+// on. Removing the open change goes back to the empty page.
+async function removeChange(key) {
+  const r = shownList?.find((x) => x.key === key);
+  if (!r) return;
+  const id = identityOf(r);
+  const name = r.local_path ? r.head_ref : `#${r.pr.number}`;
+  if (confirmRemove() && !await ask(`Delete ${name} ${r.title} from ${repoName(r.pr)}? Its results go with it; triaging it again lists it again.`, "Delete")) return;
+  const keys = shownList.filter((x) => identityOf(x) === id).map((x) => x.key);
+  for (const k of keys) {
+    // Not through api, which would count this as using the change.
+    const res = await fetch(`/api/results/${encodeURIComponent(k)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  }
+  if (S.result && keys.includes(S.result.key)) { location.href = location.pathname; return; }
+  await loadList();
+}
+
+// reportShown tells the PR watch (prwatch.go) which PRs are on screen,
+// the only ones it asks GitHub about: the sidebar's rows that aren't
+// under "Show N more" or in a folded repo (none while the sidebar is
+// hidden), and the open result. A PR coming into view is asked about then.
+let lastShown = "";
+function reportShown() {
+  const shown = document.documentElement.classList.contains("side-collapsed") ? [] :
+    [...document.querySelectorAll("#list .pr-item")].filter((el) => el.offsetParent)
+      .map((el) => shownList?.find((r) => r.key === el.dataset.key)).filter(Boolean)
+      .map((r) => ({ ...r.pr, local_path: r.local_path, state: r.state }));
+  if (S.result?.pr) shown.push(S.result.pr);
+  const prs = shown.filter((p) => !p.local_path)
+    .map((p) => ({ host: p.host, owner: p.owner, repo: p.repo, number: p.number, state: p.state }));
+  const body = JSON.stringify(prs);
+  if (body === lastShown) return;
+  lastShown = body;
+  postJSON("/api/prwatch/visible", { prs }).catch(() => { lastShown = ""; });
 }
 
 // watchStates reloads the list when the server's PR watch (prwatch.go)
@@ -183,6 +234,7 @@ function renderList(list) {
       </button>
       <div class="repo-prs">${prs.map((r, i) => `
         <a class="pr-item ${S.result?.key === r.key ? "active" : ""} ${extra(r, i) ? "extra" : ""}" data-key="${esc(r.key)}" data-src="${esc(localSrc(r) || `https://${r.pr.host || "github.com"}/${r.pr.owner}/${r.pr.repo}/pull/${r.pr.number}`)}">
+          <button class="pr-del" title="Delete this change from the list" aria-label="Delete ${esc(r.local_path ? r.head_ref : `#${r.pr.number}`)}">✕</button>
           <span class="t">${kindBadge(r)}${r.local_path ? `<code>${esc(r.head_ref)}</code>` : `#${r.pr.number}`} ${esc(r.title)}</span>
           <span class="m">${pills(r.counts)} ${r.impact ? impactPill(r.impact, "imp") : ""}${r.likelihood ? likelihoodPill(r.likelihood, "lik") : ""} <span>${esc(r.state.toLowerCase())}</span> <span title="${esc(r.classifier)}">· ${esc(r.classifier.split("/").pop())}</span></span>
         </a>`).join("")}${hidden ? `
@@ -191,4 +243,5 @@ function renderList(list) {
   }).join("") + (hiddenStale ? `
     <div class="side-stale">${hiddenStale} not touched in ${sideKeepDays()} day${sideKeepDays() === 1 ? "" : "s"} ${showStale ? "shown" : "hidden"} <button class="linkbtn">${showStale ? "hide" : "show"}</button></div>` : "") || `<div class="empty">none yet</div>`;
   markTriaging();
+  reportShown();
 }

@@ -6,7 +6,7 @@ import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state
 import * as budget from "./budget.js";
 import { comboFromEvent, hotkeyLabel, hideLabel } from "./chat.js";
 import { refreshJobs, pollJob } from "./jobs.js";
-import { loadList, sideShown, sideKeepDays } from "./sidebar.js";
+import { loadList, sideShown, sideKeepDays, confirmRemove } from "./sidebar.js";
 
 // Provider and model pickers. The server lists only the providers this
 // machine can run (a logged-in CLI, an API key that is set, a running Ollama
@@ -379,6 +379,9 @@ export function initSettings(changed, langChanged) {
     save("side_keep_days", keep.value);
     loadList();
   };
+  const confirmDel = $("#side_confirm_remove");
+  confirmDel.checked = confirmRemove();
+  confirmDel.onchange = () => save("side_confirm_remove", confirmDel.checked ? "1" : "0");
   initHotkey("chat_hotkey", hotkeyLabel);
   initHotkey("chat_hide_hotkey", hideLabel);
   const batch = $("#classify_batch");

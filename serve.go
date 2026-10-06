@@ -1016,9 +1016,20 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			return
 		}
 		if res.PR != nil && res.PR.LocalPath == "" {
-			t.watch.touch(res.PR.PRRef)
+			t.watch.touch(res.PR.PRRef, res.PR.State)
 		}
 		writeJSON(w, 200, res)
+	})
+	// Deleting a result drops it from the cache; the sidebar's x deletes
+	// every result of a change.
+	mux.HandleFunc("DELETE /api/results/{key}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("key")
+		if key == "" || strings.ContainsAny(key, `/\`) || strings.HasPrefix(key, ".") {
+			writeErr(w, 400, errors.New("bad key"))
+			return
+		}
+		t.removeResult(key)
+		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /api/results/{key}/translate", func(w http.ResponseWriter, r *http.Request) {
 		var jo jobOptions

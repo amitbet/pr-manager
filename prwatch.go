@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -22,15 +23,19 @@ const (
 	watchMax   = time.Hour
 	watchGap   = 2 * time.Second
 	// watchTouch is how soon the same repo can be touched again: opening
-	// its PRs one after another checks the repo once.
+	// its PRs one after another checks the repo once. A PR shown again
+	// within it of its last ask isn't asked again either, so folding and
+	// unfolding a list doesn't call gh each time.
 	watchTouch = time.Minute
 )
 
 // prWatch keeps the state of the saved PRs (open, merged, closed) current,
-// so a PR merged on GitHub stops showing as open in the sidebar. It asks
-// gh about the PRs saved as open when the app starts, and about a repo's
-// open PRs again when one of its results is opened; a PR found merged or
-// closed is no longer asked about until it is touched again.
+// so a PR merged on GitHub stops showing as open in the sidebar. It only
+// asks gh about the PRs on screen: the UI reports the ones it lists (not
+// those under "Show N more", in a folded repo or hidden as untouched) and
+// the one open, and a PR is asked about when it comes into view. Opening
+// a result asks again about the open PRs on screen in its repo. A PR
+// found merged or closed is no longer asked about.
 type prWatch struct {
 	t       *triager
 	resolve func(context.Context, triage.PRRef) (*triage.PRInfo, error)
@@ -44,13 +49,24 @@ type prWatch struct {
 }
 
 type watchedPR struct {
-	ref   triage.PRRef
-	state string
-	next  time.Time
-	wait  time.Duration
+	ref     triage.PRRef
+	state   string
+	visible bool      // on screen, as the UI last reported
+	once    bool      // ask once though not open: a closed PR opened
+	checked time.Time // last asked about
+	next    time.Time
+	wait    time.Duration
+}
+
+// shownPR is a PR the UI has on screen, with the state it shows.
+type shownPR struct {
+	triage.PRRef
+	State string `json:"state"`
 }
 
 func prID(ref triage.PRRef) string { return ref.RepoArg() + "#" + strconv.Itoa(ref.Number) }
+
+func isOpen(state string) bool { return strings.EqualFold(state, "open") }
 
 func newPRWatch(t *triager) *prWatch {
 	return &prWatch{
@@ -60,8 +76,8 @@ func newPRWatch(t *triager) *prWatch {
 	}
 }
 
-// start loads the saved open PRs, due at once, and runs the watch until
-// the triager shuts down.
+// start runs the watch until the triager shuts down. Nothing is asked
+// about until the UI reports what it shows.
 func (w *prWatch) start() {
 	done := w.t.track()
 	if done == nil {
@@ -69,59 +85,78 @@ func (w *prWatch) start() {
 	}
 	go func() {
 		defer done()
-		w.sync("", "") // List reads every result; not on startup's time
 		w.run(w.t.root)
 	}()
 }
 
-// sync adds the saved PRs left open, of one repo or of all (""), due now,
-// and the PR also, unless it is merged: a closed PR can be reopened. A PR
-// already watched is made due now and its backoff starts over.
-func (w *prWatch) sync(repo, also string) {
-	list, err := w.t.List()
-	if err != nil {
-		log.Printf("pr watch: %v", err)
-		return
-	}
+// show sets the PRs on screen. One shown as open that wasn't on screen is
+// due now, unless it was asked about in the last watchTouch; one no longer
+// on screen waits until it is shown again. A PR the watch already knows
+// keeps the state it found, which the UI may not have reloaded yet.
+func (w *prWatch) show(prs []shownPR) {
 	now := w.now()
+	on := map[string]bool{}
 	w.mu.Lock()
-	for _, s := range list {
-		if s.LocalPath != "" || s.PR.Number == 0 || (repo != "" && s.PR.RepoArg() != repo) {
+	for _, s := range prs {
+		if s.Number == 0 {
 			continue
 		}
-		id := prID(s.PR)
+		id := prID(s.PRRef)
+		on[id] = true
 		p := w.prs[id]
 		if p == nil {
-			// List is newest result first, so the first seen is the state
-			// the sidebar shows.
-			if !strings.EqualFold(s.State, "open") && (id != also || strings.EqualFold(s.State, "merged")) {
+			if !isOpen(s.State) {
 				continue
 			}
-			p = &watchedPR{ref: s.PR, state: s.State}
+			p = &watchedPR{ref: s.PRRef, state: s.State}
 			w.prs[id] = p
 		}
-		p.next, p.wait = now, watchFirst
+		if !p.visible && now.Sub(p.checked) >= watchTouch {
+			p.next, p.wait = now, watchFirst
+		}
+		p.visible = true
+	}
+	for id, p := range w.prs {
+		if !on[id] {
+			p.visible = false
+		}
 	}
 	w.mu.Unlock()
 	w.poke()
 }
 
-// touch is a result of ref being opened: its repo's open PRs and ref are
-// asked about again, unless the repo was touched in the last watchTouch.
-func (w *prWatch) touch(ref triage.PRRef) {
+// touch is a result of ref being opened, ref's state as saved: the open
+// PRs on screen in its repo are asked about again, with their backoff
+// started over, and so is ref unless it is merged (a closed PR can be
+// reopened). A repo touched in the last watchTouch is left.
+func (w *prWatch) touch(ref triage.PRRef, state string) {
 	if ref.Number == 0 {
 		return
 	}
 	repo := ref.RepoArg()
+	now := w.now()
 	w.mu.Lock()
-	last, ok := w.touched[repo]
-	if ok && w.now().Sub(last) < watchTouch {
-		w.mu.Unlock()
+	defer w.mu.Unlock()
+	defer w.poke()
+	// The result being opened is on screen, and a new one is due now.
+	id := prID(ref)
+	if w.prs[id] == nil {
+		w.prs[id] = &watchedPR{ref: ref, state: state}
+	}
+	p := w.prs[id]
+	p.visible = true
+	if !isOpen(p.state) && !strings.EqualFold(p.state, "merged") && now.Sub(p.checked) >= watchTouch {
+		p.once, p.next = true, now
+	}
+	if last, ok := w.touched[repo]; ok && now.Sub(last) < watchTouch {
 		return
 	}
-	w.touched[repo] = w.now()
-	w.mu.Unlock()
-	go w.sync(repo, prID(ref)) // List reads every result; not on the request's time
+	w.touched[repo] = now
+	for _, p := range w.prs {
+		if p.visible && p.ref.RepoArg() == repo {
+			p.next, p.wait = now, watchFirst
+		}
+	}
 }
 
 func (w *prWatch) poke() {
@@ -131,14 +166,14 @@ func (w *prWatch) poke() {
 	}
 }
 
-// due returns the watched PR that is due first and how long until it is
-// due (zero if it is), or nil when nothing is watched.
+// due returns the PR on screen that is due first and how long until it
+// is due (zero if it is), or nil when none is.
 func (w *prWatch) due() (*watchedPR, time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var first *watchedPR
 	for _, p := range w.prs {
-		if first == nil || p.next.Before(first.next) {
+		if p.visible && (isOpen(p.state) || p.once) && (first == nil || p.next.Before(first.next)) {
 			first = p
 		}
 	}
@@ -175,7 +210,8 @@ func (w *prWatch) run(ctx context.Context) {
 }
 
 // check asks gh about one PR, saves a changed state on every result of
-// it, and schedules the next ask, or stops watching a PR no longer open.
+// it, and schedules the next ask. A PR no longer open is kept, with its
+// state, so a UI that hasn't reloaded its list doesn't bring it back.
 // Only run calls it, so p.state is not written anywhere else meanwhile.
 func (w *prWatch) check(ctx context.Context, p *watchedPR) {
 	info, err := w.resolve(ctx, p.ref)
@@ -185,15 +221,12 @@ func (w *prWatch) check(ctx context.Context, p *watchedPR) {
 	changed := err == nil && info.State != p.state && w.save(p.ref, info)
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	p.checked, p.once = w.now(), false
 	if changed {
 		w.gen++
 	}
 	if err == nil {
 		p.state = info.State
-		if !strings.EqualFold(info.State, "open") {
-			delete(w.prs, prID(p.ref))
-			return
-		}
 	}
 	w.backoff(p)
 }
@@ -239,5 +272,16 @@ func (w *prWatch) generation() int {
 func (w *prWatch) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/prwatch", func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, 200, map[string]int{"gen": w.generation()})
+	})
+	mux.HandleFunc("POST /api/prwatch/visible", func(rw http.ResponseWriter, r *http.Request) {
+		var req struct {
+			PRs []shownPR `json:"prs"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(rw, 400, err)
+			return
+		}
+		w.show(req.PRs)
+		rw.WriteHeader(204)
 	})
 }
