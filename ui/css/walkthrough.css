@@ -77,6 +77,12 @@
 .wz-body.seq { --wz-codebar-h: 38px; grid-template-columns: minmax(0, 1fr); }
 .wz-body.seq > .wz-code + .wz-code { border-top: 1px solid var(--border); }
 .wz-codebar .path { font-family: var(--mono); font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+/* A grouped step's file bar folds its file away (js/walkthrough.js). */
+.wz-body.seq .wz-codebar { cursor: pointer; }
+.wz-fold { display: inline-flex; gap: 6px; align-items: baseline; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.wz-fold .caret { width: 10px; color: var(--muted); }
+.wz-code.closed .wz-codebar { border-bottom: 0; }
+.wz-file-done { color: var(--none); }
 .wz-seg { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); }
 .wz-seg + .wz-seg { border-top: 1px solid var(--border); }
 .wz-seg-note { background: var(--bg2); border-right: 1px solid var(--border); }

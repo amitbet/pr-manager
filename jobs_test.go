@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -49,6 +50,46 @@ func TestJobEncodingWhileProgressing(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// A fix job can be cancelled until it starts committing, and a cancel
+// that came first stops it there.
+func TestCancelJob(t *testing.T) {
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, ctx, _ := tr.newJob("fix", "https://github.com/acme/web/pull/7")
+	defer j.finish(nil)
+	if err := tr.cancelJob(j.ID); err == nil {
+		t.Fatal("cancelled a job that isn't cancelable")
+	}
+	j.Cancelable = true
+	if err := tr.cancelJob(j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Error("cancel left the job's context running")
+	}
+	if err := tr.pastCancel(j.ID); !errors.Is(err, errCancelled) {
+		t.Errorf("pastCancel after cancel: %v", err)
+	}
+	if err := tr.cancelJob(j.ID); err == nil {
+		t.Error("cancelled a job twice")
+	}
+
+	k, ctx, _ := tr.newJob("fix", "https://github.com/acme/web/pull/7")
+	defer k.finish(nil)
+	k.Cancelable = true
+	if err := tr.pastCancel(k.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.cancelJob(k.ID); err == nil || ctx.Err() != nil {
+		t.Errorf("cancelled a job past its commit: %v", err)
+	}
+	if err := tr.cancelJob("nope"); !errors.Is(err, errNoJob) {
+		t.Errorf("unknown job: %v", err)
+	}
 }
 
 // A re-run that turns the reviewer's repo tools on or off, or reviews with

@@ -152,7 +152,7 @@ const stepDone = (s) => s.members.every((x) => S.wz.done.has(x.u.id));
 const storeKey = () => `pr-manager.walk.${S.result.key}`;
 export function loadProgress() {
   const saved = JSON.parse(localStorage.getItem(storeKey()) || "{}");
-  Object.assign(S.wz, { cur: saved.cur || null, done: new Set(saved.done || []), finished: false });
+  Object.assign(S.wz, { cur: saved.cur || null, done: new Set(saved.done || []), closed: new Set(saved.closed || []), finished: false });
   savedDone = JSON.stringify([...S.wz.done]);
   S.wz.intro = !S.wz.cur && !S.wz.done.size;
 }
@@ -162,7 +162,7 @@ const onIntro = () => S.wz.intro && hasOverview(S.result);
 // between steps doesn't.
 let savedDone = "[]";
 function save() {
-  localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
+  localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done], closed: [...S.wz.closed] }));
   const done = JSON.stringify([...S.wz.done]);
   if (done !== savedDone) { savedDone = done; used(); }
 }
@@ -447,13 +447,16 @@ export function unitSegmentsHTML(f, units, bucket, alone) {
 
 // fileSectionHTML is one file of a grouped step: its bar, then a row for
 // each of the step's units in it, the unit's review beside its code. alone is whether
-// the step has only this one unit.
+// the step has only this one unit. Clicking the bar collapses the file to
+// it, in every step, until it is clicked again.
 function fileSectionHTML(f, units, bucket, alone) {
   const whole = fullyExpanded(f);
   const fd = S.drafts.filter((d) => d.path === f.path).length;
-  return `<section class="wz-code">
-    <div class="wz-codebar"><span class="path">${esc(f.path)}</span><span>${units.length} change${units.length > 1 ? "s" : ""}</span>${expandAllButton(f, "wz-expand-all")}${whole ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}<span>hover a line and click + to comment</span></div>
-    ${unitSegmentsHTML(f, units, bucket, alone)}</section>`;
+  const closed = S.wz.closed.has(f.path);
+  const done = units.every((u) => S.wz.done.has(u.id));
+  return `<section class="wz-code ${closed ? "closed" : ""}">
+    <div class="wz-codebar" data-act="wz-file" data-path="${esc(f.path)}"><button class="wz-fold" data-act="wz-file" data-path="${esc(f.path)}" aria-expanded="${!closed}" title="${closed ? "Show" : "Hide"} this file's changes"><span class="caret">${closed ? "▸" : "▾"}</span><span class="path">${esc(f.path)}</span></button><span>${units.length} change${units.length > 1 ? "s" : ""}</span>${done ? `<span class="wz-file-done">✓ reviewed</span>` : ""}${closed ? "" : expandAllButton(f, "wz-expand-all")}${whole && !closed ? `<span>whole file · other changes dimmed</span>` : ""}<span class="spacer"></span>${fd ? `<span class="pill draft">${fd} comment${fd > 1 ? "s" : ""} in this file</span>` : ""}${closed ? "" : `<span>hover a line and click + to comment</span>`}</div>
+    ${closed ? "" : unitSegmentsHTML(f, units, bucket, alone)}</section>`;
 }
 
 // newSide is the code a reader reads as the change: added and context
@@ -659,6 +662,11 @@ export const actions = {
   "wz-view": (el) => { S.wz.view = el.dataset.v; },
   "wz-submit": () => { openPanel(); return false; },
   "wz-unit": (el) => { scrollToUnit(el.dataset.id); return false; },
+  "wz-file": (el) => {
+    const p = el.dataset.path;
+    S.wz.closed.has(p) ? S.wz.closed.delete(p) : S.wz.closed.add(p);
+    save();
+  },
   "wz-use": (el) => { const k = el.dataset.k; S.wz.usesOpen.has(k) ? S.wz.usesOpen.delete(k) : S.wz.usesOpen.add(k); },
   "wz-note": (el) => { const n = el.closest(".wz-note"); if (n) S.wz.noteOpen.set(el.dataset.id, !n.classList.contains("open")); },
   // The issue's own file section first: a related step can show the same

@@ -65,6 +65,7 @@ async function followJob(j, progress, open = true) {
   }
   refreshJobs();
   if (j.status === "error") throw new Error(j.error || "the job failed");
+  if (j.status === "cancelled") throw new Error("the reader stopped the job");
   j.secs = Math.round((Date.now() - t0) / 1000);
   if (open && j.key && changeOf(S.result) === change) await H.showKey(j.key);
   return j;

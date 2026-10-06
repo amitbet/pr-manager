@@ -78,6 +78,9 @@ func (t *triager) runBranchFix(ctx context.Context, jobID string, old *PRResult,
 	sort.Strings(paths)
 	fr := fixRun{dir: co.dir, branch: p.Branch, location: "repo", base: p.Base, files: files}
 	next, applied, err := t.fixRounds(withTreeLock(ctx, &co.tree), jobID, old, req, o, fr, issues, progress)
+	if err == nil {
+		err = t.pastCancel(jobID)
+	}
 	if err != nil {
 		co.restoreFiles(context.Background(), paths)
 		return nil, err

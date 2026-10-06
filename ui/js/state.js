@@ -51,7 +51,7 @@ export const S = {
   seqView: "after",       // the Sequence tab: the flow before | after the PR
   mode: reviewModeDefault(), // the Review tab: walk(through) | files | classic
   // group: a step is one file's changes (Settings → Walkthrough); usesOpen: "step|unit" of opened definitions.
-  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: diffViewDefault(), steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map() },
+  wz: { cur: null, done: new Set(), all: false, finished: false, intro: false, view: diffViewDefault(), steps: wzSteps(), usesOpen: new Set(), noteOpen: new Map(), closed: new Set() },
   // Files mode: the open file, closed directories, files already loaded whole (or tried) and the one loading.
   fv: { path: null, closed: new Set(), tried: new Set(), loading: null },
   tm: { scope: "repo", zoom: [], sort: "risk", mode: localStorage.getItem("pr-manager.tmmode") || "both" }, // treemap: repo | all, zoom path, color by impact | likelihood | both

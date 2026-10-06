@@ -3,10 +3,10 @@
 // in its repository's checkout, each one ending in the Issues tab's list
 // of the PR's fixes; a local review's run one at a time, and a completed
 // one opens its reviewed result and worktree path.
-import { $, esc, postJSON } from "./util.js";
+import { $, esc, postJSON, say } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
-import { refreshJobs, showLog, stageText, pollJob } from "./jobs.js";
+import { refreshJobs, showLog, stageText, pollJob, cancelJob } from "./jobs.js";
 import { refreshFixes } from "./fixes.js";
 
 let onDone = async () => {};
@@ -28,15 +28,16 @@ const drop = (r) => { runs = runs.filter((x) => x !== r); };
 // those to fix together. uncommitted is what
 // to do with a local checkout's uncommitted changes (commit or branch);
 // rev is how a reviewed commit or branch is fixed (checkout or current).
-// Without them, the server asks and the reviewer picks. It resolves to
-// the fix job's id, or null when no fix started.
-export async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "") {
-  if (running() || !S.result) return null;
+// Without them, the server asks and the reviewer picks. r is the result
+// to fix, the open one by default. It resolves to the fix job's id, or
+// null when no fix started.
+export async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "", r = S.result) {
+  if (running() || !r) return null;
   menuOpen = false;
-  const local = !!S.result.pr.local_path;
-  const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
+  const local = !!r.pr.local_path;
+  const body = { key: r.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
   if (local) body.location = "worktree";
-  const run = { id: "", key: S.result.key, local, job: { status: "running", stage: "" } };
+  const run = { id: "", key: r.key, local, job: { status: "running", stage: "" } };
   runs.push(run);
   render();
   try {
@@ -50,8 +51,8 @@ export async function startFix(target, uncommitted = localStorage.getItem(UNCOMM
     if (e.code === "rev" && !rev) {
       drop(run);
       render();
-      const choice = await askRev(S.result.pr);
-      return choice ? startFix(target, uncommitted, choice) : null;
+      const choice = await askRev(r.pr);
+      return choice ? startFix(target, uncommitted, choice, r) : null;
     }
     if (e.code !== "uncommitted" || uncommitted) {
       run.job = { status: "error", error: e.message };
@@ -61,9 +62,61 @@ export async function startFix(target, uncommitted = localStorage.getItem(UNCOMM
     drop(run);
     render();
     const choice = await askUncommitted();
-    return choice ? startFix(target, choice, rev) : null;
+    return choice ? startFix(target, choice, rev, r) : null;
   }
 }
+
+// A fix started from a button waits UNDO_MS first, with an Undo toast at
+// the bottom of the window, so a click by mistake costs nothing. The chat
+// agent's fixes, which the reader approved, start at once.
+const UNDO_MS = 5000;
+let pending = null; // { r, target, what, at, timer }
+
+function startSoon(target, what) {
+  if (running() || !S.result) return;
+  if (pending) startPending(); // the one before goes ahead
+  menuOpen = false;
+  pending = { r: S.result, target, what, at: Date.now() + UNDO_MS };
+  pending.timer = setInterval(() => (Date.now() >= pending.at ? startPending() : paintUndo()), 250);
+  paintUndo();
+}
+
+function startPending() {
+  const p = pending;
+  clearPending();
+  startFix(p.target, undefined, "", p.r).catch(() => {});
+}
+
+function clearPending() {
+  clearInterval(pending?.timer);
+  pending = null;
+  paintUndo();
+}
+
+function paintUndo() {
+  let el = $("#fix-undo");
+  if (!pending) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "fix-undo";
+    el.setAttribute("role", "status");
+    el.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (b?.value === "undo") clearPending();
+      else if (b?.value === "now") startPending();
+    });
+    document.body.append(el);
+  }
+  const secs = Math.max(1, Math.ceil((pending.at - Date.now()) / 1000));
+  const text = `${pending.what} starts in ${secs}s`;
+  if (el.dataset.text === text) return;
+  el.dataset.text = text;
+  el.innerHTML = `<span>${esc(text)}</span><button class="linkbtn" value="now">Start now</button><button class="details-btn" value="undo">Undo</button>`;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (pending && e.key === "Escape") clearPending();
+});
 
 // askRev asks how to fix a review of a commit or branch that isn't checked
 // out: check it out and fix it, or fix the checkout's current code.
@@ -119,6 +172,13 @@ async function follow(id) {
     const run = byId(id);
     if (!run) return;
     run.job = j;
+    if (j.status === "cancelled") {
+      drop(run);
+      refreshJobs();
+      refreshFixes();
+      paint();
+      return;
+    }
     if (j.status === "done") {
       refreshJobs();
       if (!run.local) {
@@ -164,7 +224,8 @@ function runBanner(run) {
     return `<div class="tr-banner warn" role="status">Fix done: ${esc(run.job.warning)}<span class="spacer"></span>${log}${dismiss}</div>`;
   }
   const warn = run.job.warning ? `<div class="tr-banner warn" role="status">${esc(run.job.warning)}</div>` : "";
-  return `<div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.lost ? "connection lost, retrying…" : run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}</div>${warn}`;
+  const stop = run.stopping ? `<span class="muted">stopping…</span>` : run.id && run.job.cancelable ? `<button class="linkbtn" data-act="fix-cancel" data-id="${esc(run.id)}" title="Stop the fix; what it changed so far is undone">Stop</button>` : "";
+  return `<div class="tr-banner" role="status"><span class="spinner"></span>Fixing… ${esc(run.job.lost ? "connection lost, retrying…" : run.job.stage ? stageText(run.job) : "starting")}<span class="spacer"></span>${log}${stop}</div>${warn}`;
 }
 
 // fixDisabled disables a fix button while a fix runs and on a PR that
@@ -253,9 +314,9 @@ document.addEventListener("click", (e) => {
 export const actions = {
   // A fix that fails to start shows in the banner; startFix also throws
   // it for the agent API.
-  "fix-issue": (el) => startFix({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }).catch(() => {}),
-  "fix-thread": (el) => startFix({ unit_id: el.dataset.unit, thread: el.dataset.thread }).catch(() => {}),
-  "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }).catch(() => {}),
+  "fix-issue": (el) => startSoon({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }, "Fixing the issue"),
+  "fix-thread": (el) => startSoon({ unit_id: el.dataset.unit, thread: el.dataset.thread }, "Fixing the comment"),
+  "fix-all": (el) => startSoon({ all: true, comments: !!el.dataset.onlyComments || includeComments() }, el.textContent.trim().replace(/^Fix/, "Fixing")),
   "fix-all-menu": () => { menuOpen = !menuOpen; },
   "fix-pick": (el) => {
     const set = picks();
@@ -275,9 +336,22 @@ export const actions = {
     });
     if (!targets.length) return;
     picks().clear();
-    return startFix({ targets }).catch(() => {});
+    startSoon({ targets }, `Fixing ${targets.length} selected`);
   },
   "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
   "fix-log": (el) => { showLog(el.dataset.id); return false; },
+  // Stops a running fix, from its banner or the Issues tab's list of
+  // running fixes.
+  "fix-cancel": async (el) => {
+    const run = byId(el.dataset.id);
+    if (run) { run.stopping = true; paint(); }
+    try {
+      await cancelJob(el.dataset.id);
+    } catch (e) {
+      if (run) run.stopping = false;
+      say(e.message);
+    }
+    refreshFixes();
+  },
   "fix-dismiss": (el) => { const r = byId(el.dataset.id) || runs.find((x) => !x.id); if (r) drop(r); },
 };

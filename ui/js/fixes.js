@@ -271,7 +271,8 @@ export function pendingFixesHTML() {
 function runningHTML() {
   if (!F.running.length) return "";
   return `<ul class="pf-running">${F.running.map((c) => `<li><span class="spinner"></span>
-      ${c.waiting ? `Waiting: ${esc(c.waiting)}` : "Fixing"} · ${c.targets?.length || 0} issue${c.targets?.length === 1 ? "" : "s"} in ${c.files.map((f) => `<code>${esc(f)}</code>`).join(", ")}</li>`).join("")}</ul>`;
+      ${c.waiting ? `Waiting: ${esc(c.waiting)}` : "Fixing"} · ${c.targets?.length || 0} issue${c.targets?.length === 1 ? "" : "s"} in ${c.files.map((f) => `<code>${esc(f)}</code>`).join(", ")}
+      <button class="linkbtn" data-act="fix-cancel" data-id="${esc(c.job)}" title="Stop the fix; what it changed so far is undone">Stop</button></li>`).join("")}</ul>`;
 }
 
 async function showDiff(id) {

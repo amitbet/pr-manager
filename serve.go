@@ -182,7 +182,7 @@ type job struct {
 	Kind    string    `json:"kind"` // triage | fix | index
 	URL     string    `json:"url"`
 	Started time.Time `json:"started"`
-	Status  string    `json:"status"` // running | done | error
+	Status  string    `json:"status"` // running | done | error | cancelled
 	Stage   string    `json:"stage"`
 	Done    int       `json:"done"`
 	Total   int       `json:"total"`
@@ -197,10 +197,23 @@ type job struct {
 	// RunsWith the model a re-run would use, when they differ.
 	CachedBy string `json:"cached_by,omitempty"`
 	RunsWith string `json:"runs_with,omitempty"`
+	// Cancelable is whether POST /api/jobs/{id}/cancel can still stop the
+	// job: a fix job is until it starts committing what it made.
+	Cancelable bool `json:"cancelable,omitempty"`
 
-	log  *activity.Log
-	done func() // untracks the job; nil once shutdown began
+	log       *activity.Log
+	done      func() // untracks the job; nil once shutdown began
+	cancel    context.CancelFunc
+	cancelled bool // guarded by triager.mu
 }
+
+// jobKeep is how long a finished job stays listed by /api/jobs.
+const jobKeep = 24 * time.Hour
+
+var (
+	errNoJob     = errors.New("no such job")
+	errCancelled = errors.New("cancelled")
+)
 
 func newTriager(o options) (*triager, error) {
 	t := &triager{
@@ -638,14 +651,23 @@ func (t *triager) newJob(kind, url string) (*job, context.Context, func(stage st
 	var idb [6]byte
 	_, _ = rand.Read(idb[:])
 	j := &job{ID: hex.EncodeToString(idb[:]), Kind: kind, URL: url, Started: time.Now(), Status: "running", log: activity.New()}
+	root, cancel := context.WithCancel(t.root)
+	j.cancel = cancel
 	t.mu.Lock()
+	for id, old := range t.jobs {
+		// Not cancelled when it finishes: work a job started can outlive it.
+		if old.Status != "running" && time.Since(old.Started) > jobKeep {
+			old.cancel()
+			delete(t.jobs, id)
+		}
+	}
 	t.jobs[j.ID] = j
 	if !t.closing {
 		t.running.Add(1)
 		j.done = t.running.Done
 	}
 	t.mu.Unlock()
-	ctx := llm.WithUsage(activity.With(t.root, j.log), llm.UsageTag{Activity: kind, Source: url})
+	ctx := llm.WithUsage(activity.With(root, j.log), llm.UsageTag{Activity: kind, Source: url})
 	activity.Printf(ctx, "started %s", url)
 	return j, ctx, func(stage string, done, total int) {
 		t.mu.Lock()
@@ -674,6 +696,48 @@ func (j *job) finish(err error) {
 	if j.done != nil {
 		j.done()
 	}
+}
+
+// cancelJob stops a job that can still be stopped. Its context is
+// cancelled, which kills the LLM CLI it runs, and the job undoes what it
+// set up as it does on any error.
+func (t *triager) cancelJob(id string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	j, ok := t.jobs[id]
+	if !ok {
+		return errNoJob
+	}
+	if j.Status != "running" || !j.Cancelable {
+		return errors.New("the job can no longer be stopped")
+	}
+	j.cancelled, j.Cancelable = true, false
+	j.cancel()
+	return nil
+}
+
+// pastCancel ends the part of a job that can be cancelled, before it
+// commits or saves what it made, so a cancel never stops it halfway
+// through that. It fails when the job was cancelled already.
+func (t *triager) pastCancel(id string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	j, ok := t.jobs[id]
+	if !ok {
+		return nil
+	}
+	if j.cancelled {
+		return errCancelled
+	}
+	j.Cancelable = false
+	return nil
+}
+
+// wasCancelled is whether the job was stopped by cancelJob.
+func (t *triager) wasCancelled(j *job) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return j.cancelled
 }
 
 // track counts background work that shutdown waits for. It returns nil
@@ -1232,7 +1296,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	mux.HandleFunc("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		j, ok := t.job(r.PathValue("id"))
 		if !ok {
-			writeErr(w, 404, errors.New("no such job"))
+			writeErr(w, 404, errNoJob)
 			return
 		}
 		writeJSON(w, 200, j)
@@ -1240,10 +1304,22 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	mux.HandleFunc("GET /api/jobs/{id}/log", func(w http.ResponseWriter, r *http.Request) {
 		threads, ok := t.jobLog(r.PathValue("id"))
 		if !ok {
-			writeErr(w, 404, errors.New("no such job"))
+			writeErr(w, 404, errNoJob)
 			return
 		}
 		writeJSON(w, 200, threads)
+	})
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		err := t.cancelJob(r.PathValue("id"))
+		if errors.Is(err, errNoJob) {
+			writeErr(w, 404, err)
+			return
+		}
+		if err != nil {
+			writeErr(w, 409, err)
+			return
+		}
+		w.WriteHeader(204)
 	})
 
 	// Fixes made each in a worktree of its own move onto their PR's

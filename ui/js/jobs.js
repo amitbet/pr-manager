@@ -2,7 +2,7 @@
 // the log dialog (a fix job's, over the result it is fixing) and the
 // sidebar's list of running jobs. A job keeps running on the
 // server when its view is left or the page reloads; the list reopens it.
-import { $, esc, api } from "./util.js";
+import { $, esc, api, postJSON, say } from "./util.js";
 import { mountActivity } from "./activity.js";
 import { S } from "./state.js";
 
@@ -15,6 +15,7 @@ let timer = null;
 const status = new Map(); // job id -> last seen status
 let triaging = []; // running triage jobs
 let busy = []; // running triage and fix jobs
+const removed = new Set(); // failed jobs taken off the list by hand
 
 // A triage job's url is the PR link or local path it was started with.
 const same = (a, b) => !!a && !!b && a.trim().replace(/\/+$/, "").toLowerCase() === b.trim().replace(/\/+$/, "").toLowerCase();
@@ -39,9 +40,29 @@ export function initJobs(done, finished) {
   onDone = done;
   onFinished = finished;
   $("#jobs").addEventListener("click", (e) => {
+    const x = e.target.closest(".job-x");
+    if (x) {
+      e.preventDefault();
+      if (x.dataset.status === "running") cancelJob(x.dataset.id).catch((err) => say(err.message));
+      else { removed.add(x.dataset.id); refreshJobs(); }
+      return;
+    }
     const item = e.target.closest(".job-item");
     if (item) item.dataset.kind === "fix" ? showLog(item.dataset.id) : watchJob(item.dataset.id);
   });
+  refreshJobs();
+}
+
+// cancelJob stops a running job and resolves once it has stopped, so what
+// it held (a fix's claim on its files) is let go by then.
+export async function cancelJob(id) {
+  await postJSON(`/api/jobs/${id}/cancel`, {});
+  refreshJobs();
+  for (let i = 0; i < 60; i++) {
+    const j = await pollJob(id).catch(() => null);
+    if (!j || j.status !== "running") break;
+    await new Promise((res) => setTimeout(res, 500));
+  }
   refreshJobs();
 }
 
@@ -112,6 +133,7 @@ export async function watchJob(id, onCached) {
       const p = view.querySelector(".progress");
       if (j.status === "done") { p.innerHTML = `${esc(j.url)}<br>finished`; break; }
       if (j.status === "error") { p.outerHTML = `<div class="error">${esc(j.error)}</div>`; break; } // the log stays up to show what failed
+      if (j.status === "cancelled") { p.innerHTML = `${esc(j.url)}<br>stopped`; break; }
       const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
       p.querySelector(".progress-what").innerHTML = `${esc(j.url)}<br>${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
       await new Promise((res) => setTimeout(res, 700));
@@ -143,6 +165,7 @@ export async function showLog(id) {
     const stage = body.querySelector(".job-log-stage");
     if (j.status === "error") { stage.innerHTML = `<div class="error">${esc(j.error)}</div>`; return; }
     if (j.status === "done") { stage.textContent = "finished"; return; }
+    if (j.status === "cancelled") { stage.textContent = "stopped"; return; }
     const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
     stage.innerHTML = `${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
     await new Promise((res) => setTimeout(res, 700));
@@ -153,6 +176,14 @@ const watched = () => !!$("#main .job-view");
 
 function markActive(id) {
   document.querySelectorAll("#jobs .job-item").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
+}
+
+// xButton stops a job that can still be stopped, or takes a failed one off
+// the list.
+function xButton(j) {
+  if (j.status === "error") return `<button class="job-x" data-id="${esc(j.id)}" data-status="error" title="Remove from the list" aria-label="Remove from the list">✕</button>`;
+  if (!j.cancelable) return "";
+  return `<button class="job-x" data-id="${esc(j.id)}" data-status="running" title="Stop this ${esc(KIND[j.kind] || j.kind)}; what it changed so far is undone" aria-label="Stop">✕</button>`;
 }
 
 // refreshJobs redraws the running list, and keeps polling while any job
@@ -172,13 +203,13 @@ export async function refreshJobs() {
   busy = jobs.filter((j) => (j.kind === "triage" || j.kind === "fix") && j.status === "running");
   triaging = busy.filter((j) => j.kind === "triage");
   markTriaging();
-  const shown = jobs.filter((j) => j.status === "running" || (j.status === "error" && Date.now() - new Date(j.started) < FAILED_FOR));
+  const shown = jobs.filter((j) => j.status === "running" || (j.status === "error" && !removed.has(j.id) && Date.now() - new Date(j.started) < FAILED_FOR));
   const active = watched() ? $("#jobs .job-item.active")?.dataset.id : null;
   $("#jobs-head").hidden = !shown.length;
   $("#jobs").innerHTML = shown.map((j) => `
     <a class="job-item ${j.id === active ? "active" : ""}" data-id="${esc(j.id)}" data-kind="${esc(j.kind)}" data-status="${esc(j.status)}" title="${esc(j.error || j.url)}">
       <span class="t"><span class="job-dot"></span><span class="u">${esc(j.url)}</span></span>
-      <span class="m"><span class="job-kind">${esc(KIND[j.kind] || j.kind)}</span> ${j.status === "error" ? "failed" : esc(stageText(j))}</span>
+      <span class="m"><span class="job-kind">${esc(KIND[j.kind] || j.kind)}</span> ${j.status === "error" ? "failed" : esc(stageText(j))}</span>${xButton(j)}
     </a>`).join("");
   if (jobs.some((j) => j.status === "running")) timer = setTimeout(refreshJobs, 2000);
 }

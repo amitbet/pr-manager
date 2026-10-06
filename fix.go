@@ -214,13 +214,24 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 		src = r.PR.LocalPath
 	}
 	j, ctx, progress := t.newJob("fix", src)
+	t.mu.Lock()
+	j.Cancelable = true
+	t.mu.Unlock()
 	go func() {
 		// After the outcome is set below; the fixed result keeps it too.
 		defer t.saveJobLog(j, r.Key)
 		res, err := t.runFix(ctx, j.ID, r, req, progress)
+		if err != nil && t.wasCancelled(j) {
+			err = errCancelled
+		}
 		j.finish(err)
 		t.mu.Lock()
 		defer t.mu.Unlock()
+		j.Cancelable = false
+		if errors.Is(err, errCancelled) {
+			j.Status = "cancelled"
+			return
+		}
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
 			return
@@ -661,6 +672,9 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 	}
 	next, _, err := t.fixRounds(ctx, jobID, old, req, o, fixRun{dir: fixDir, branch: fixBranch, location: fixLocation, base: base, fixed: fixed, where: where, warning: warning}, fixTargets(old, req), progress)
 	if err != nil {
+		return nil, err
+	}
+	if err := t.pastCancel(jobID); err != nil {
 		return nil, err
 	}
 	if err := t.saveFixResult(next); err != nil {

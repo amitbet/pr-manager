@@ -6,7 +6,7 @@ import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state
 import * as budget from "./budget.js";
 import { comboFromEvent, hotkeyLabel, hideLabel } from "./chat.js";
 import { refreshJobs, pollJob } from "./jobs.js";
-import { loadList, sideShown } from "./sidebar.js";
+import { loadList, sideShown, sideKeepDays } from "./sidebar.js";
 
 // Provider and model pickers. The server lists only the providers this
 // machine can run (a logged-in CLI, an API key that is set, a running Ollama
@@ -370,6 +370,13 @@ export function initSettings(changed, langChanged) {
   shown.onchange = () => {
     shown.value = String(Math.max(0, Math.min(100, Math.floor(Number(shown.value)) || 0)));
     save("side_shown", shown.value);
+    loadList();
+  };
+  const keep = $("#side_keep_days");
+  keep.value = sideKeepDays();
+  keep.onchange = () => {
+    keep.value = String(Math.max(0, Math.min(365, Math.floor(Number(keep.value)) || 0)));
+    save("side_keep_days", keep.value);
     loadList();
   };
   initHotkey("chat_hotkey", hotkeyLabel);
