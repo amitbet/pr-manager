@@ -43,8 +43,16 @@ export async function api(path, opts) {
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(body.error || r.statusText), { status: r.status, code: body.code });
+  if (opts?.method && opts.method !== "GET" && !NOT_USE.test(path)) used(path.match(/^\/api\/(?:results|local)\/([^/?]+)/)?.[1]);
   return body;
 }
+// used tells the sidebar a person changed something on a result: its key,
+// or the open result's when not given. A change through api counts, except
+// what the app asks for by itself (translations, the overview and sequence,
+// triage jobs, the code map, saved chats).
+export const USED_EVENT = "pr-manager:used";
+const NOT_USE = /\/(translate|overview|sequence)$|^\/api\/(triage|codemap|chats)\b/;
+export const used = (key) => document.dispatchEvent(new CustomEvent(USED_EVENT, { detail: key && decodeURIComponent(key) }));
 export const postJSON = (url, v) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) });
 
 export function pills(c) {

@@ -2,7 +2,7 @@
 // explanation beside the code. A step is one unit, one file's changes, or
 // related units (Settings → Walkthrough steps).
 import { trText, trDir } from "./entext.js";
-import { $, esc, LABEL, headline } from "./util.js";
+import { $, esc, LABEL, headline, used } from "./util.js";
 import { S, render, allUnits, fileByPath, focusTop } from "./state.js";
 import { SEV_CLASS, SEV_RANK, issueCapChip, issueScenarioHTML, risk, impactPill, likelihoodPill, attentionPill, decisionChips, scoresHTML, classificationHTML, movesHTML } from "./scores.js";
 import { unitRows, fileRows, fullyExpanded, expandAllButton, diffTable, actions as diffActions } from "./diff.js";
@@ -153,11 +153,19 @@ const storeKey = () => `pr-manager.walk.${S.result.key}`;
 export function loadProgress() {
   const saved = JSON.parse(localStorage.getItem(storeKey()) || "{}");
   Object.assign(S.wz, { cur: saved.cur || null, done: new Set(saved.done || []), finished: false });
+  savedDone = JSON.stringify([...S.wz.done]);
   S.wz.intro = !S.wz.cur && !S.wz.done.size;
 }
 // onIntro is whether the overview is the page shown.
 const onIntro = () => S.wz.intro && hasOverview(S.result);
-const save = () => localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
+// A change to what is marked reviewed counts as using the result; moving
+// between steps doesn't.
+let savedDone = "[]";
+function save() {
+  localStorage.setItem(storeKey(), JSON.stringify({ cur: S.wz.cur, done: [...S.wz.done] }));
+  const done = JSON.stringify([...S.wz.done]);
+  if (done !== savedDone) { savedDone = done; used(); }
+}
 // markReviewed marks units reviewed, or not, for the Files mode, which
 // shares the walkthrough's progress.
 export function markReviewed(ids, on) {

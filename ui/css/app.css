@@ -78,6 +78,9 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 .repo-head .rn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-head .rc { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--bg); border-radius: 10px; padding: 0 7px; }
 .repo.collapsed .repo-prs { display: none; }
+.repo:not(.all) .pr-item.extra { display: none; }
+.repo-more { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid var(--border); background: none; padding: 6px 12px; font-size: 12px; color: var(--accent); cursor: pointer; }
+.repo-more:hover { background: var(--bg3); }
 .pr-item { display: block; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--fg); cursor: pointer; }
 .pr-item:hover { background: var(--bg3); text-decoration: none; }
 .pr-item.active { background: var(--bg3); box-shadow: inset 3px 0 var(--accent); }

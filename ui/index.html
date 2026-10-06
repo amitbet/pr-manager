@@ -121,6 +121,10 @@
       </div>
       <label class="check"><input type="checkbox" id="focus_top"> scroll to the first human-review change when opening a step or file</label>
     </section>
+    <section data-tab="review">
+      <h4>Sidebar <span class="info" tabindex="0" aria-label="About the sidebar">i<span class="tip" role="tooltip">How many of a repo&#39;s latest results the sidebar lists before a Show more button. The open result is always listed. 0 lists them all. Applies at once.</span></span></h4>
+      <label class="check" for="side_shown">Results per repo <input type="number" id="side_shown" min="0" max="100" value="3" style="width:64px"></label>
+    </section>
     <section data-tab="chat">
       <h4>Chat hotkeys <span class="info" tabindex="0" aria-label="About the chat hotkeys">i<span class="tip" role="tooltip">Open puts the cursor in the chat agent&#39;s prompt, or brings its pop-out window to the front; the default is A, or Ctrl+/ (⌘/ on a Mac) from anywhere. Collapse turns the open chat back into its icon; Esc always does while you are in the chat, and the key set here does from anywhere. Give both the same key to toggle the chat with it. Click a field and press the keys. A key without Ctrl, Alt or ⌘ only works when you aren&#39;t typing in a field.</span></span></h4>
       <div class="grid hotkey">
