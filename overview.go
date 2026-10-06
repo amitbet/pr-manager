@@ -184,3 +184,57 @@ func capEffort(effort, limit string) string {
 	}
 	return limit
 }
+
+// describeWait is how long Create PR waits for the sequence diagram the
+// triage started writing (see sequenceAfter) before opening the PR
+// without it.
+const describeWait = 2 * time.Minute
+
+// prDescription is the body of the PR a local result is about to open:
+// the repository's PR template filled in from the overview, with the
+// sequence diagram. Without a template, or when the model fails at it,
+// it is the overview and the diagram under headings of their own. Empty
+// when there is neither, so gh fills the body from the commits.
+func (t *triager) prDescription(ctx context.Context, key string, jo jobOptions, dir string) string {
+	seq := make(chan *triage.Sequence, 1)
+	go func() {
+		sq, err := t.sequence(ctx, key, jo)
+		if err != nil {
+			log.Printf("PR description %s: sequence: %v", key, err)
+		}
+		seq <- sq
+	}()
+	ov, err := t.overview(ctx, key, jo)
+	if err != nil {
+		log.Printf("PR description %s: overview: %v", key, err)
+	}
+	var sq *triage.Sequence
+	select {
+	case sq = <-seq:
+	case <-time.After(describeWait):
+		log.Printf("PR description %s: no sequence after %v", key, describeWait)
+	case <-ctx.Done():
+	}
+	if ov == nil && sq == nil {
+		return ""
+	}
+	if tmpl := triage.FindPRTemplate(dir); tmpl != "" {
+		r, err := t.Load(key)
+		if err == nil {
+			var l llm.LLMTool
+			if l, err = newOverviewer(t.options(jo)); err == nil {
+				llm.SetEffort(l, capEffort(t.options(jo).reviewEffort, descriptionEffort))
+				var body string
+				if body, err = triage.WriteDescription(usageCtx(ctx, "description", r), l, r.PR, ov, sq, tmpl); err == nil {
+					return body
+				}
+			}
+		}
+		log.Printf("PR description %s: %v", key, err)
+	}
+	return triage.PlainDescription(ov, sq)
+}
+
+// descriptionEffort caps the effort of filling the template in: it
+// rewrites the overview under the template's headings.
+const descriptionEffort = "low"

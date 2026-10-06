@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,15 +65,17 @@ func TestBuildSandbox(t *testing.T) {
 	if got := strings.Join(s.Sandbox.Filesystem.AllowWrite, " "); got != "/tmp/b" {
 		t.Errorf("allowWrite %q", got)
 	}
-	if s.Env["GOCACHE"] != "/tmp/b/cache" || s.Env["GOPROXY"] != "off" || s.Env["GOFLAGS"] != "-mod=readonly" {
+	cache := filepath.Join("/tmp/b", "cache")
+	if s.Env["GOCACHE"] != cache || s.Env["GOPROXY"] != "off" || s.Env["GOFLAGS"] != "-mod=readonly" {
 		t.Errorf("env %v", s.Env)
 	}
 	if codexSandbox(ws) != "read-only" || codexBuildArgs(ws) != nil {
 		t.Error("codex builds in a directory that isn't a scratch copy")
 	}
 	ws.Scratch = true
+	quoted, _ := json.Marshal(cache)
 	args := strings.Join(codexBuildArgs(ws), " ")
-	if codexSandbox(ws) != "workspace-write" || !strings.Contains(args, `writable_roots=["/tmp/b"]`) || !strings.Contains(args, "network_access=false") || !strings.Contains(args, `shell_environment_policy.set.GOCACHE="/tmp/b/cache"`) {
+	if codexSandbox(ws) != "workspace-write" || !strings.Contains(args, `writable_roots=["/tmp/b"]`) || !strings.Contains(args, "network_access=false") || !strings.Contains(args, "shell_environment_policy.set.GOCACHE="+string(quoted)) {
 		t.Errorf("codex: %s %s", codexSandbox(ws), args)
 	}
 	if buildNote(ws) == "" || buildNote(&Workspace{Dir: "/repo"}) != "" {

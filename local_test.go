@@ -64,7 +64,7 @@ func TestInspectLocalIncludesWorkingTreeWithoutChangingIndex(t *testing.T) {
 	if before != after {
 		t.Fatal("inspection changed the repository index")
 	}
-	if _, err := publishLocal(&PRResult{PR: snap.info}); err == nil || !strings.Contains(err.Error(), "commit") {
+	if _, err := publishLocal(&PRResult{PR: snap.info}, nil); err == nil || !strings.Contains(err.Error(), "commit") {
 		t.Fatalf("publish error: %v", err)
 	}
 	// A fix trusts a triage whose changes were committed since: the

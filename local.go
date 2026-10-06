@@ -536,7 +536,10 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 	return j, nil
 }
 
-func publishLocal(r *PRResult) (string, error) {
+// publishLocal pushes a local result's branch and opens its PR. describe
+// writes the PR body once the checks pass; an empty one leaves it to
+// gh's --fill, from the commit messages.
+func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (string, error) {
 	if r.PR.LocalPath == "" {
 		return "", errors.New("this is not a local result")
 	}
@@ -580,11 +583,21 @@ func publishLocal(r *PRResult) (string, error) {
 		}
 		p.HeadRef = name
 	}
+	body := ""
+	if describe != nil {
+		body = describe(p)
+	}
 	if _, err := triage.Git(p.LocalPath, "push", "-u", "origin", p.HeadRef); err != nil {
 		return "", err
 	}
-	cmd := proc.Command("gh", "pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill")
+	args := []string{"pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill"}
+	if body != "" {
+		// --body-file overrides --fill's body; the title still comes from it.
+		args = append(args, "--body-file", "-")
+	}
+	cmd := proc.Command("gh", args...)
 	cmd.Dir = p.LocalPath
+	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.Output()
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
