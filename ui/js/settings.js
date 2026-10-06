@@ -3,6 +3,7 @@
 import { $, esc, api, BUCKETS, LABEL, askText } from "./util.js";
 import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state.js";
 import * as budget from "./budget.js";
+import { comboFromEvent, hotkeyLabel, hideLabel } from "./chat.js";
 import { refreshJobs, pollJob } from "./jobs.js";
 
 // Provider and model pickers. The server lists only the providers this
@@ -13,6 +14,7 @@ const ROLES = [
   { role: "classifier", model: "classify_model", def: "classify_model", label: "classifier" },
   { role: "summarizer", model: "summary_model", def: "summary_model", label: "reviewer" },
   { role: "translator", model: "translate_model", def: "translate_model", label: "translator", noOff: true },
+  { role: "chat", model: "chat_model", def: "chat_model", label: "chat agent", noOff: true },
 ];
 let P = null; // GET /api/providers
 const saved = (k) => localStorage.getItem(`pr-manager.${k}`) || "";
@@ -274,6 +276,34 @@ function placeTip(el) {
   tip.style.top = `${below + t.height > innerHeight - 8 ? Math.max(8, r.top - t.height - 6) : below}px`;
 }
 
+// initHotkey wires a chat hotkey field (id, also its pr-manager.* key):
+// focused, it takes the next key combo; Backspace or Delete alone goes back
+// to the default. label() names what is set.
+function initHotkey(id, label) {
+  const el = $(`#${id}`);
+  const show = () => { el.value = label(); el.placeholder = ""; };
+  const set = (combo) => {
+    if (combo) save(id, combo);
+    else localStorage.removeItem(`pr-manager.${id}`);
+    show();
+    dispatchEvent(new Event("prm-hotkey"));
+  };
+  el.onfocus = () => { el.value = ""; el.placeholder = "press the keys…"; };
+  el.onblur = show;
+  el.onkeydown = (e) => {
+    if (e.key === "Tab" || e.key === "Escape") return; // move on, or close the dialog
+    e.preventDefault();
+    e.stopPropagation();
+    const bare = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+    if (bare && (e.key === "Backspace" || e.key === "Delete")) set("");
+    else if (comboFromEvent(e)) set(comboFromEvent(e));
+    else return; // a lone modifier: wait for the key
+    el.blur();
+  };
+  $(`#${id}_reset`).onclick = () => set("");
+  show();
+}
+
 // initSettings wires the dialog. changed() runs when the budget moves,
 // langChanged() when the summary language does.
 export function initSettings(changed, langChanged) {
@@ -308,9 +338,14 @@ export function initSettings(changed, langChanged) {
   const view = $("#diff_view");
   view.value = diffViewDefault();
   view.onchange = () => { save("diff_view", view.value); S.view = S.wz.view = view.value; if (S.result) render(); };
+  const autorun = $("#chat_autorun");
+  autorun.value = ["local", "job"].includes(saved("chat_autorun")) ? saved("chat_autorun") : "view";
+  autorun.onchange = () => save("chat_autorun", autorun.value);
   const focus = $("#focus_top");
   focus.checked = focusTop();
   focus.onchange = () => save("focus_top", focus.checked ? "1" : "0");
+  initHotkey("chat_hotkey", hotkeyLabel);
+  initHotkey("chat_hide_hotkey", hideLabel);
   const batch = $("#classify_batch");
   batch.checked = saved("classify_batch") ? saved("classify_batch") === "1" : S.cfg?.classify_batch !== false;
   batch.onchange = () => save("classify_batch", batch.checked ? "1" : "0");

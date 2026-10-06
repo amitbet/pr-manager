@@ -460,7 +460,7 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 		return nil, err
 	}
 	key := localCacheKey(s, o)
-	if !jo.Force {
+	if !jo.rerun() {
 		if r, err := t.Load(key); err == nil {
 			return r, nil
 		}
@@ -479,7 +479,7 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	}
 	// A local branch moves the same way a PR does: a commit or a save
 	// changes a few units and leaves the rest as they were.
-	carry := t.carryFrom(ctx, key, s.info.BaseOid, o, jo.Force)
+	carry := t.planCarry(ctx, key, s.info.BaseOid, o, jo)
 	pipe.CarryFrom = carry.carryFrom()
 	return t.runSource(ctx, key, s.info, s.src, pipe, o, carry)
 }
@@ -521,6 +521,7 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 	}
 	j, ctx, progress := t.newJob("triage", path)
 	go func() {
+		defer t.saveJobLog(j) // after the job's outcome is set below
 		r, err := t.RunLocal(ctx, path, jo, progress)
 		j.finish(err)
 		t.mu.Lock()

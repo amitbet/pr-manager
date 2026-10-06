@@ -147,6 +147,8 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	}
 	j, ctx, progress := t.newJob("fix", src)
 	go func() {
+		// After the outcome is set below; the fixed result keeps it too.
+		defer t.saveJobLog(j, r.Key)
 		res, err := t.runFix(ctx, j.ID, r, req, progress)
 		j.finish(err)
 		t.mu.Lock()

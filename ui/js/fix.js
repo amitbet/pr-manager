@@ -28,9 +28,10 @@ const drop = (r) => { runs = runs.filter((x) => x !== r); };
 // those to fix together. uncommitted is what
 // to do with a local checkout's uncommitted changes (commit or branch);
 // rev is how a reviewed commit or branch is fixed (checkout or current).
-// Without them, the server asks and the reviewer picks.
-async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "") {
-  if (running() || !S.result) return false;
+// Without them, the server asks and the reviewer picks. It resolves to
+// the fix job's id, or null when no fix started.
+export async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) || "", rev = "") {
+  if (running() || !S.result) return null;
   menuOpen = false;
   const local = !!S.result.pr.local_path;
   const body = { key: S.result.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
@@ -44,23 +45,23 @@ async function startFix(target, uncommitted = localStorage.getItem(UNCOMMITTED) 
     refreshJobs();
     setTimeout(refreshFixes, 1500); // once the fix has claimed its files
     follow(job.id);
+    return job.id;
   } catch (e) {
     if (e.code === "rev" && !rev) {
       drop(run);
       render();
       const choice = await askRev(S.result.pr);
-      if (choice) startFix(target, uncommitted, choice);
-      return;
+      return choice ? startFix(target, uncommitted, choice) : null;
     }
     if (e.code !== "uncommitted" || uncommitted) {
       run.job = { status: "error", error: e.message };
       paint();
-      return;
+      throw e;
     }
     drop(run);
     render();
     const choice = await askUncommitted();
-    if (choice) startFix(target, choice, rev);
+    return choice ? startFix(target, choice, rev) : null;
   }
 }
 
@@ -250,9 +251,11 @@ document.addEventListener("click", (e) => {
 });
 
 export const actions = {
-  "fix-issue": (el) => startFix({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }),
-  "fix-thread": (el) => startFix({ unit_id: el.dataset.unit, thread: el.dataset.thread }),
-  "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }),
+  // A fix that fails to start shows in the banner; startFix also throws
+  // it for the agent API.
+  "fix-issue": (el) => startFix({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }).catch(() => {}),
+  "fix-thread": (el) => startFix({ unit_id: el.dataset.unit, thread: el.dataset.thread }).catch(() => {}),
+  "fix-all": (el) => startFix({ all: true, comments: !!el.dataset.onlyComments || includeComments() }).catch(() => {}),
   "fix-all-menu": () => { menuOpen = !menuOpen; },
   "fix-pick": (el) => {
     const set = picks();
@@ -272,7 +275,7 @@ export const actions = {
     });
     if (!targets.length) return;
     picks().clear();
-    return startFix({ targets });
+    return startFix({ targets }).catch(() => {});
   },
   "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
   "fix-log": (el) => { showLog(el.dataset.id); return false; },

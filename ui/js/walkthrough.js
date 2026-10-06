@@ -175,6 +175,15 @@ function current(st) {
   return open >= 0 ? open : 0;
 }
 
+// shownStep is the step on screen, for the chat agent: its place and its
+// units. null on the overview.
+export function shownStep() {
+  const st = steps();
+  if (!st.length || onIntro()) return null;
+  const i = current(st);
+  return { n: i + 1, total: st.length, ids: st[i].members.map((x) => x.u.id) };
+}
+
 // HEADER_H is the sticky page header.
 const HEADER_H = 54;
 

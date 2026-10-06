@@ -45,7 +45,8 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .settings-dlg .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0 8px; }
 .settings-dlg .grid.translate-opts { margin-top: 8px; }
 .settings-dlg .grid.codemap-src { grid-template-columns: auto 1fr; }
-.settings-dlg .grid.fix-opts, .settings-dlg .grid.review-view { grid-template-columns: auto auto; justify-content: start; margin-bottom: 6px; }
+.settings-dlg .grid.fix-opts, .settings-dlg .grid.review-view, .settings-dlg .grid.hotkey { grid-template-columns: auto auto; justify-content: start; margin-bottom: 6px; }
+.settings-dlg .hotkey input { width: 140px; text-align: center; cursor: pointer; }
 .settings-dlg .codemap-src input { font-size: 13px; min-width: 0; }
 .settings-dlg .codemap-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
 .settings-dlg select:disabled { opacity: .55; }

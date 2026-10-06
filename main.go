@@ -43,7 +43,10 @@ type options struct {
 	// translator, translateModel and translateEffort pick the model that
 	// translates to -summary-lang; see translator.
 	translator, translateModel, translateEffort string
-	reviewTools                                 bool
+	// chat and chatModel pick the model the UI's chat agent answers with;
+	// see chatter.
+	chat, chatModel string
+	reviewTools     bool
 	// incremental lets a re-run of the same PR keep the review of units
 	// whose diff and surroundings did not move.
 	incremental bool
@@ -127,6 +130,8 @@ func main() {
 	fs.StringVar(&o.translator, "translator", "auto", "provider that translates to -summary-lang (auto: the reviewer's provider, else the classifier's)")
 	fs.StringVar(&o.translateModel, "translate-model", "", "translation model (default per provider: the fastest that translates well)")
 	fs.StringVar(&o.translateEffort, "translate-effort", "auto", "reasoning effort for translation (openai, codex, claude-code; auto = per provider, '' = model default)")
+	fs.StringVar(&o.chat, "chat", "auto", "provider the UI's chat agent answers with (auto: the reviewer's provider, else the classifier's)")
+	fs.StringVar(&o.chatModel, "chat-model", "", "chat agent model (default per provider: the analyze model's defaults)")
 	fs.StringVar(&o.summaryLang, "summary-lang", "", "language to translate summaries, review notes and issue text into, e.g. Hebrew or Japanese (default English: no translation)")
 	fs.StringVar(&o.reviewBudget, "review-budget", "", "how much goes to human review: "+strings.Join(triage.BudgetNames, "|")+" (default: tiers.review_budget in the policy, else "+triage.DefaultBudget+")")
 	fs.StringVar(&o.openjevURL, "openjev-url", "", "OpenJev server (default $OPENJEV_BASE_URL or http://127.0.0.1:8771)")
@@ -443,13 +448,7 @@ func resolveProviders(o options) options {
 	// Translation follows the reviewer, else the classifier: whichever
 	// provider the run already uses. OpenJev can't translate.
 	if o.translator == "auto" || o.translator == "" {
-		o.translator = ""
-		for _, p := range []string{o.summarizer, o.classifier, o.fallback} {
-			if p != "off" && p != "openjev" {
-				o.translator = p
-				break
-			}
-		}
+		o.translator = firstModelProvider(o.summarizer, o.classifier, o.fallback)
 	} else {
 		o.translator = llm.ProviderID(o.translator)
 	}
@@ -459,7 +458,33 @@ func resolveProviders(o options) options {
 	if o.translateEffort == "auto" {
 		o.translateEffort = orDefault(translateEfforts[o.translator], "low")
 	}
+	// The chat agent follows the reviewer the same way, and has the
+	// analyze model's defaults: on the reviewer's provider, the reviewer's
+	// model (a -summary-model flag included).
+	if o.chat == "auto" || o.chat == "" {
+		o.chat = firstModelProvider(o.summarizer, o.classifier, o.fallback)
+	} else {
+		o.chat = llm.ProviderID(o.chat)
+	}
+	if o.chatModel == "" {
+		if o.chat == o.summarizer {
+			o.chatModel = o.summaryModel
+		} else {
+			o.chatModel = defaultModel(o.chat, summaryDefaults[o.chat])
+		}
+	}
 	return o
+}
+
+// firstModelProvider is the first of providers that can write text: not
+// off, and not OpenJev, which only classifies.
+func firstModelProvider(providers ...string) string {
+	for _, p := range providers {
+		if p != "off" && p != "openjev" {
+			return p
+		}
+	}
+	return ""
 }
 
 // dirConfig loads .triage.yaml and .gitattributes from the -C checkout.

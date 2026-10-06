@@ -69,6 +69,16 @@ func (r *reviews) load(ref triage.PRRef) ([]Draft, error) {
 	return ds, json.Unmarshal(b, &ds)
 }
 
+// forResult is the pending comments on res's PR or local checkout.
+func (r *reviews) forResult(res *PRResult) []Draft {
+	ref := res.PR.PRRef
+	if res.PR.LocalPath != "" {
+		ref = triage.PRRef{Owner: "local", Repo: localPathID(localSource(res.PR))}
+	}
+	ds, _ := r.load(ref)
+	return ds
+}
+
 func (r *reviews) save(ref triage.PRRef, ds []Draft) error {
 	if len(ds) == 0 {
 		err := os.Remove(r.draftFile(ref))
@@ -160,7 +170,7 @@ func (r *reviews) routes(mux *http.ServeMux, t *triager) {
 		if res.PR.LocalPath == "" {
 			return nil, triage.PRRef{}, errors.New("not a local result")
 		}
-		return res, triage.PRRef{Owner: "local", Repo: localPathID(localSource(res.PR))}, nil
+		return res, triage.PRRef{Owner: "local", Repo: localPathID(localSource(res.PR))}, nil // as forResult
 	}
 	mux.HandleFunc("GET "+local+"/file", func(w http.ResponseWriter, req *http.Request) {
 		res, _, err := localResult(req)

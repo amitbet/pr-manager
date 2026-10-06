@@ -236,13 +236,19 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		tools, cwd = readOnlyTools, ws.Dir
 		if ws.Edit {
 			tools = editTools
+		} else if ws.Shell {
+			tools += ",Bash"
 		}
 	}
 	// Anything long or multi-line goes in a file, not on the command line:
 	// an npm install is claude.cmd on Windows, run through cmd.exe, which
 	// ends the command at the first newline and expands % and ^.
 	settingsPath := filepath.Join(dir, "settings.json")
-	if err := os.WriteFile(settingsPath, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
+	settings, err := claudeSettings(req.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(settingsPath, settings, 0o600); err != nil {
 		return nil, err
 	}
 	// The workspace is the untrusted PR head: --setting-sources user keeps
@@ -261,6 +267,8 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		allowed := readOnlyTools
 		if ws.Edit {
 			allowed = editAllowed
+		} else if ws.Shell {
+			allowed += "," + shellAllowed()
 		}
 		args = append(args, "--allowedTools", allowed)
 		for _, d := range ws.ReadDirs {
@@ -624,6 +632,55 @@ func cliTool(req LLMRequest) (ToolDefinition, error) {
 // readOnlyTools are the Claude Code tools a workspace call gets.
 const readOnlyTools = "Read,Grep,Glob"
 
+// readOnlyCommands are the shell commands a Shell workspace may run on
+// Claude Code where its sandbox can't (Windows): prefix rules, so they
+// are only as read-only as the commands are. Where the sandbox runs, it
+// allows any command it wraps, and denies their writes and the network.
+var readOnlyCommands = []string{
+	"git log", "git show", "git blame", "git diff", "git grep", "git status", "git ls-files", "git ls-tree",
+	"git rev-parse", "git rev-list", "git cat-file", "git branch", "git tag", "git describe", "git shortlog",
+	"git merge-base", "git name-rev", "git for-each-ref", "git --version",
+	"rg", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "which", "command -v", "pwd",
+}
+
+// shellAllowed is the --allowedTools entry for readOnlyCommands. Bash on
+// its own is never allowed: that would let a command run unsandboxed
+// when the sandbox can't start.
+func shellAllowed() string {
+	rules := make([]string, len(readOnlyCommands))
+	for i, c := range readOnlyCommands {
+		rules[i] = "Bash(" + c + ":*)"
+	}
+	return strings.Join(rules, ",")
+}
+
+// claudeSettings is the --settings file. A Shell workspace turns on the
+// sandbox: commands it wraps run without asking; they can't write to the
+// workspace, the read directories or NoWrite (or anywhere outside the
+// temp directory), can't reach the network, and can't read the usual
+// credential stores.
+func claudeSettings(ws *Workspace) ([]byte, error) {
+	s := map[string]any{"disableAllHooks": true}
+	if ws != nil && ws.Shell && !ws.Edit {
+		deny := append(append([]string{ws.Dir}, ws.ReadDirs...), ws.NoWrite...)
+		home, _ := os.UserHomeDir()
+		var secrets []string
+		if home != "" {
+			for _, p := range []string{".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker", ".kube", ".azure", ".config/gcloud", "Library/Keychains"} {
+				secrets = append(secrets, filepath.Join(home, p))
+			}
+		}
+		s["sandbox"] = map[string]any{
+			"enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+			"filesystem": map[string]any{"denyWrite": deny, "denyRead": secrets},
+			"network":    map[string]any{"allowedDomains": []string{}},
+		}
+		// git must not take locks, ask for passwords or page.
+		s["env"] = map[string]string{"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat"}
+	}
+	return json.Marshal(s)
+}
+
 // editTools are what an editing workspace gets: the read-only tools, the
 // file editors and subagents, which get the same tools. editAllowed lets
 // the editors change files under the working directory only: an Edit
@@ -660,6 +717,8 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, ws *Workspace) (string, 
 	switch {
 	case ws != nil && ws.Edit:
 		fmt.Fprintf(&sb, "%s Make your changes by editing the files, then answer only with the JSON object.", tool.Description)
+	case ws != nil && ws.Shell:
+		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything. Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description)
 	case ws != nil:
 		fmt.Fprintf(&sb, "%s Read files if you need to, but do not change anything. Answer only with the JSON object.", tool.Description)
 	default:

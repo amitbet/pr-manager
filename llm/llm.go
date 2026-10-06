@@ -59,10 +59,18 @@ type LLMRequest struct {
 // read-only directories such as the Go module cache. With Edit it may
 // also change files in Dir, and on Claude Code hand work to subagents;
 // it still runs no commands.
+//
+// With Shell it may also run commands that read (rg, git log, git blame,
+// ls, pipes), with nothing written: codex in its read-only sandbox, Claude
+// Code in its OS sandbox with every write and the network denied, or,
+// where that sandbox can't run (Windows), only a list of read-only
+// commands. NoWrite are more directories it must not write to.
 type Workspace struct {
 	Dir      string
 	ReadDirs []string
 	Edit     bool
+	Shell    bool
+	NoWrite  []string
 }
 
 // SupportsWorkspace reports whether l can use LLMRequest.Workspace.

@@ -149,6 +149,9 @@ type triager struct {
 	// dismissed holds the issues people rejected, applied to every result
 	// as it loads (nil in tests that build a triager directly).
 	dismissed *dismissals
+	// reviews keeps the pending review comments, for the chat agent (nil
+	// in tests that build a triager directly).
+	reviews *reviews
 
 	mu    sync.Mutex
 	jobs  map[string]*job
@@ -228,9 +231,16 @@ type jobOptions struct {
 	Translator      string  `json:"translator"`
 	TranslateModel  string  `json:"translate_model"`
 	TranslateEffort *string `json:"translate_effort"`
-	CodeRoot        *string `json:"code_root"`
-	Org             *string `json:"org"`
-	Force           bool    `json:"force"`
+	// Chat and ChatModel pick the chat agent, the same way.
+	Chat      string  `json:"chat"`
+	ChatModel string  `json:"chat_model"`
+	CodeRoot  *string `json:"code_root"`
+	Org       *string `json:"org"`
+	Force     bool    `json:"force"`
+	// Rereview reviews these units again and keeps every other unit's
+	// review from the result RereviewOf (see chatactions.go).
+	Rereview   []string `json:"rereview,omitempty"`
+	RereviewOf string   `json:"rereview_of,omitempty"`
 }
 
 func (t *triager) options(jo jobOptions) options {
@@ -272,6 +282,12 @@ func (t *triager) options(jo jobOptions) options {
 			o.translator = llm.ProviderID(jo.Translator)
 		}
 		o.translateModel = jo.TranslateModel
+	}
+	if jo.Chat != "" || jo.ChatModel != "" {
+		if jo.Chat != "" {
+			o.chat = llm.ProviderID(jo.Chat)
+		}
+		o.chatModel = jo.ChatModel
 	}
 	if jo.TranslateEffort != nil {
 		o.translateEffort = strings.TrimSpace(*jo.TranslateEffort)
@@ -353,7 +369,7 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 		return nil, err
 	}
 	key := cacheKey(ref, info.HeadOid, o)
-	if !jo.Force {
+	if !jo.rerun() {
 		if r, err := t.Load(key); err == nil && sameBase(r, info.BaseRef) {
 			return t.withThreads(ctx, t.withPRInfo(r, info), o, progress), nil
 		}
@@ -381,7 +397,7 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	if m := loadCodeMap(o.codemapDir); m != nil {
 		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: codeMapRepo(m, ref)}
 	}
-	carry := t.carryFrom(ctx, key, info.BaseOid, o, jo.Force)
+	carry := t.planCarry(ctx, key, info.BaseOid, o, jo)
 	pipe.CarryFrom = carry.carryFrom()
 	return t.runSource(ctx, key, info, src, pipe, o, carry)
 }
@@ -735,6 +751,7 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 	}
 	j, ctx, progress := t.newJob("triage", ref.URL())
 	go func() {
+		defer t.saveJobLog(j) // after the job's outcome is set below
 		r, err := t.Run(ctx, ref, jo, progress)
 		j.finish(err)
 		var now, nowReview string
@@ -859,9 +876,11 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	t.reviews = rv
 	static, _ := fs.Sub(uiFS, "ui")
 	mux := http.NewServeMux()
 	rv.routes(mux, t)
+	t.chatActionRoutes(mux)
 	t.dismissed.routes(mux, t)
 	newUISettings(o.cache).routes(mux)
 	treemapRoute(mux, o)
@@ -872,6 +891,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			"classifier": d.classifier, "classify_model": d.classifyModel,
 			"summarizer": d.summarizer, "summary_model": d.summaryModel,
 			"translator": d.translator, "translate_model": d.translateModel, "translate_effort": d.translateEffort,
+			"chat": d.chat, "chat_model": d.chatModel,
 			"classify_effort": d.classifyEffort, "review_effort": d.reviewEffort,
 			"review_dry_run": o.reviewDryRun,
 			"review_tools":   o.reviewTools,
@@ -963,6 +983,24 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			return
 		}
 		writeJSON(w, 200, sq)
+	})
+	mux.HandleFunc("POST /api/results/{key}/chat", func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, chatMaxBody)).Decode(&req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		res, err := t.Load(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		out, err := t.chat(r.Context(), res, req)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, out)
 	})
 	mux.HandleFunc("POST /api/triage", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -1322,7 +1360,8 @@ type providerChoice struct {
 	TranslateModel  string      `json:"translate_model,omitempty"`
 	TranslateEffort string      `json:"translate_effort,omitempty"`
 	SummaryModel    string      `json:"summary_model,omitempty"`
-	Summarize       bool        `json:"summarize"` // openjev only classifies
+	ChatModel       string      `json:"chat_model,omitempty"` // the summary model's defaults
+	Summarize       bool        `json:"summarize"`            // openjev only classifies
 }
 
 // providerList is GET /api/providers: the providers this machine can run
@@ -1340,6 +1379,7 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 		pc := providerChoice{ID: c.Provider, Reason: c.Reason, Live: c.Live, Models: c.Models,
 			ClassifyModel: llm.PickModel(c, classifyDefaults[c.Provider]...), SummaryModel: llm.PickModel(c, summaryDefaults[c.Provider]...),
 			TranslateModel: llm.PickModel(c, translatePrefs(c.Provider)...), Summarize: c.Provider != "openjev", TranslateEffort: o.translateEffort}
+		pc.ChatModel = pc.SummaryModel
 		if pc.TranslateEffort == "auto" { // a -translate-effort flag applies to every provider
 			pc.TranslateEffort = orDefault(translateEfforts[c.Provider], "low")
 		}
@@ -1357,6 +1397,7 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 		"classifier": d.classifier, "classify_model": d.classifyModel,
 		"summarizer": d.summarizer, "summary_model": d.summaryModel,
 		"translator": d.translator, "translate_model": d.translateModel,
+		"chat": d.chat, "chat_model": d.chatModel,
 	}
 }
 

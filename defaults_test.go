@@ -25,3 +25,19 @@ func TestDefaultModelCascades(t *testing.T) {
 		t.Errorf("classify %q, summary %q", o.classifyModel, o.summaryModel)
 	}
 }
+
+// The chat agent follows the reviewer, with the reviewer's model; on
+// another provider it gets that provider's analyze defaults.
+func TestChatDefaults(t *testing.T) {
+	o := resolveProviders(options{summarizer: llm.ClaudeAPI, summaryModel: "claude-x", classifier: llm.ClaudeAPI, chat: "auto"})
+	if o.chat != llm.ClaudeAPI || o.chatModel != "claude-x" {
+		t.Errorf("chat %s/%s, want the reviewer's claude-api/claude-x", o.chat, o.chatModel)
+	}
+	o = resolveProviders(options{summarizer: llm.ClaudeAPI, classifier: llm.ClaudeAPI, chat: "openai"})
+	if o.chat != llm.OpenAIAPI || o.chatModel != summaryDefaults[llm.OpenAIAPI][0] {
+		t.Errorf("chat %s/%s, want openai-api's analyze default", o.chat, o.chatModel)
+	}
+	if o := resolveProviders(options{summarizer: "off", classifier: "openjev", fallback: "off", chat: "auto"}); o.chat != "" {
+		t.Errorf("chat %q with no provider that writes text", o.chat)
+	}
+}

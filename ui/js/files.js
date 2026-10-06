@@ -113,6 +113,9 @@ function fileHTML(f, all) {
     </section></div>`;
 }
 
+// shownFile is the path of the open file, for the chat agent.
+export const shownFile = () => { const files = changed(); return files.length ? selected(files)?.path || "" : ""; };
+
 export function filesHTML() {
   const files = changed();
   if (!files.length) return `<div class="empty">No changed files.</div>`;

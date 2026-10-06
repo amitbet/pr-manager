@@ -6,13 +6,13 @@
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
 import { $, esc, api, postJSON, say } from "./util.js";
-import { S, onRender, render, syncURL, prBase, repoName, localSrc } from "./state.js";
+import { S, onRender, render, syncURL, prBase, repoName, localSrc, allUnits } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
 import { syncComposer, focusComposer, actions as commentActions, onKeydown as composerKeydown } from "./comments.js";
-import { reviewHTML, showDraft, actions as reviewActions } from "./review.js";
-import { walkHTML, loadProgress, syncDots, actions as walkActions, onKeydown as walkKeydown } from "./walkthrough.js";
-import { filesHTML, mountFiles, actions as filesActions } from "./files.js";
+import { reviewHTML, showDraft, jumpToUnit, actions as reviewActions } from "./review.js";
+import { walkHTML, loadProgress, syncDots, shownStep, actions as walkActions, onKeydown as walkKeydown } from "./walkthrough.js";
+import { filesHTML, mountFiles, shownFile, actions as filesActions } from "./files.js";
 import { treemapHTML, renderTreemap, actions as treemapActions } from "./treemap.js";
 import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } from "./panel.js";
 import { initSidebar, loadList } from "./sidebar.js";
@@ -27,6 +27,8 @@ import { loadOverview, actions as overviewActions } from "./overview.js";
 import { issuesHTML, syncDismiss, actions as issueActions } from "./issues.js";
 import { initFixes, actions as pendingActions } from "./fixes.js";
 import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeydown } from "./sequence.js";
+import { initChat } from "./chat.js";
+import { initAgentAPI, changeOf, describe as agentDescribe, run as agentRun } from "./agentapi.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -151,6 +153,37 @@ function keepTyping(draw) {
   return true;
 }
 
+// chatWhere tells the chat agent what is on screen, so "this" in a
+// question means something.
+function chatWhere() {
+  if (!S.result) return {};
+  if (S.tab === "review") {
+    if (S.mode === "walk") {
+      const s = shownStep();
+      return s ? { where: `Review tab, walkthrough step ${s.n} of ${s.total}`, units: s.ids } : { where: "Review tab, the walkthrough's overview page" };
+    }
+    if (S.mode === "files") return { where: "Review tab, Files mode", path: shownFile() };
+    return { where: "Review tab, the classic list of every unit" };
+  }
+  if (S.tab === "issues") return { where: "Issues tab: every claim against the PR (review issues, lint findings, GitHub comments), worst first" };
+  if (S.tab === "sequence") return { where: `Sequence tab: the call flow ${S.seqView === "before" ? "before" : "after"} the PR` };
+  if (S.tab === "map") return { where: `Code map tab, colored by ${S.tm.mode}${S.tm.zoom.length ? `, zoomed into ${S.tm.zoom.map(String).join("/")}` : ""}` };
+  return {};
+}
+const unitName = (u) => u.symbol ? `${u.file.split("/").pop()} · ${u.symbol}` : u.file;
+const chat = initChat({
+  key: () => S.result?.key || null,
+  title: () => S.result?.pr.title || S.result?.pr.head_ref || "",
+  where: chatWhere,
+  openUnit: jumpToUnit,
+  unitLabel: (id) => { const x = S.result && allUnits().find(({ u }) => u.id === id); return x ? unitName(x.u) : id; },
+  labels: () => Object.fromEntries((S.result ? allUnits() : []).map(({ u }) => [u.id, unitName(u)])),
+  cfg: () => S.cfg,
+  change: () => changeOf(S.result),
+  describe: agentDescribe,
+  runAction: agentRun,
+});
+
 onRender(() => {
   const r = S.result;
   if (!r) return;
@@ -166,6 +199,7 @@ onRender(() => {
     tab.mount?.();
     if (panelOpen()) renderPanel();
   });
+  chat.sync();
   if (!kept) focusComposer();
 });
 
@@ -235,6 +269,7 @@ document.addEventListener("keydown", seqKeydown);
   initJobs(showKey, loadList);
   initFix(showKey);
   initFixes(showKey);
+  initAgentAPI({ showKey });
   initSettings(() => { if (S.result) { budget.apply(S.result, S.cfg); render(); } }, translate);
   await loadList();
   const q = new URLSearchParams(location.search);

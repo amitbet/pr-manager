@@ -241,7 +241,7 @@ function keepTranslated(u, en, was) {
 // the diff rendering state, and neither survives a swap. The server
 // places under the result's default budget, so the chosen one is applied
 // again.
-function merge(fresh) {
+export function merge(fresh) {
   const r = S.result;
   Object.assign(r, { counts: fresh.counts, impact: fresh.impact, likelihood: fresh.likelihood, attention: fresh.attention });
   const by = new Map();

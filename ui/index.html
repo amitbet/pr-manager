@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="css/treemap.css">
 <link rel="stylesheet" href="css/panel.css">
 <link rel="stylesheet" href="css/activity.css">
+<link rel="stylesheet" href="css/chat.css">
 <!-- Classic scripts run before the modules: saved settings first. -->
 <script src="api/settings.js"></script>
 <script src="js/persist.js"></script>
@@ -51,6 +52,7 @@
   <main id="main"><div class="empty">Enter a PR link or repository path above, or pick a result on the left.</div></main>
 </div>
 <div id="panel" class="panel" hidden></div>
+<div id="chat-root" hidden></div>
 <dialog id="settings" class="settings-dlg" aria-labelledby="settings-title">
   <form method="dialog">
     <div class="dlg-head"><h3 id="settings-title">Settings</h3><button class="icon" value="close" aria-label="Close">✕</button></div>
@@ -63,6 +65,9 @@
         <span class="classify-only">Classifier</span>
         <select id="classifier" class="classify-only" aria-label="classifier provider"><option value="">default</option></select>
         <select id="classify_model" class="classify-only" aria-label="classifier model"><option value="">default model</option></select>
+        <span>Chat agent</span>
+        <select id="chat" aria-label="chat agent provider"><option value="">default</option></select>
+        <select id="chat_model" aria-label="chat agent model"><option value="">default model</option></select>
       </div>
     </section>
     <section>
@@ -105,6 +110,19 @@
         <select id="diff_view" aria-label="default diff view"><option value="unified">Unified</option><option value="split">Split</option></select>
       </div>
       <label class="check"><input type="checkbox" id="focus_top"> scroll to the highest-ranked change when opening a step or file</label>
+    </section>
+    <section>
+      <h4>Chat hotkeys <span class="info" tabindex="0" aria-label="About the chat hotkeys">i<span class="tip" role="tooltip">Open puts the cursor in the chat agent&#39;s prompt, or brings its pop-out window to the front; the default is A, or Ctrl+/ (⌘/ on a Mac) from anywhere. Collapse turns the open chat back into its icon; Esc always does while you are in the chat, and the key set here does from anywhere. Give both the same key to toggle the chat with it. Click a field and press the keys. A key without Ctrl, Alt or ⌘ only works when you aren&#39;t typing in a field.</span></span></h4>
+      <div class="grid hotkey">
+        <label for="chat_hotkey">Open</label>
+        <span><input id="chat_hotkey" readonly spellcheck="false" aria-label="open chat hotkey"> <button type="button" id="chat_hotkey_reset" class="linkbtn">default</button></span>
+        <label for="chat_hide_hotkey">Collapse</label>
+        <span><input id="chat_hide_hotkey" readonly spellcheck="false" aria-label="collapse chat hotkey"> <button type="button" id="chat_hide_hotkey_reset" class="linkbtn">default</button></span>
+      </div>
+    </section>
+    <section>
+      <h4>Chat agent actions <span class="info" tabindex="0" aria-label="About chat agent actions">i<span class="tip" role="tooltip">The chat agent can propose actions under its answer: open a unit or tab, draft a pending comment, dismiss or restore an issue, mark units reviewed, fix issues, review units or the whole change again, fetch the GitHub comments again, rewrite the overview or sequence, rebuild the code map, and reply on, resolve or submit a review on GitHub. Each one shows as a card with Run and Skip. Navigation always runs at once. What it posts to GitHub or pushes always waits for your click, whatever this says.</span></span></h4>
+      <label class="check">Runs without asking <select id="chat_autorun" aria-label="chat agent actions that run without asking"><option value="view">navigation only</option><option value="local">also drafts, dismissals and marks</option><option value="job">also fixes and re-analysis</option></select></label>
     </section>
     <section class="classify-only">
       <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>

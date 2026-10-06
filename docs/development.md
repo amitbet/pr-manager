@@ -10,6 +10,11 @@ reject some `gh pr view --json` fields. For the desktop build see
 ```
 main.go          flags; triage, eval, serve, prs commands
 serve.go         UI server, job runner, result cache
+chat.go          the UI's chat agent: the context it is given about a result, and its workspace
+chatactions.go   the chat agent's actions: the catalog it is told about, re-reviewing some units, review thread replies
+chatshell.go     the chat agent's read-only shell: where the app keeps things, and the history fetched for blame
+chatbundle.go    the chat agent's material as files, job-log selection, code-map entries of the changed files
+chatlog.go       job activity logs saved with the results they made (results/logs/<key>/)
 review.go        draft comments, file content for context expansion, review submission
 ui/              the UI, embedded into the binary: index.html, css/ per component, js/ ES modules (no build step;
                  main.js renders the page and routes data-act clicks to each component's `actions`)
