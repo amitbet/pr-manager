@@ -86,6 +86,15 @@ var version = "dev"
 var commit = "none"
 var date = "unknown"
 
+// displayVersion is the version shown in the UI: goreleaser sets 0.1.53,
+// the desktop build v0.1.53.
+func displayVersion() string {
+	if version == "dev" {
+		return version
+	}
+	return "v" + strings.TrimPrefix(version, "v")
+}
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {

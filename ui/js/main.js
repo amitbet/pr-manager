@@ -304,6 +304,11 @@ document.addEventListener("keydown", seqKeydown);
 
 (async () => {
   S.cfg = await api("/api/config").catch(() => null);
+  if (S.cfg?.version) {
+    const v = $("#app-version");
+    v.textContent = S.cfg.version;
+    v.title = `commit ${S.cfg.commit}, built ${S.cfg.built}`;
+  }
   initSidebar(openResult);
   initPanel(showDraft);
   initTriage();

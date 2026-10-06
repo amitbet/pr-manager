@@ -988,6 +988,9 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			"code_root":      o.codeRoot,
 			"org":            o.org,
 			"gh_host":        triage.DefaultHost(),
+			"version":        displayVersion(),
+			"commit":         commit,
+			"built":          date,
 		})
 	})
 	mux.HandleFunc("POST /api/codemap/index", func(w http.ResponseWriter, r *http.Request) {
