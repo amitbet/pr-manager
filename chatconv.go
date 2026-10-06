@@ -233,9 +233,15 @@ func (cv *chatConv) reach(ws *llm.Workspace, l llm.LLMTool, r *PRResult, m *chat
 	if ws == nil {
 		return
 	}
-	// An API provider fetches with the app's fetch tool (llm/webtool.go).
+	// An API provider gets the app's fetch and gh tools (llm/webtool.go).
 	if !llm.SupportsWorkspace(l) {
-		ws.Web = !cv.noWeb
+		if cv.noWeb {
+			return
+		}
+		ws.Web = true
+		if _, err := exec.LookPath("gh"); err == nil && r.PR.URL != "" {
+			ws.GH = orDefault(cv.cloneDir(r), ws.Dir)
+		}
 		return
 	}
 	m.view = chatView{}
@@ -258,11 +264,19 @@ func (cv *chatConv) reach(ws *llm.Workspace, l llm.LLMTool, r *PRResult, m *chat
 	if len(tools) == 0 {
 		return
 	}
-	dir := r.PR.LocalPath
-	if dir == "" && cv.t.fetcher != nil {
-		dir = cv.t.fetcher.RepoDir(r.PR.PRRef)
+	ws.MCP = []llm.MCPServer{{Name: "prm", Command: exe, Args: []string{"mcp", "-dir", orDefault(cv.cloneDir(r), ws.Dir), "-tools", strings.Join(tools, ",")}, Tools: tools}}
+}
+
+// cloneDir is the repository's clone (or the local checkout), where gh
+// finds the repo from its remote.
+func (cv *chatConv) cloneDir(r *PRResult) string {
+	if r.PR.LocalPath != "" {
+		return r.PR.LocalPath
 	}
-	ws.MCP = []llm.MCPServer{{Name: "prm", Command: exe, Args: []string{"mcp", "-dir", orDefault(dir, ws.Dir), "-tools", strings.Join(tools, ",")}, Tools: tools}}
+	if cv.t.fetcher != nil {
+		return cv.t.fetcher.RepoDir(r.PR.PRRef)
+	}
+	return ""
 }
 
 // call answers: all is the system prompt and the conversation as chat

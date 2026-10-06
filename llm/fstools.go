@@ -82,15 +82,34 @@ func (t *wsTools) resolve(p string) (string, error) {
 	}
 	r, err := filepath.EvalSymlinks(filepath.Clean(p))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("%s does not exist", p)
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
 		}
-		return "", err
+		// Whether a file outside exists is not the agent's to learn: a
+		// missing path is outside if its nearest existing parent is.
+		if !t.inside(nearestReal(filepath.Clean(p))) {
+			return "", fmt.Errorf("%s is outside the directories you may read: %s", p, strings.Join(t.roots, ", "))
+		}
+		return "", fmt.Errorf("%s does not exist", p)
 	}
 	if !t.inside(r) {
 		return "", fmt.Errorf("%s is outside the directories you may read: %s", p, strings.Join(t.roots, ", "))
 	}
 	return r, nil
+}
+
+// nearestReal is p with its nearest existing parent's symlinks resolved.
+func nearestReal(p string) string {
+	rest := ""
+	for d := p; ; d = filepath.Dir(d) {
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			return filepath.Join(r, rest)
+		}
+		if filepath.Dir(d) == d {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+	}
 }
 
 func (t *wsTools) inside(p string) bool {

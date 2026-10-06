@@ -41,6 +41,9 @@ func callInWorkspace(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatM
 	if ws.Web {
 		tools = append(tools, fetchTool())
 	}
+	if ws.GH != "" {
+		tools = append(tools, ghTool(ws.GH))
+	}
 	return CallWithTools(ctx, l, msgs, final, tools, maxTokens)
 }
 

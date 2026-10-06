@@ -146,7 +146,7 @@ func TestWorkspaceToolsConfined(t *testing.T) {
 	if v := filepath.VolumeName(outside); v != "" {
 		system = v + `\Windows\System32\drivers\etc\hosts`
 	}
-	for _, p := range []string{"../" + filepath.Base(outside) + "/secret", filepath.Join(outside, "secret"), "link", system} {
+	for _, p := range []string{"../" + filepath.Base(outside) + "/secret", filepath.Join(outside, "secret"), "link", system, filepath.Join(outside, "missing", "file")} {
 		if _, err := run(t, ts, "read_file", map[string]any{"path": p}); err == nil || !strings.Contains(err.Error(), "outside") {
 			t.Errorf("read %s: %v", p, err)
 		}
@@ -377,5 +377,15 @@ func TestWorkspaceFetchTool(t *testing.T) {
 	}
 	if _, err := ft.Run(context.Background(), map[string]any{"url": "http://127.0.0.1:1/"}); err == nil {
 		t.Error("fetched a local address")
+	}
+}
+
+// An API provider's gh tool refuses commands that write, before running gh.
+func TestWorkspaceGHTool(t *testing.T) {
+	gt := ghTool(t.TempDir())
+	for _, args := range [][]any{{"pr", "merge", "1"}, {"api", "-X", "DELETE", "repos/o/r"}, {"auth", "token"}, {1, 2}} {
+		if _, err := gt.Run(context.Background(), map[string]any{"args": args}); err == nil {
+			t.Errorf("%v was run", args)
+		}
 	}
 }

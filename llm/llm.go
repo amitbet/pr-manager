@@ -92,6 +92,7 @@ type Workspace struct {
 	Shell    bool
 	NoWrite  []string
 	Web      bool
+	GH       string // an API provider's gh tool runs here ("": none)
 	MCP      []MCPServer
 	Session  *Session
 }

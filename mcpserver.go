@@ -2,20 +2,17 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/amitbet/pr-manager/internal/proc"
+	"github.com/amitbet/pr-manager/internal/ghread"
 	"github.com/amitbet/pr-manager/internal/webfetch"
 )
 
@@ -127,7 +124,7 @@ func (s *mcpServer) list() []any {
 	if s.tools["gh"] {
 		out = append(out, map[string]any{
 			"name":        "gh",
-			"description": "Run the GitHub CLI, logged in as the reader, for commands that only read: pr view/list/diff/checks/status, issue view/list, run view/list (--log for a failed job's log), workflow view/list, repo view, release view/list, label list, search, and gh api GET (or graphql queries, no mutations). Runs in the repository's clone, so `pr view 12` finds the repo; pass -R owner/repo for another. Examples: [\"pr\",\"checks\",\"12\"], [\"pr\",\"view\",\"12\",\"--comments\"], [\"api\",\"repos/o/r/pulls/12/comments\"].",
+			"description": ghread.Description,
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"args": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "gh's arguments, without gh"},
 			}, "required": []string{"args"}},
@@ -161,20 +158,7 @@ func (s *mcpServer) call(name string, raw json.RawMessage) (string, error) {
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return "", err
 		}
-		if err := ghReadOnly(in.Args); err != nil {
-			return "", err
-		}
-		cmd := proc.CommandContext(ctx, "gh", in.Args...)
-		cmd.Dir = s.dir
-		cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_PAGER=cat", "PAGER=cat", "NO_COLOR=1", "GH_NO_UPDATE_NOTIFIER=1")
-		var b bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &b, &b
-		err := cmd.Run()
-		text := clipText(b.String(), mcpOutputMax)
-		if err != nil {
-			return "", fmt.Errorf("gh %s: %v\n%s", strings.Join(in.Args, " "), err, text)
-		}
-		return text, nil
+		return ghread.Run(ctx, s.dir, in.Args)
 	case "fetch":
 		var in struct {
 			URL string `json:"url"`
@@ -185,117 +169,6 @@ func (s *mcpServer) call(name string, raw json.RawMessage) (string, error) {
 		return webfetch.Fetch(ctx, in.URL)
 	}
 	return "", fmt.Errorf("no tool %s", name)
-}
-
-// ghRead are the gh commands that only read, by subcommand.
-var ghRead = map[string][]string{
-	"pr":       {"view", "list", "diff", "checks", "status"},
-	"issue":    {"view", "list", "status"},
-	"run":      {"view", "list"},
-	"workflow": {"view", "list"},
-	"repo":     {"view"},
-	"release":  {"view", "list"},
-	"label":    {"list"},
-	"search":   {"repos", "issues", "prs", "commits", "code"},
-}
-
-// ghReadOnly reports why args aren't a gh command that only reads, or nil.
-func ghReadOnly(args []string) error {
-	if len(args) == 0 {
-		return errors.New("no gh command")
-	}
-	for _, a := range args {
-		if a == "-w" || a == "--web" || strings.HasPrefix(a, "--web=") || a == "--watch" {
-			return fmt.Errorf("%s is not allowed", a)
-		}
-	}
-	cmd := args[0]
-	if cmd == "api" {
-		return ghAPIReadOnly(args[1:])
-	}
-	subs, ok := ghRead[cmd]
-	if !ok {
-		return fmt.Errorf("gh %s is not one of the read-only commands (%s, api)", cmd, strings.Join(sortedKeys(ghRead), ", "))
-	}
-	if len(args) < 2 {
-		return fmt.Errorf("gh %s needs a subcommand: %s", cmd, strings.Join(subs, ", "))
-	}
-	for _, s := range subs {
-		if args[1] == s {
-			return nil
-		}
-	}
-	return fmt.Errorf("gh %s %s is not read-only (allowed: %s)", cmd, args[1], strings.Join(subs, ", "))
-}
-
-var mutationWord = regexp.MustCompile(`(?i)\bmutation\b`)
-
-// ghAPIReadOnly allows gh api GET requests and graphql queries. Fields
-// make gh POST unless the method is GET; for graphql that is a query,
-// unless it is a mutation.
-func ghAPIReadOnly(args []string) error {
-	method, endpoint := "", ""
-	var fields []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		name, val, hasVal := a, "", false
-		if strings.HasPrefix(a, "--") {
-			name, val, hasVal = strings.Cut(a, "=")
-		} else if len(a) > 2 && a[0] == '-' && strings.ContainsRune("XfFHqtp", rune(a[1])) {
-			name, val, hasVal = a[:2], a[2:], true
-		}
-		next := func() string {
-			if hasVal {
-				return val
-			}
-			if i+1 < len(args) {
-				i++
-				return args[i]
-			}
-			return ""
-		}
-		switch name {
-		case "-X", "--method":
-			method = strings.ToUpper(next())
-		case "-f", "--raw-field", "-F", "--field":
-			v := next()
-			if (name == "-F" || name == "--field") && strings.Contains(v, "=@") {
-				return errors.New("fields from files are not allowed")
-			}
-			fields = append(fields, v)
-		case "-H", "--header":
-			if v := next(); strings.Contains(strings.ToLower(v), "override") {
-				return errors.New("method override headers are not allowed")
-			}
-		case "--input":
-			return errors.New("--input is not allowed")
-		case "-q", "--jq", "-t", "--template", "--hostname", "-p", "--preview", "--cache":
-			next()
-		default:
-			if !strings.HasPrefix(a, "-") && endpoint == "" {
-				endpoint = a
-			}
-		}
-	}
-	if endpoint == "" {
-		return errors.New("gh api needs an endpoint")
-	}
-	if method != "" && method != "GET" {
-		if !(method == "POST" && endpoint == "graphql") {
-			return fmt.Errorf("gh api -X %s is not allowed: only GET", method)
-		}
-	}
-	if len(fields) > 0 && method != "GET" {
-		if endpoint != "graphql" {
-			return errors.New("gh api with fields POSTs: add -X GET to send them as the query string")
-		}
-		for _, f := range fields {
-			if mutationWord.MatchString(f) {
-				return errors.New("graphql mutations are not allowed")
-			}
-		}
-	}
-	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {
