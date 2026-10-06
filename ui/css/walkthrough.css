@@ -8,7 +8,7 @@
    sideways, so its height is fixed and the sticky bars below can sit under it.
    Dots sit at the top, leaving the bottom for the scrollbar so it never
    clips them or the current dot's ring. */
-.wz-steps { position: sticky; top: 54px; z-index: 6; height: var(--wz-steps-h); display: flex; gap: 5px; align-items: flex-start; overflow-x: auto; overflow-y: hidden; padding: 6px 4px 0; margin: 0 -4px 10px; background: var(--bg); scrollbar-width: thin; }
+.wz-steps { position: sticky; top: var(--pin-top); z-index: 6; height: var(--wz-steps-h); display: flex; gap: 5px; align-items: flex-start; overflow-x: auto; overflow-y: hidden; padding: 6px 4px 0; margin: 0 -4px 10px; background: var(--bg); scrollbar-width: thin; }
 .wz-dot { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid var(--border); background: var(--bg); font: 700 11px/20px -apple-system, sans-serif; text-align: center; color: var(--muted); }
 .wz-dot.human { border-color: var(--human); color: var(--human); border-width: 3px; line-height: 18px; font-weight: 900; }
 .wz-dot.skim { border-color: var(--skim); color: var(--skim); }
@@ -35,7 +35,7 @@
 .wz-headline { margin: 10px 0 10px; font-size: 24px; line-height: 1.3; font-weight: 650; }
 .wz-head .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .wz-body { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); }
-.wz-explain { align-self: start; position: sticky; top: calc(54px + var(--wz-steps-h)); max-height: calc(100vh - 54px - var(--wz-steps-h) - var(--wz-nav-h)); overflow: auto; padding: 18px 22px; background: var(--bg2); border-right: 1px solid var(--border); font-size: 15.5px; line-height: 1.6; }
+.wz-explain { align-self: start; position: sticky; top: calc(var(--pin-top) + var(--wz-steps-h)); max-height: calc(100vh - var(--pin-top) - var(--wz-steps-h) - var(--wz-nav-h)); overflow: auto; padding: 18px 22px; background: var(--bg2); border-right: 1px solid var(--border); font-size: 15.5px; line-height: 1.6; }
 @media (max-width: 1400px) {
   .wz-body { grid-template-columns: minmax(0, 1fr); }
   .wz-explain { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -62,7 +62,7 @@
 .wz-more[open] summary { margin-bottom: 8px; }
 .wz-more p { font-size: 14px; }
 .wz-code { min-width: 0; }
-.wz-codebar { position: sticky; top: calc(54px + var(--wz-steps-h)); z-index: 4; display: flex; gap: 8px; align-items: center; padding: 8px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.wz-codebar { position: sticky; top: calc(var(--pin-top) + var(--wz-steps-h)); z-index: 4; display: flex; gap: 8px; align-items: center; padding: 8px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
 .wz-code table.diff { font-size: 14px; line-height: 22px; }
 .wz-finish { padding: 40px 24px; text-align: center; }
 .wz-finish h2 { margin: 0 0 8px; font-size: 24px; }
@@ -81,7 +81,7 @@
 .wz-seg + .wz-seg { border-top: 1px solid var(--border); }
 .wz-seg-note { background: var(--bg2); border-right: 1px solid var(--border); }
 .wz-seg-code { min-width: 0; }
-.wz-note { position: sticky; top: calc(54px + var(--wz-steps-h) + var(--wz-codebar-h)); max-height: calc(100vh - 54px - var(--wz-steps-h) - var(--wz-codebar-h) - var(--wz-nav-h)); overflow: auto; padding: 0; border-right: 0; }
+.wz-note { position: sticky; top: calc(var(--pin-top) + var(--wz-steps-h) + var(--wz-codebar-h)); max-height: calc(100vh - var(--pin-top) - var(--wz-steps-h) - var(--wz-codebar-h) - var(--wz-nav-h)); overflow: auto; padding: 0; border-right: 0; }
 @media (max-width: 1400px) {
   .wz-seg { grid-template-columns: minmax(0, 1fr); }
   .wz-seg-note { border-right: 0; border-bottom: 1px solid var(--border); }

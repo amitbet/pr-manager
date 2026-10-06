@@ -101,6 +101,8 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .pr-head .meta { color: var(--muted); font-size: 14px; }
 .pr-head .meta code { font-family: var(--mono); font-size: 13px; }
 .pr-head .meta code { overflow-wrap: anywhere; }
+.pr-head .open-link { display: inline-flex; vertical-align: -1px; margin: 0 2px 0 3px; color: var(--muted); opacity: .7; }
+.pr-head .open-link:hover { color: var(--accent); opacity: 1; }
 .toolbar { display: flex; gap: 8px; margin: 14px 0; align-items: center; flex-wrap: wrap; }
 .filter { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 16px; border: 1px solid var(--border); cursor: pointer; user-select: none; background: var(--bg); }
 .filter.off { opacity: .4; }
@@ -122,7 +124,11 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .wz-issue span.idt { display: block; }
 .chip { font-size: 12px; padding: 0 6px; border-radius: 10px; background: var(--bg3); color: var(--muted); }
 .linkbtn { font-size: 13px; color: var(--accent); cursor: pointer; background: none; border: none; padding: 0; }
-.tabs { display: flex; gap: 2px; margin: 14px 0 0; border-bottom: 1px solid var(--border); }
+/* The tabs stay pinned under the page header, so a jump down the page
+   never takes them out of view; --pin-top is where content pinned below
+   them starts. */
+:root { --tabs-h: 38px; --pin-top: calc(54px + var(--tabs-h)); }
+.tabs { position: sticky; top: 54px; z-index: 7; box-sizing: border-box; height: var(--tabs-h); display: flex; gap: 2px; margin: 14px 0 0; border-bottom: 1px solid var(--border); background: var(--bg); }
 .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 14px; font-weight: 600; color: var(--muted); }
 .tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
 .tabs .seg { align-self: center; margin-bottom: 4px; }

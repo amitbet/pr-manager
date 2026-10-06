@@ -184,8 +184,8 @@ export function shownStep() {
   return { n: i + 1, total: st.length, ids: st[i].members.map((x) => x.u.id) };
 }
 
-// HEADER_H is the sticky page header.
-const HEADER_H = 54;
+// pinTop is where the page header and the tabs pinned under it end.
+export const pinTop = () => 54 + ($(".tabs")?.offsetHeight || 0);
 
 // showStep opens the walkthrough on the step holding unit id, including
 // auxiliary and no-review units if that's what it is, and scrolls to the unit's code;
@@ -223,7 +223,7 @@ export function scrollToSeg(id) {
     row?.scrollIntoView({ block: "center" });
     return !!row;
   }
-  const pinned = HEADER_H + ($(".wz-steps")?.offsetHeight || 0);
+  const pinned = pinTop() + ($(".wz-steps")?.offsetHeight || 0);
   window.scrollTo({ top: seg.getBoundingClientRect().top + window.scrollY - pinned });
   return true;
 }
@@ -246,7 +246,7 @@ function go(i) {
   const card = $(".wz-card");
   if (!card) return;
   const top = card.getBoundingClientRect().top + card.clientTop; // inside the colored top border
-  const pinned = HEADER_H + ($(".wz-steps")?.offsetHeight || 0);
+  const pinned = pinTop() + ($(".wz-steps")?.offsetHeight || 0);
   if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
 }
 // step moves d steps; back from the first step is the overview.

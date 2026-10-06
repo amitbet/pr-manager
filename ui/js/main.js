@@ -93,18 +93,39 @@ function modelsLine(r) {
   return `classify <code>${esc(r.classifier)}</code> · summarize <code>${esc(r.summarizer)}</code>`;
 }
 
+// webBase is the repo's page on its forge, GitHub or GitLab, with the
+// path GitLab puts before tree and commit pages; null for a checkout
+// without a remote.
+function webBase(pr) {
+  if (pr.owner === "local") return null;
+  const host = pr.host || "github.com";
+  return { repo: `https://${host}/${pr.owner}/${pr.repo}`, sub: /gitlab/i.test(host) ? "/-" : "", forge: /gitlab/i.test(host) ? "GitLab" : /github/i.test(host) ? "GitHub" : host };
+}
+// openLink is the small icon after a repo, branch or commit that opens it
+// on its forge. A local branch or commit not pushed yet has no page there.
+const OPEN_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>`;
+const iconLink = (url, t) => `<a class="open-link" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(t)}" aria-label="${esc(t)}">${OPEN_ICON}</a>`;
+const openLink = (w, path, what) => (w ? iconLink(w.repo + path, `Open ${what} on ${w.forge}`) : "");
+const refLink = (w, ref) => openLink(w, `${w?.sub}/tree/${ref.split("/").map(encodeURIComponent).join("/")}`, `branch ${ref}`);
+const commitLink = (w, oid) => openLink(w, `${w?.sub}/commit/${encodeURIComponent(oid)}`, `commit ${oid.slice(0, 8)}`);
+
 function prHeadHTML(r) {
   const pr = r.pr;
   const local = !!pr.local_path;
+  const w = webBase(pr);
+  // A single commit's refs are its parent's id (or the empty tree) and nothing.
+  const branch = (ref) => (pr.single_commit || !ref ? "" : refLink(w, ref));
+  const commit = (oid) => (pr.base_ref === "empty tree" && oid === pr.base_oid ? "" : commitLink(w, oid));
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
   return `
     <div class="pr-head">
-      <h2>${local ? esc(pr.title || pr.head_ref) : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`}</h2>
-      <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
-        <code>${esc(pr.base_ref)}@${esc(pr.base_oid.slice(0, 8))}</code> ← <code>${esc(pr.head_ref)}@${esc(pr.head_oid.slice(0, 8))}</code> ·
+      <h2>${local ? esc(pr.title || pr.head_ref) : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`}</h2>
+      <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
+        <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
+        <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·
         +${pr.additions}/−${pr.deletions} · ${modelsLine(r)}${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
-      ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>, from its parent</div>` : ""}
+      ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>${commit(pr.head_oid)}, from its parent</div>` : ""}
       ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}</div>` : ""}
       ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">

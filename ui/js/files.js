@@ -5,7 +5,7 @@ import { $, esc, BUCKETS, LABEL } from "./util.js";
 import { S, render, fileOfUnit, focusTop } from "./state.js";
 import { SEV_RANK, SEV_CLASS } from "./scores.js";
 import { canExpand, fullyExpanded, expandAllButton, expandWhole } from "./diff.js";
-import { unitSegmentsHTML, noteHTML, markReviewed, leadUnit, scrollToSeg } from "./walkthrough.js";
+import { unitSegmentsHTML, noteHTML, markReviewed, leadUnit, scrollToSeg, pinTop } from "./walkthrough.js";
 
 // bucketOf is a file's most important bucket: BUCKETS runs from human
 // review down to no review.
@@ -164,8 +164,8 @@ function open(path) {
     whenLoaded(f, () => scrollToSeg(id));
     return;
   }
-  const top = $(".fv-main")?.getBoundingClientRect().top;
-  if (top < 54) window.scrollTo({ top: top + window.scrollY - 54 });
+  const top = $(".fv-main")?.getBoundingClientRect().top, pinned = pinTop();
+  if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
 }
 
 // showFileUnit opens unit id's file with its review open and scrolls to it.
