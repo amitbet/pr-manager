@@ -92,6 +92,8 @@ jobs:
             dist/CHANGELOG.md
             dist/homebrew/Casks/pr-manager.rb
           if-no-files-found: error
+  # macOS and Linux build apart from Windows so their packages, checksums and
+  # Homebrew cask publish without waiting on the slower, flakier Windows job.
   desktop:
     name: Desktop build (${{ matrix.artifact }})
     needs: version
@@ -108,10 +110,6 @@ jobs:
             artifact: linux-amd64
             test_tags: desktop,webkit2_41
             output: dist/desktop/pr-manager-linux-amd64.tar.gz
-          - os: windows-latest
-            artifact: windows-amd64
-            test_tags: desktop
-            output: dist/desktop/pr-manager-windows-amd64.exe
     runs-on: ${{ matrix.os }}
     # Each build uploads its package to the release as soon as it is ready.
     permissions:
@@ -130,55 +128,60 @@ jobs:
       - name: Install Linux WebKitGTK build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
-      - uses: msys2/setup-msys2@v2
-        if: runner.os == 'Windows'
-        with:
-          msystem: UCRT64
-          path-type: inherit
-          install: mingw-w64-ucrt-x86_64-gcc
       - name: Test cgo parser and app
-        if: runner.os != 'Windows'
-        shell: bash
         run: go test -tags '${{ matrix.test_tags }}' ./...
       - name: Build desktop app
-        if: runner.os != 'Windows'
-        shell: bash
         run: bash scripts/build-desktop.sh
-      - name: Build desktop app on Windows
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: bash scripts/build-desktop.sh
-      - name: Test cgo parser and app on Windows
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: go test -tags desktop ./...
       - uses: actions/upload-artifact@v4
         with:
           name: pr-manager-${{ matrix.artifact }}
           path: ${{ matrix.output }}
           if-no-files-found: error
-      # The release job creates the release after the CLI tests pass. Wait for
-      # it, and stop waiting if that job ends without creating one.
+      - name: Upload to release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/upload-desktop-release.sh "$RELEASE_TAG" '${{ matrix.output }}'
+  desktop-windows:
+    name: Desktop build (windows-amd64)
+    needs: version
+    if: always() && !cancelled() && (needs.version.result == 'success' || needs.version.result == 'skipped')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      CGO_ENABLED: 1
+      DESKTOP_VERSION: ${{ needs.version.outputs.tag || 'dev' }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Build desktop app
+        shell: msys2 {0}
+        run: bash scripts/build-desktop.sh
+      - name: Test cgo parser and app
+        shell: msys2 {0}
+        run: go test -tags desktop ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-manager-windows-amd64
+          path: dist/desktop/pr-manager-windows-amd64.exe
+          if-no-files-found: error
       - name: Upload to release
         if: env.RELEASE_TAG != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          jobs_url="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs"
-          until gh release view "$RELEASE_TAG" >/dev/null 2>&1; do
-            conclusion=$(gh api "$jobs_url" --jq '.jobs[] | select(.name == "Release") | .conclusion // ""')
-            if [[ -n "$conclusion" && "$conclusion" != "success" ]]; then
-              echo "release job ended with $conclusion" >&2
-              exit 1
-            fi
-            if (( SECONDS > 1800 )); then
-              echo "timed out waiting for release $RELEASE_TAG" >&2
-              exit 1
-            fi
-            sleep 15
-          done
-          gh release upload "$RELEASE_TAG" '${{ matrix.output }}' --clobber
+        run: bash scripts/upload-desktop-release.sh "$RELEASE_TAG" dist/desktop/pr-manager-windows-amd64.exe
   release:
     name: Release
     needs: [version, snapshot]
@@ -266,6 +269,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Shared with desktop-windows-release: both rewrite desktop-checksums.txt.
+    concurrency:
+      group: desktop-checksums-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -279,12 +286,54 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
-          cd "$RUNNER_TEMP/desktop-release"
-          sha256sum PR-Manager-macos-arm64.zip pr-manager-linux-amd64.tar.gz pr-manager-windows-amd64.exe > desktop-checksums.txt
-          gh release upload "$RELEASE_TAG" desktop-checksums.txt --clobber
+          bash scripts/desktop-checksums.sh "$RELEASE_TAG" \
+            "$RUNNER_TEMP/desktop-release/PR-Manager-macos-arm64.zip" \
+            "$RUNNER_TEMP/desktop-release/pr-manager-linux-amd64.tar.gz"
       # Casks/** and bucket/** changes do not trigger CI, so this commit does
       # not start a new release.
-      - name: Update desktop Homebrew cask and Scoop manifest
+      - name: Update desktop Homebrew cask
+        if: ${{ !contains(needs.version.outputs.tag, '-') }}
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B main origin/main
+            mkdir -p Casks
+            bash scripts/desktop-cask.sh "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/PR-Manager-macos-arm64.zip" > Casks/pr-manager-desktop.rb
+            git add Casks/pr-manager-desktop.rb
+            if git diff --cached --quiet; then exit 0; fi
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Update Homebrew cask for pr-manager-desktop $RELEASE_TAG"
+            git push origin main && exit 0
+            sleep 5
+          done
+          exit 1
+  desktop-windows-release:
+    name: Desktop Windows checksum and Scoop manifest
+    needs: [version, release, desktop-windows]
+    if: always() && !cancelled() && needs.release.result == 'success' && needs.desktop-windows.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-checksums-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr-manager-windows-amd64
+          path: ${{ runner.temp }}/desktop-release
+      - name: Publish desktop checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/desktop-checksums.sh "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe"
+      # Casks/** and bucket/** changes do not trigger CI, so this commit does
+      # not start a new release.
+      - name: Update desktop Scoop manifest
         if: ${{ !contains(needs.version.outputs.tag, '-') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -296,13 +345,12 @@ jobs:
           for attempt in 1 2 3; do
             git fetch origin main
             git checkout -B main origin/main
-            mkdir -p Casks bucket
-            bash scripts/desktop-cask.sh "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/PR-Manager-macos-arm64.zip" > Casks/pr-manager-desktop.rb
+            mkdir -p bucket
             bash scripts/scoop-manifest.sh desktop "$RELEASE_TAG" "$RUNNER_TEMP/desktop-release/pr-manager-windows-amd64.exe" "$RUNNER_TEMP/checksums.txt" > bucket/pr-manager-desktop.json
-            git add Casks/pr-manager-desktop.rb bucket/pr-manager-desktop.json
+            git add bucket/pr-manager-desktop.json
             if git diff --cached --quiet; then exit 0; fi
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m "Update Homebrew cask and Scoop manifest for pr-manager-desktop $RELEASE_TAG"
+              commit -m "Update Scoop manifest for pr-manager-desktop $RELEASE_TAG"
             git push origin main && exit 0
             sleep 5
           done
