@@ -53,9 +53,9 @@ export async function api(path, opts) {
 // used tells the sidebar a person changed something on a result: its key,
 // or the open result's when not given. A change through api counts, except
 // what the app asks for by itself (translations, the overview and sequence,
-// triage jobs, the code map, saved chats).
+// triage jobs and their cancels, the code map, saved chats, the PR watch).
 export const USED_EVENT = "pr-manager:used";
-const NOT_USE = /\/(translate|overview|sequence)$|^\/api\/(triage|codemap|chats)\b/;
+const NOT_USE = /\/(translate|overview|sequence)$|^\/api\/(triage|jobs|codemap|chats|prwatch)\b/;
 export const used = (key) => document.dispatchEvent(new CustomEvent(USED_EVENT, { detail: key && decodeURIComponent(key) }));
 export const postJSON = (url, v) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) });
 
