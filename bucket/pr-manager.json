@@ -1,17 +1,17 @@
 {
-    "version": "0.1.42",
+    "version": "0.1.43",
     "description": "Sort pull request changes by the human review they need",
     "homepage": "https://github.com/amitbet/pr-manager",
     "license": "Apache-2.0",
     "depends": ["git", "gh"],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/amitbet/pr-manager/releases/download/v0.1.42/pr-manager_0.1.42_windows_amd64.zip",
-            "hash": "9df2028517f983fcc30c1041344c942831514645ce516497bb490b9e77073018"
+            "url": "https://github.com/amitbet/pr-manager/releases/download/v0.1.43/pr-manager_0.1.43_windows_amd64.zip",
+            "hash": "d48ecfc7920d94d0a92c7d682cae50a3866e2cd56c4f99a4e32d1bf6eba2dc70"
         },
         "arm64": {
-            "url": "https://github.com/amitbet/pr-manager/releases/download/v0.1.42/pr-manager_0.1.42_windows_arm64.zip",
-            "hash": "203faa51c1d266853cb2b5311fe6a13a04fab1717db54989910117eb614ac1a1"
+            "url": "https://github.com/amitbet/pr-manager/releases/download/v0.1.43/pr-manager_0.1.43_windows_arm64.zip",
+            "hash": "40b29999b31332d694b1e6c2ff56d4a666d2f9b35200e080a39bb1d88addd954"
         }
     },
     "bin": "pr-manager.exe",
