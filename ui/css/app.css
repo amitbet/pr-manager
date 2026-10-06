@@ -5,6 +5,7 @@
   --add-bg: #e6ffec; --add-num: #ccffd8; --del-bg: #ffebe9; --del-num: #ffd7d5; --hunk-bg: #ddf4ff; --accent: #0969da;
   --empty-bg: #f6f8fa; --exp-bg: #ddf4ff; --draft-bg: #fff8c5; --high: #bc4c00; --high-bg: #fff1e5;
   --warn: #9a6700; --warn-bg: #fff8c5;
+  --pr: #0969da; --pr-bg: #ddf4ff; --repo: #bf3989; --repo-bg: #ffeff7; --branch: #8250df; --branch-bg: #fbefff; --commit: #1b7c83; --commit-bg: #e0f5f5;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 /* js/theme.js sets data-theme from the saved choice or the system. */
@@ -16,6 +17,7 @@
   --add-bg: #12261e; --add-num: #1b4428; --del-bg: #25171c; --del-num: #542426; --hunk-bg: #121d2f; --accent: #4493f8;
   --empty-bg: #161b22; --exp-bg: #121d2f; --draft-bg: #2b2412; --high: #f0883e; --high-bg: #3d2410;
   --warn: #e3b341; --warn-bg: #3a2e0a;
+  --pr: #4493f8; --pr-bg: #121d2f; --repo: #db61a2; --repo-bg: #2f1426; --branch: #a371f7; --branch-bg: #271a3d; --commit: #39c5cf; --commit-bg: #0d2a2e;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); }
@@ -25,6 +27,8 @@ header { position: sticky; top: 0; z-index: 20; display: flex; gap: 8px; align-i
 header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
 input, select, button, textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 #url { flex: 1; min-width: 240px; font-family: var(--mono); font-size: 14px; }
+/* Tinted like the open result's badge (.kind below, js/triage.js syncURLKind). */
+#url[data-kind] { background: var(--k-bg, var(--bg)); border-color: var(--k, var(--border)); }
 button { cursor: pointer; background: var(--bg3); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button:disabled { opacity: .6; cursor: default; }
@@ -79,6 +83,7 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 .pr-item.active { background: var(--bg3); box-shadow: inset 3px 0 var(--accent); }
 .pr-item.triaging .t::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; animation: act-pulse 1s infinite alternate; }
 .pr-item .t { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-item .t code { font-family: var(--mono); font-size: 13px; }
 .pr-item .m { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; font-size: 12px; color: var(--muted); align-items: center; }
 .job-item { display: block; padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--fg); cursor: pointer; }
 .job-item:hover { background: var(--bg3); text-decoration: none; }
@@ -91,6 +96,14 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 .job-item .u { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .job-kind { font-size: 11px; font-weight: 600; text-transform: uppercase; background: var(--bg3); border-radius: 4px; padding: 0 6px; flex: none; }
 main { padding: 16px 24px 80px; min-width: 0; }
+/* What a result is (js/util.js kindBadge), one color per kind; the URL
+   field and the PR header's label take the same colors. */
+.kind.pr, #url[data-kind="pr"] { --k: var(--pr); --k-bg: var(--pr-bg); }
+.kind.repo, .kind-label.repo, #url[data-kind="repo"] { --k: var(--repo); --k-bg: var(--repo-bg); }
+.kind.branch, .kind-label.branch, #url[data-kind="branch"] { --k: var(--branch); --k-bg: var(--branch-bg); }
+.kind.commit, .kind-label.commit, #url[data-kind="commit"] { --k: var(--commit); --k-bg: var(--commit-bg); }
+.kind { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin-right: 6px; border-radius: 5px; vertical-align: -5px; background: var(--k); color: var(--bg); }
+.kind svg { width: 13px; height: 13px; }
 .pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; }
 .pill.human { color: var(--human); background: var(--human-bg); font-weight: 700; }
 .pill.skim { color: var(--skim); background: var(--skim-bg); }
@@ -98,6 +111,10 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .pill.none { color: var(--none); background: var(--none-bg); }
 .pill.draft { color: var(--warn); background: var(--draft-bg); }
 .pr-head h2 { margin: 0 0 4px; font-size: 22px; }
+.pr-head h2 .kind { width: 26px; height: 26px; margin-right: 8px; vertical-align: -3px; }
+.pr-head h2 .kind svg { width: 18px; height: 18px; }
+.pr-head h2 .ref { font-family: var(--mono); font-size: 20px; }
+.pr-head .kind-label { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; vertical-align: 4px; color: var(--k); background: var(--k-bg); text-transform: uppercase; letter-spacing: .04em; }
 .pr-head .meta { color: var(--muted); font-size: 14px; }
 .pr-head .meta code { font-family: var(--mono); font-size: 13px; }
 .pr-head .meta code { overflow-wrap: anywhere; }

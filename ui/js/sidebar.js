@@ -1,5 +1,5 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
-import { $, esc, api, pills, say } from "./util.js";
+import { $, esc, api, pills, say, kindBadge } from "./util.js";
 import { S, repoName, localSrc } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
@@ -72,7 +72,7 @@ export async function loadList() {
       </button>
       <div class="repo-prs">${prs.map((r) => `
         <a class="pr-item ${S.result?.key === r.key ? "active" : ""}" data-key="${esc(r.key)}" data-src="${esc(localSrc(r) || `https://${r.pr.host || "github.com"}/${r.pr.owner}/${r.pr.repo}/pull/${r.pr.number}`)}">
-          <span class="t">${r.local_path ? esc(r.head_ref) : `#${r.pr.number}`} ${esc(r.title)}</span>
+          <span class="t">${kindBadge(r)}${r.local_path ? `<code>${esc(r.head_ref)}</code>` : `#${r.pr.number}`} ${esc(r.title)}</span>
           <span class="m">${pills(r.counts)} ${r.impact ? impactPill(r.impact, "imp") : ""}${r.likelihood ? likelihoodPill(r.likelihood, "lik") : ""} <span>${esc(r.state.toLowerCase())}</span> <span title="${esc(r.classifier)}">· ${esc(r.classifier.split("/").pop())}</span></span>
         </a>`).join("")}</div>
     </div>`;

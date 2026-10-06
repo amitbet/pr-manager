@@ -36,14 +36,25 @@ async function triage(offer, force = false) {
 // counts when it doesn't start like a path.
 export const isLocalPath = (s) => /^([/~.\\]|[A-Za-z]:)/.test(s) || (!/^https?:\/\//.test(s) && !/^[^\s]+\/[^\s]+#\d+$/.test(s));
 
+// syncURLKind tints the form like the sidebar's badges (js/util.js
+// kindBadge): an open result passes its kind; typed text is a PR, a
+// path (the working tree) or a path#rev, taken as a branch since the rev
+// may name either.
+export function syncURLKind(kind) {
+  const url = $("#url").value.trim();
+  $("#url").dataset.kind = kind || (!url ? "" : !isLocalPath(url) ? "pr" : url.includes("#") ? "branch" : "repo");
+}
+
 // initTriage wires the form.
 export function initTriage() {
   $("#go").onclick = () => triage(true);
+  $("#url").addEventListener("input", () => syncURLKind());
   $("#url").addEventListener("keydown", (e) => e.key === "Enter" && triage(true));
 }
 
 // triageURL fills the form with a PR link and starts triaging it.
 export function triageURL(url) {
   $("#url").value = url;
+  syncURLKind();
   triage(false);
 }

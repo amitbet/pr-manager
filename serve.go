@@ -139,6 +139,8 @@ type prSummary struct {
 	LocalPath  string                `json:"local_path,omitempty"`
 	Rev        string                `json:"rev,omitempty"`
 	HeadRef    string                `json:"head_ref,omitempty"`
+	// SingleCommit marks a Rev that is one commit, for the sidebar's badge.
+	SingleCommit bool `json:"single_commit,omitempty"`
 }
 
 // triager runs PR triage jobs and caches results as JSON files.
@@ -618,7 +620,7 @@ func (t *triager) List() ([]prSummary, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, prSummary{Key: r.Key, PR: r.PR.PRRef, Title: r.PR.Title, State: r.PR.State, LocalPath: r.PR.LocalPath, Rev: r.PR.Rev, HeadRef: r.PR.HeadRef,
+		out = append(out, prSummary{Key: r.Key, PR: r.PR.PRRef, Title: r.PR.Title, State: r.PR.State, LocalPath: r.PR.LocalPath, Rev: r.PR.Rev, HeadRef: r.PR.HeadRef, SingleCommit: r.PR.SingleCommit,
 			Classifier: r.Classifier, CreatedAt: r.CreatedAt, Counts: r.Counts, Impact: r.Impact, Likelihood: r.Likelihood, Attention: r.Attention})
 	}
 	sort.Slice(out, func(i, j int) bool {

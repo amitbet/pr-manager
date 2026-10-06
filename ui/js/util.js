@@ -12,6 +12,21 @@ for (const k of Object.keys(localStorage)) {
 export const $ = (s) => document.querySelector(s);
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// kindBadge is the colored icon square before a title saying what was
+// triaged: a PR, a local repo's working tree, a branch in it or one commit.
+const KIND_ICON = {
+  pr: `<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/>`,
+  repo: `<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/><circle cx="12" cy="13" r="2"/><path d="M7 13h3M14 13h3"/>`,
+  branch: `<circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 3v12M18 9a9 9 0 0 1-9 9"/>`,
+  commit: `<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>`,
+};
+export const KIND_TITLE = { pr: "pull request", repo: "working tree", branch: "local branch", commit: "local commit" };
+export const kindOf = (p) => (!p.local_path ? "pr" : p.single_commit ? "commit" : p.rev ? "branch" : "repo");
+export const kindBadge = (p) => {
+  const k = kindOf(p);
+  return `<span class="kind ${k}" title="${KIND_TITLE[k]}" aria-label="${KIND_TITLE[k]}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${KIND_ICON[k]}</svg></span>`;
+};
+
 export const BUCKETS = ["human", "skim", "aux", "none"];
 export const LABEL = { human: "human review", skim: "skim", aux: "auxiliary", none: "no review" };
 

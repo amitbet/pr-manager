@@ -5,7 +5,7 @@
 // export `actions`: handlers keyed by data-act. A handler changes state and
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
-import { $, esc, api, postJSON, say } from "./util.js";
+import { $, esc, api, postJSON, say, kindBadge, kindOf, KIND_TITLE } from "./util.js";
 import { S, onRender, render, syncURL, prBase, repoName, localSrc, allUnits } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
@@ -16,7 +16,7 @@ import { filesHTML, mountFiles, shownFile, actions as filesActions } from "./fil
 import { treemapHTML, renderTreemap, actions as treemapActions } from "./treemap.js";
 import { initPanel, renderPanel, panelOpen, closePanel, updateReviewButton } from "./panel.js";
 import { initSidebar, loadList } from "./sidebar.js";
-import { initTriage, triageURL } from "./triage.js";
+import { initTriage, triageURL, syncURLKind } from "./triage.js";
 import { initRevPicker } from "./revpicker.js";
 import { initSettings, refreshSettings, jobSettings } from "./settings.js";
 import { fixBanner, initFix, actions as fixActions } from "./fix.js";
@@ -119,7 +119,7 @@ function prHeadHTML(r) {
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
   return `
     <div class="pr-head">
-      <h2>${local ? esc(pr.title || pr.head_ref) : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`}</h2>
+      <h2>${kindBadge(pr)}${local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span> <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span>` : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`}</h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
         <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·
@@ -252,6 +252,7 @@ async function showKey(key) {
   S.drafts = drafts;
   syncURL();
   $("#url").value = localSrc(r.pr) || r.pr.url;
+  syncURLKind(kindOf(r.pr));
   closePanel();
   render();
   refreshSettings();
