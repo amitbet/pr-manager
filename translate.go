@@ -55,7 +55,7 @@ var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 
 // translation returns r's text in the job's summary language, translating
 // it once and caching it under results/translations. English is never
-// translated.
+// translated, except for results reviewed in another language.
 func (t *triager) translation(ctx context.Context, r *PRResult, jo jobOptions) (*translation, error) {
 	return t.translate(ctx, r, t.options(jo))
 }
@@ -63,7 +63,13 @@ func (t *triager) translation(ctx context.Context, r *PRResult, jo jobOptions) (
 func (t *triager) translate(ctx context.Context, r *PRResult, o options) (*translation, error) {
 	ctx = usageCtx(ctx, "translate", r)
 	lang := o.summaryLang
-	if triage.IsEnglish(lang) || strings.EqualFold(lang, r.SummaryLang) {
+	if triage.IsEnglish(lang) {
+		if triage.IsEnglish(r.SummaryLang) {
+			return &translation{Units: map[string]triage.UnitText{}}, nil
+		}
+		lang = "English" // reviewed in another language before translation
+	}
+	if strings.EqualFold(lang, r.SummaryLang) {
 		return &translation{Units: map[string]triage.UnitText{}}, nil
 	}
 	texts := resultTexts(r)

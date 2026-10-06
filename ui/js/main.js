@@ -154,7 +154,7 @@ function prHeadHTML(r) {
 
 // translateBanner says the text is being replaced, or why it wasn't.
 const translateBanner = (r) => r.translating
-  ? `<div class="tr-banner" role="status"><span class="spinner"></span>Translating to ${esc(r.translating)}… the English below is replaced when it's ready.</div>`
+  ? `<div class="tr-banner" role="status"><span class="spinner"></span>Translating to ${esc(r.translating)}… the text below is replaced when it's ready.</div>`
   : r.translate_error ? `<div class="tr-banner error" role="status">${esc(r.translate_error)}</div>` : "";
 
 const tabsHTML = () => `<div class="tabs">${TABS.map((t) => {

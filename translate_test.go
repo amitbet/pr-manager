@@ -72,6 +72,9 @@ func TestTranslationCache(t *testing.T) {
 	if got, _ := tr.translation(context.Background(), r, lang("Hebrew")); got.Lang != "" || fake.calls != 2 {
 		t.Errorf("a result already in the language is shown as it is: %+v", got)
 	}
+	if got, _ := tr.translation(context.Background(), r, lang("")); got.Lang != "English" || fake.calls != 3 {
+		t.Errorf("a result reviewed in Hebrew is translated to English: %+v calls=%d", got, fake.calls)
+	}
 }
 
 type overviewLLM struct{ calls int }

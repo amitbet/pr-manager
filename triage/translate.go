@@ -136,13 +136,11 @@ type translateItem struct {
 }
 
 // Translate translates texts (keyed by unit ID) and ov, which may be nil,
-// into lang, in batches. English returns them as they are, without a call.
+// into lang, in batches. Callers skip English for English text; lang is
+// English only for text reviewed in another language.
 // Any failed batch fails the whole translation, so a half-translated PR is
 // never cached.
 func Translate(ctx context.Context, l llm.LLMTool, lang string, texts map[string]UnitText, ov *Overview) (map[string]UnitText, *Overview, error) {
-	if IsEnglish(lang) {
-		return texts, ov, nil
-	}
 	// Copies of the texts, and pointers to each string to translate.
 	copies := make(map[string]*UnitText, len(texts))
 	var slots []*string

@@ -37,7 +37,8 @@ export const trDir = (u, path, text) => `dir="${RTL.test(shown(u, path, text) ||
 export function trToggle(u, path, text) {
   if (translated(u, path, text) === undefined) return "";
   const key = keyOf(u, path), on = S.showEn.has(key);
-  return `<button class="tr-en${on ? " on" : ""}" data-act="tr-en" data-key="${esc(key)}" title="${on ? `Back to ${esc(S.result.summary_lang)}` : "Show the English"}">EN</button>`;
+  const from = english.get(S.result).lang || "English"; // the result's own language
+  return `<button class="tr-en${on ? " on" : ""}" data-act="tr-en" data-key="${esc(key)}" title="${on ? `Back to ${esc(S.result.summary_lang)}` : `Show the ${esc(from)}`}">${esc(from.slice(0, 2).toUpperCase())}</button>`;
 }
 
 export const trText = (u, path, text) => trShown(u, path, text) + trToggle(u, path, text);

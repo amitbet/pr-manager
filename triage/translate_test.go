@@ -38,14 +38,6 @@ func TestTranslate(t *testing.T) {
 			Issues: []IssueText{{Title: "Leak", Scenario: "ctx cancelled -> goroutine stays"}}},
 		"b.go": {Headline: "Renames a var"},
 	}
-	for _, lang := range []string{"", "English", " english "} {
-		calls := 0
-		got, _, err := Translate(context.Background(), prefixLLM(&calls, false), lang, texts, nil)
-		if err != nil || calls != 0 || got["a.go"].Summary != "Retries `Fetch`." {
-			t.Errorf("%q: calls=%d err=%v got=%+v, want no translation", lang, calls, err, got)
-		}
-	}
-
 	calls := 0
 	ov := &Overview{Why: "Fetch fails on flaky links.", How: []string{"Wraps `Fetch` in a retry"}}
 	got, gotOv, err := Translate(context.Background(), prefixLLM(&calls, false), "Hebrew", texts, ov)

@@ -47,8 +47,8 @@ function restore(r) {
   budget.apply(r, S.cfg); // the bucket text quotes pin_why and floor_why
 }
 
-// translate shows the open result in the chosen summary language. English
-// (or the result's own language) makes no request.
+// translate shows the open result in the chosen summary language. The
+// result's own language makes no request.
 export async function translate() {
   const r = S.result;
   if (!r) return;
@@ -56,8 +56,10 @@ export async function translate() {
   const had = english.has(r) || r.translating || r.translate_error;
   restore(r);
   r.translating = r.translate_error = "";
-  const lang = summaryLang();
-  if (!lang || lang.toLowerCase() === "english" || lang.toLowerCase() === (r.summary_lang || "").toLowerCase()) {
+  // A result reviewed in another language before translation is
+  // translated to English too.
+  const lang = summaryLang() || (r.summary_lang && r.summary_lang.toLowerCase() !== "english" ? "English" : "");
+  if (!lang || lang.toLowerCase() === (r.summary_lang || "english").toLowerCase()) {
     if (had) { syncComposer(); render(); }
     return;
   }
