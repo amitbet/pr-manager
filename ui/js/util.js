@@ -9,6 +9,15 @@ for (const k of Object.keys(localStorage)) {
   localStorage.removeItem(k);
 }
 
+// The desktop app's webview ignores target="_blank", so a link out of the
+// app goes to the system browser through the Wails runtime instead.
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.('a[target="_blank"]');
+  if (!a || !window.runtime?.BrowserOpenURL || !/^https?:/.test(a.href)) return;
+  e.preventDefault();
+  window.runtime.BrowserOpenURL(a.href);
+}, true);
+
 export const $ = (s) => document.querySelector(s);
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 

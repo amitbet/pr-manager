@@ -106,8 +106,19 @@ function webBase(pr) {
 const OPEN_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>`;
 const iconLink = (url, t) => `<a class="open-link" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(t)}" aria-label="${esc(t)}">${OPEN_ICON}</a>`;
 const openLink = (w, path, what) => (w ? iconLink(w.repo + path, `Open ${what} on ${w.forge}`) : "");
-const refLink = (w, ref) => openLink(w, `${w?.sub}/tree/${ref.split("/").map(encodeURIComponent).join("/")}`, `branch ${ref}`);
-const commitLink = (w, oid) => openLink(w, `${w?.sub}/commit/${encodeURIComponent(oid)}`, `commit ${oid.slice(0, 8)}`);
+const refPath = (w, ref) => `${w.sub}/tree/${ref.split("/").map(encodeURIComponent).join("/")}`;
+const commitPath = (w, oid) => `${w.sub}/commit/${encodeURIComponent(oid)}`;
+const refLink = (w, ref) => (w ? openLink(w, refPath(w, ref), `branch ${ref}`) : "");
+const commitLink = (w, oid) => (w ? openLink(w, commitPath(w, oid), `commit ${oid.slice(0, 8)}`) : "");
+
+// titleLink is the page the header title opens: the PR, else a single
+// commit's page or the branch's, or none without a forge.
+function titleLink(pr, w) {
+  if (pr.url) return { url: pr.url, what: `Open the PR on ${w?.forge || "GitHub"}` };
+  if (!w) return null;
+  if (pr.single_commit) return { url: w.repo + commitPath(w, pr.head_oid), what: `Open commit ${pr.head_oid.slice(0, 8)} on ${w.forge}` };
+  return { url: w.repo + refPath(w, pr.head_ref), what: `Open branch ${pr.head_ref} on ${w.forge}` };
+}
 
 function prHeadHTML(r) {
   const pr = r.pr;
@@ -116,10 +127,12 @@ function prHeadHTML(r) {
   // A single commit's refs are its parent's id (or the empty tree) and nothing.
   const branch = (ref) => (pr.single_commit || !ref ? "" : refLink(w, ref));
   const commit = (oid) => (pr.base_ref === "empty tree" && oid === pr.base_oid ? "" : commitLink(w, oid));
+  const tl = titleLink(pr, w);
+  const title = (h) => (tl ? `<a class="title" href="${esc(tl.url)}" target="_blank" rel="noopener" title="${esc(tl.what)}">${h}</a>${local ? iconLink(tl.url, tl.what) : ""}` : h);
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
   return `
     <div class="pr-head">
-      <h2>${kindBadge(pr)}${local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span> <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span>` : `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a> <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`}</h2>
+      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`} <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span></h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
         <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·

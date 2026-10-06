@@ -98,7 +98,7 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 main { padding: 16px 24px 80px; min-width: 0; }
 /* What a result is (js/util.js kindBadge), one color per kind; the URL
    field and the PR header's label take the same colors. */
-.kind.pr, #url[data-kind="pr"] { --k: var(--pr); --k-bg: var(--pr-bg); }
+.kind.pr, .kind-label.pr, #url[data-kind="pr"] { --k: var(--pr); --k-bg: var(--pr-bg); }
 .kind.repo, .kind-label.repo, #url[data-kind="repo"] { --k: var(--repo); --k-bg: var(--repo-bg); }
 .kind.branch, .kind-label.branch, #url[data-kind="branch"] { --k: var(--branch); --k-bg: var(--branch-bg); }
 .kind.commit, .kind-label.commit, #url[data-kind="commit"] { --k: var(--commit); --k-bg: var(--commit-bg); }
@@ -113,6 +113,7 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .pr-head h2 { margin: 0 0 4px; font-size: 22px; }
 .pr-head h2 .kind { width: 26px; height: 26px; margin-right: 8px; vertical-align: -3px; }
 .pr-head h2 .kind svg { width: 18px; height: 18px; }
+.pr-head h2 a.title { color: var(--fg); }
 .pr-head h2 .ref { font-family: var(--mono); font-size: 20px; }
 .pr-head .kind-label { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; vertical-align: 4px; color: var(--k); background: var(--k-bg); text-transform: uppercase; letter-spacing: .04em; }
 .pr-head .meta { color: var(--muted); font-size: 14px; }
