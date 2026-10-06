@@ -140,7 +140,13 @@ func run(t *testing.T, ts *wsTools, name string, args map[string]any) (string, e
 // nowhere else, through .. or a symlink.
 func TestWorkspaceToolsConfined(t *testing.T) {
 	ts, other, outside := testTools(t)
-	for _, p := range []string{"../" + filepath.Base(outside) + "/secret", filepath.Join(outside, "secret"), "link", "/etc/hosts"} {
+	// An absolute path of the system's, outside every place: /etc/hosts is
+	// relative on Windows, so there it is the drive's.
+	system := "/etc/hosts"
+	if v := filepath.VolumeName(outside); v != "" {
+		system = v + `\Windows\System32\drivers\etc\hosts`
+	}
+	for _, p := range []string{"../" + filepath.Base(outside) + "/secret", filepath.Join(outside, "secret"), "link", system} {
 		if _, err := run(t, ts, "read_file", map[string]any{"path": p}); err == nil || !strings.Contains(err.Error(), "outside") {
 			t.Errorf("read %s: %v", p, err)
 		}
