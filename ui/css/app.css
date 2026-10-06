@@ -118,9 +118,9 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .kind.branch, .kind-label.branch, #url[data-kind="branch"] { --k: var(--branch); --k-bg: var(--branch-bg); }
 .kind.commit, .kind-label.commit, #url[data-kind="commit"] { --k: var(--commit); --k-bg: var(--commit-bg); }
 /* A PR's badge is colored by its state, as on GitHub (kept current by prwatch.go). */
-.kind.pr[data-state="open"], .kind-label.pr[data-state="open"] { --k: var(--pr-open); --k-bg: var(--pr-open-bg); }
-.kind.pr[data-state="merged"], .kind-label.pr[data-state="merged"] { --k: var(--pr-merged); --k-bg: var(--pr-merged-bg); }
-.kind.pr[data-state="closed"], .kind-label.pr[data-state="closed"] { --k: var(--pr-closed); --k-bg: var(--pr-closed-bg); }
+.kind.pr[data-state="open"], .kind-label.pr[data-state="open"], #url[data-kind="pr"][data-state="open"] { --k: var(--pr-open); --k-bg: var(--pr-open-bg); }
+.kind.pr[data-state="merged"], .kind-label.pr[data-state="merged"], #url[data-kind="pr"][data-state="merged"] { --k: var(--pr-merged); --k-bg: var(--pr-merged-bg); }
+.kind.pr[data-state="closed"], .kind-label.pr[data-state="closed"], #url[data-kind="pr"][data-state="closed"] { --k: var(--pr-closed); --k-bg: var(--pr-closed-bg); }
 .kind { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin-right: 6px; border-radius: 5px; vertical-align: -5px; background: var(--k); color: var(--bg); }
 .kind svg { width: 13px; height: 13px; }
 .pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; }

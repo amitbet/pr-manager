@@ -1,5 +1,5 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
-import { $, esc, api, postJSON, pills, ask, say, kindBadge, USED_EVENT } from "./util.js";
+import { $, esc, api, postJSON, pills, ask, say, kindBadge, prState, USED_EVENT } from "./util.js";
 import { S, repoName, localSrc, render } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
@@ -169,6 +169,7 @@ export async function loadList() {
   const now = S.result?.pr && list.find((r) => r.key === S.result.key);
   if (now && now.state !== S.result.pr.state) {
     S.result.pr.state = now.state;
+    $("#url").dataset.state = prState(S.result.pr);
     render();
   }
   shownList = list;

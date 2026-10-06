@@ -265,7 +265,7 @@ async function showKey(key) {
   S.drafts = drafts;
   syncURL();
   $("#url").value = localSrc(r.pr) || r.pr.url;
-  syncURLKind(kindOf(r.pr));
+  syncURLKind(kindOf(r.pr), prState(r.pr));
   closePanel();
   render();
   refreshSettings();
