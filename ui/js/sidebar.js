@@ -1,6 +1,6 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
 import { $, esc, api, pills, say, kindBadge, USED_EVENT } from "./util.js";
-import { S, repoName, localSrc } from "./state.js";
+import { S, repoName, localSrc, render } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
 
@@ -64,6 +64,7 @@ export function initSidebar(pick) {
     setSideCollapsed(collapsed);
     localStorage.setItem(SIDE_KEY, collapsed ? "1" : "0");
   });
+  watchStates();
   document.addEventListener(USED_EVENT, (e) => {
     const key = e.detail || S.result?.key;
     const r = shownList?.find((x) => x.key === key) || (S.result?.key === key && { ...S.result.pr, pr: S.result.pr });
@@ -97,8 +98,28 @@ export function initSidebar(pick) {
   });
 }
 
+// watchStates reloads the list when the server's PR watch (prwatch.go)
+// saved a new state, such as a PR merged on GitHub. The watch does the
+// polite polling of GitHub; this only asks the local server.
+const WATCH_EVERY = 30 * 1000;
+function watchStates() {
+  let gen = 0; // the server starts at 0, and its first checks run before the first poll
+  setInterval(async () => {
+    const w = await api("/api/prwatch").catch(() => null);
+    if (!w) return;
+    if (w.gen !== gen) loadList();
+    gen = w.gen;
+  }, WATCH_EVERY);
+}
+
 export async function loadList() {
   const list = await api("/api/results");
+  // The open result takes a state the watch saved since it was loaded.
+  const now = S.result?.pr && list.find((r) => r.key === S.result.key);
+  if (now && now.state !== S.result.pr.state) {
+    S.result.pr.state = now.state;
+    render();
+  }
   shownList = list;
   // Changes no longer listed lose their last use.
   const ids = new Set(list.map(identityOf));

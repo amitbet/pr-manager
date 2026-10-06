@@ -23,6 +23,7 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 
 // kindBadge is the colored icon square before a title saying what was
 // triaged: a PR, a local repo's working tree, a branch in it or one commit.
+// A PR's is colored by its state (open, merged or closed).
 const KIND_ICON = {
   pr: `<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/>`,
   repo: `<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/><circle cx="12" cy="13" r="2"/><path d="M7 13h3M14 13h3"/>`,
@@ -31,9 +32,12 @@ const KIND_ICON = {
 };
 export const KIND_TITLE = { pr: "pull request", repo: "working tree", branch: "local branch", commit: "local commit" };
 export const kindOf = (p) => (!p.local_path ? "pr" : p.single_commit ? "commit" : p.rev ? "branch" : "repo");
+export const prState = (p) => (kindOf(p) === "pr" && p.state ? p.state.toLowerCase() : "");
 export const kindBadge = (p) => {
   const k = kindOf(p);
-  return `<span class="kind ${k}" title="${KIND_TITLE[k]}" aria-label="${KIND_TITLE[k]}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${KIND_ICON[k]}</svg></span>`;
+  const st = prState(p);
+  const label = st ? `${st} ${KIND_TITLE[k]}` : KIND_TITLE[k];
+  return `<span class="kind ${k}" data-state="${esc(st)}" title="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${KIND_ICON[k]}</svg></span>`;
 };
 
 export const BUCKETS = ["human", "skim", "aux", "none"];

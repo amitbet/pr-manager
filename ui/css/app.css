@@ -6,6 +6,7 @@
   --empty-bg: #f6f8fa; --exp-bg: #ddf4ff; --draft-bg: #fff8c5; --high: #bc4c00; --high-bg: #fff1e5;
   --warn: #9a6700; --warn-bg: #fff8c5;
   --pr: #0969da; --pr-bg: #ddf4ff; --repo: #bf3989; --repo-bg: #ffeff7; --branch: #8250df; --branch-bg: #fbefff; --commit: #1b7c83; --commit-bg: #e0f5f5;
+  --pr-open: #1a7f37; --pr-open-bg: #dafbe1; --pr-merged: #8250df; --pr-merged-bg: #fbefff; --pr-closed: #cf222e; --pr-closed-bg: #ffebe9;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 /* js/theme.js sets data-theme from the saved choice or the system. */
@@ -18,6 +19,7 @@
   --empty-bg: #161b22; --exp-bg: #121d2f; --draft-bg: #2b2412; --high: #f0883e; --high-bg: #3d2410;
   --warn: #e3b341; --warn-bg: #3a2e0a;
   --pr: #4493f8; --pr-bg: #121d2f; --repo: #db61a2; --repo-bg: #2f1426; --branch: #a371f7; --branch-bg: #271a3d; --commit: #39c5cf; --commit-bg: #0d2a2e;
+  --pr-open: #3fb950; --pr-open-bg: #12261e; --pr-merged: #a371f7; --pr-merged-bg: #271a3d; --pr-closed: #f85149; --pr-closed-bg: #25171c;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); }
@@ -110,6 +112,10 @@ main { padding: 16px 24px 80px; min-width: 0; }
 .kind.repo, .kind-label.repo, #url[data-kind="repo"] { --k: var(--repo); --k-bg: var(--repo-bg); }
 .kind.branch, .kind-label.branch, #url[data-kind="branch"] { --k: var(--branch); --k-bg: var(--branch-bg); }
 .kind.commit, .kind-label.commit, #url[data-kind="commit"] { --k: var(--commit); --k-bg: var(--commit-bg); }
+/* A PR's badge is colored by its state, as on GitHub (kept current by prwatch.go). */
+.kind.pr[data-state="open"], .kind-label.pr[data-state="open"] { --k: var(--pr-open); --k-bg: var(--pr-open-bg); }
+.kind.pr[data-state="merged"], .kind-label.pr[data-state="merged"] { --k: var(--pr-merged); --k-bg: var(--pr-merged-bg); }
+.kind.pr[data-state="closed"], .kind-label.pr[data-state="closed"] { --k: var(--pr-closed); --k-bg: var(--pr-closed-bg); }
 .kind { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin-right: 6px; border-radius: 5px; vertical-align: -5px; background: var(--k); color: var(--bg); }
 .kind svg { width: 13px; height: 13px; }
 .pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; line-height: 20px; }

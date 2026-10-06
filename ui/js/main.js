@@ -5,7 +5,7 @@
 // export `actions`: handlers keyed by data-act. A handler changes state and
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
-import { $, esc, api, postJSON, say, kindBadge, kindOf, KIND_TITLE } from "./util.js";
+import { $, esc, api, postJSON, say, kindBadge, kindOf, prState, KIND_TITLE } from "./util.js";
 import { S, onRender, render, syncURL, prBase, repoName, localSrc, allUnits } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
@@ -132,7 +132,7 @@ function prHeadHTML(r) {
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
   return `
     <div class="pr-head">
-      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span></h2>
+      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}" data-state="${esc(prState(pr))}">${KIND_TITLE[kindOf(pr)]}</span></h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
         <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·

@@ -156,6 +156,9 @@ type triager struct {
 	// reviews keeps the pending review comments, for the chat agent (nil
 	// in tests that build a triager directly).
 	reviews *reviews
+	// watch keeps the saved PRs' state current (prwatch.go; nil in tests
+	// that build a triager directly).
+	watch *prWatch
 
 	mu    sync.Mutex
 	jobs  map[string]*job
@@ -951,6 +954,8 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	t.reviews = rv
 	static, _ := fs.Sub(uiFS, "ui")
 	mux := http.NewServeMux()
+	t.watch = newPRWatch(t)
+	t.watch.routes(mux)
 	rv.routes(mux, t)
 	t.chatActionRoutes(mux)
 	t.dismissed.routes(mux, t)
@@ -1009,6 +1014,9 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		if err != nil {
 			writeErr(w, 404, err)
 			return
+		}
+		if res.PR != nil && res.PR.LocalPath == "" {
+			t.watch.touch(res.PR.PRRef)
 		}
 		writeJSON(w, 200, res)
 	})
@@ -1338,6 +1346,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			}
 		}()
 	}
+	t.watch.start()
 	return t.withRoot(mux), func() { t.shutdown(shutdownWait) }, nil
 }
 
