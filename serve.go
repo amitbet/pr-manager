@@ -145,6 +145,7 @@ type triager struct {
 	opts    options
 	fetcher *triage.PRFetcher
 	results string
+	usage   *usageStore // every model call's tokens (usage.go)
 
 	// dismissed holds the issues people rejected, applied to every result
 	// as it loads (nil in tests that build a triager directly).
@@ -207,6 +208,10 @@ func newTriager(o options) (*triager, error) {
 		trLocks: map[string]*sync.Mutex{},
 	}
 	t.checkouts = newFixCheckouts(o.cache, t.fetcher)
+	t.usage = &usageStore{dir: filepath.Join(o.cache, "usage")}
+	if o.cache != "" {
+		llm.SetUsageSink(t.usage.add)
+	}
 	t.root, t.cancelRoot = context.WithCancel(context.Background())
 	d, err := newDismissals(o)
 	if err != nil {
@@ -637,7 +642,7 @@ func (t *triager) newJob(kind, url string) (*job, context.Context, func(stage st
 		j.done = t.running.Done
 	}
 	t.mu.Unlock()
-	ctx := activity.With(t.root, j.log)
+	ctx := llm.WithUsage(activity.With(t.root, j.log), llm.UsageTag{Activity: kind, Source: url})
 	activity.Printf(ctx, "started %s", url)
 	return j, ctx, func(stage string, done, total int) {
 		t.mu.Lock()

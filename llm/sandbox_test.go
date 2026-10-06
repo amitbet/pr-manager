@@ -42,3 +42,40 @@ func TestClaudeShellSettings(t *testing.T) {
 		}
 	}
 }
+
+// With Builds, Claude Code may write there and nowhere else, with Go's
+// caches pointed at it and no module downloads; codex builds only in a
+// scratch copy, in workspace-write.
+func TestBuildSandbox(t *testing.T) {
+	ws := &Workspace{Dir: "/repo", Shell: true, Builds: "/tmp/b"}
+	b, err := claudeSettings(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct {
+		Sandbox struct {
+			Filesystem struct{ AllowWrite, DenyWrite []string }
+		}
+		Env map[string]string
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.Sandbox.Filesystem.AllowWrite, " "); got != "/tmp/b" {
+		t.Errorf("allowWrite %q", got)
+	}
+	if s.Env["GOCACHE"] != "/tmp/b/cache" || s.Env["GOPROXY"] != "off" || s.Env["GOFLAGS"] != "-mod=readonly" {
+		t.Errorf("env %v", s.Env)
+	}
+	if codexSandbox(ws) != "read-only" || codexBuildArgs(ws) != nil {
+		t.Error("codex builds in a directory that isn't a scratch copy")
+	}
+	ws.Scratch = true
+	args := strings.Join(codexBuildArgs(ws), " ")
+	if codexSandbox(ws) != "workspace-write" || !strings.Contains(args, `writable_roots=["/tmp/b"]`) || !strings.Contains(args, "network_access=false") || !strings.Contains(args, `shell_environment_policy.set.GOCACHE="/tmp/b/cache"`) {
+		t.Errorf("codex: %s %s", codexSandbox(ws), args)
+	}
+	if buildNote(ws) == "" || buildNote(&Workspace{Dir: "/repo"}) != "" {
+		t.Error("build note")
+	}
+}

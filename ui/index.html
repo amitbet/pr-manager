@@ -56,7 +56,17 @@
 <dialog id="settings" class="settings-dlg" aria-labelledby="settings-title">
   <form method="dialog">
     <div class="dlg-head"><h3 id="settings-title">Settings</h3><button class="icon" value="close" aria-label="Close">✕</button></div>
-    <section>
+    <div class="set-body">
+    <nav class="set-tabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" data-set-tab="models">Models</button>
+      <button type="button" role="tab" data-set-tab="review">Review</button>
+      <button type="button" role="tab" data-set-tab="codemap">Code map</button>
+      <button type="button" role="tab" data-set-tab="chat">Chat agent</button>
+      <button type="button" role="tab" data-set-tab="fixes">Fixes</button>
+      <button type="button" role="tab" data-set-tab="stats">Statistics</button>
+    </nav>
+    <div class="set-panes">
+    <section data-tab="models">
       <h4>Models <span class="info" tabindex="0" aria-label="About models">i<span class="tip" role="tooltip">Used by the next triage. A different model gives a different cached result. The reviewer triages, summarizes and reviews each unit in one call. Set it to off for a classify-only run, which picks a classifier instead.</span></span> <button type="button" id="providers-refresh" class="linkbtn">refresh list</button></h4>
       <div class="grid">
         <span>Reviewer</span>
@@ -70,7 +80,7 @@
         <select id="chat_model" aria-label="chat agent model"><option value="">default model</option></select>
       </div>
     </section>
-    <section>
+    <section data-tab="codemap">
       <h4>Code map <span class="info" tabindex="0" aria-label="About code map">i<span class="tip" role="tooltip">Impact scores come from a map of your repos. Index now links the checkouts in the local directory (as they are on disk, uncommitted changes included), clones the org&#39;s other repos, and re-reads only repos that changed. A PR from a repo outside the map is added when it&#39;s triaged. Cross-repo impact only counts mapped repos, so index the whole org. Server defaults: <code>PR_MANAGER_CODE_ROOT</code>, <code>PR_MANAGER_ORG</code>.</span></span></h4>
       <div class="grid codemap-src">
         <label for="code_root">Local code directory</label>
@@ -80,7 +90,7 @@
       </div>
       <div class="codemap-actions"><button type="button" id="index-btn">Index now</button> <span id="index-status" class="hint"></span></div>
     </section>
-    <section>
+    <section data-tab="models">
       <h4>Summary language <span class="info" tabindex="0" aria-label="About summary language">i<span class="tip" role="tooltip">Language of headlines, summaries, review notes and issues. PRs are reviewed in English and translated in the background by the translator model; the EN button switches between the two. Translations are cached, so a new translator applies to PRs not translated yet. Code, paths and quoted evidence aren&#39;t translated. Defaults are the fastest models in a benchmark: gpt-5.6-luna at minimal effort on codex, Claude Sonnet 5.5 at low on claude-code.</span></span></h4>
       <select id="summary_lang" aria-label="summary language"></select>
       <div class="grid translate-opts" id="translate-opts">
@@ -92,16 +102,16 @@
         <span></span>
       </div>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Review budget <span class="info" tabindex="0" aria-label="About review budget">i<span class="tip" role="tooltip">How much of the PR goes to human review. Toward Less, a clean review counts for more, and on Less and Least a unit held at skim can drop to none. Code drops to none only when its measured impact and likelihood alone score under skim. Tests, docs and fixtures stay in auxiliary unless the review or a weakened test raises them. Pinned units (force_human paths, critical impact, medium or worse issues, failed reviews) always stay in human review. Moving the slider re-buckets the open PR without re-running it.</span></span></h4>
       <div class="budget"><span>More</span><input type="range" id="budget" min="0" max="4" step="1" aria-label="review budget"><span>Less</span></div>
       <div id="budget-info" class="hint"></div>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Walkthrough steps <span class="info" tabindex="0" aria-label="About walkthrough steps">i<span class="tip" role="tooltip">What one step of the walkthrough holds. None: a single declaration. By file: a file&#39;s changes in file order; a file over 400 changed lines is split between declarations. By relation: declarations that name each other (caller and callee), a test and the code it is named after, and small changes in one file, up to 8 declarations and 400 changed lines a step. In a step with several changes, each change&#39;s review sits above its code, and reviews without issues start collapsed unless the change is in human review. Every step lists the changed definitions it uses from elsewhere, collapsed. Only changes how the walkthrough is shown, so it applies at once. It is separate from the grouping the reviewer model uses to save calls.</span></span></h4>
       <label class="check">Grouping <select id="wz_steps" aria-label="walkthrough grouping"><option value="unit">none</option><option value="file">by file</option><option value="related">by relation</option></select></label>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Review view <span class="info" tabindex="0" aria-label="About review view">i<span class="tip" role="tooltip">What the app opens with. The buttons on the page switch the mode and the diff view until the next reload. With focus on, a walkthrough step of several changes (or showing a whole file), or any file in the Files mode, opens scrolled to its highest-ranked change (by bucket, then score) instead of its top.</span></span></h4>
       <div class="grid review-view">
         <label for="review_mode">Open PRs in</label>
@@ -111,7 +121,7 @@
       </div>
       <label class="check"><input type="checkbox" id="focus_top"> scroll to the highest-ranked change when opening a step or file</label>
     </section>
-    <section>
+    <section data-tab="chat">
       <h4>Chat hotkeys <span class="info" tabindex="0" aria-label="About the chat hotkeys">i<span class="tip" role="tooltip">Open puts the cursor in the chat agent&#39;s prompt, or brings its pop-out window to the front; the default is A, or Ctrl+/ (⌘/ on a Mac) from anywhere. Collapse turns the open chat back into its icon; Esc always does while you are in the chat, and the key set here does from anywhere. Give both the same key to toggle the chat with it. Click a field and press the keys. A key without Ctrl, Alt or ⌘ only works when you aren&#39;t typing in a field.</span></span></h4>
       <div class="grid hotkey">
         <label for="chat_hotkey">Open</label>
@@ -120,28 +130,28 @@
         <span><input id="chat_hide_hotkey" readonly spellcheck="false" aria-label="collapse chat hotkey"> <button type="button" id="chat_hide_hotkey_reset" class="linkbtn">default</button></span>
       </div>
     </section>
-    <section>
+    <section data-tab="chat">
       <h4>Chat agent actions <span class="info" tabindex="0" aria-label="About chat agent actions">i<span class="tip" role="tooltip">The chat agent can propose actions under its answer: open a unit or tab, draft a pending comment, dismiss or restore an issue, mark units reviewed, fix issues, review units or the whole change again, fetch the GitHub comments again, rewrite the overview or sequence, rebuild the code map, and reply on, resolve or submit a review on GitHub. Each one shows as a card with Run and Skip. Navigation always runs at once. What it posts to GitHub or pushes always waits for your click, whatever this says.</span></span></h4>
       <label class="check">Runs without asking <select id="chat_autorun" aria-label="chat agent actions that run without asking"><option value="view">navigation only</option><option value="local">also drafts, dismissals and marks</option><option value="job">also fixes and re-analysis</option></select></label>
       <label class="check" title="Web fetch on every provider; on codex and claude-code also web search, and gh for reading GitHub (PRs, checks, CI logs, issues). Nothing it runs can write. Off for PRs you don't trust: an agent misled by the PR could send what it read to a site it fetches."><input type="checkbox" id="chat_web"> let the chat agent use the web and read GitHub with gh</label>
     </section>
-    <section class="classify-only">
+    <section data-tab="review" class="classify-only">
       <h4>Batch classify <span class="info" tabindex="0" aria-label="About batch classify">i<span class="tip" role="tooltip">Up to 6 units share one classify call, which is much faster on large PRs, especially with codex and claude-code. Answers lean slightly toward skim on borderline helpers. A unit the answer misses is classified on its own. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="classify_batch"> classify several units per call</label>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Review tools <span class="info" tabindex="0" aria-label="About review tools">i<span class="tip" role="tooltip">codex and claude-code reviewers only. Slower, but catches claims about code outside the diff. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="review_tools"> let the reviewer read the repo at the PR head and the Go module cache</label>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Incremental review <span class="info" tabindex="0" aria-label="About incremental review">i<span class="tip" role="tooltip">A unit keeps its review when its diff is unchanged and so are the units it was judged against (callers, callees, other changes in its file). Everything else is re-reviewed. A rebase, a different model or review setting, a rebuilt code map, or Force carries nothing over.</span></span></h4>
       <label class="check"><input type="checkbox" id="incremental"> after a push, keep the review of units that did not change</label>
     </section>
-    <section>
+    <section data-tab="review">
       <h4>Static analysis <span class="info" tabindex="0" aria-label="About static analysis">i<span class="tip" role="tooltip">A linter runs only when the repo has a config for it (<code>.golangci.yml</code>, <code>eslint.config.js</code>, <code>ruff.toml</code>) and it is installed; shellcheck runs on changed shell scripts. The built-in credential scan always runs. Findings go to the reviewer, raise the unit&#39;s likelihood, and appear on the Issues tab. Applies to the next triage.</span></span></h4>
       <label class="check"><input type="checkbox" id="lint"> run the repository's linters over the lines the PR adds</label>
     </section>
-    <section>
+    <section data-tab="fixes">
       <h4>Fix issues <span class="info" tabindex="0" aria-label="About fix issues">i<span class="tip" role="tooltip">The cached clone option checks out the PR branch in the app&#39;s clone and stops if that clone has local changes. Existing fix results keep their location. The issue and the code each fix touches are reviewed after every round.</span></span></h4>
       <div class="grid fix-opts">
         <label for="fix_location">Apply fixes in</label>
@@ -153,6 +163,9 @@
       <label class="check"><input type="checkbox" id="recursive_fix"> keep fixing issues found by follow-up reviews</label>
       <label class="check" for="max_fix_rounds">Maximum fix and review rounds <input type="number" id="max_fix_rounds" min="1" max="10" value="3" style="width:64px"></label>
     </section>
+    <section data-tab="stats" id="stats-pane" class="stats" aria-live="polite"></section>
+    </div>
+    </div>
   </form>
 </dialog>
 <dialog id="fix-uncommitted" class="settings-dlg" aria-labelledby="fix-uncommitted-title">

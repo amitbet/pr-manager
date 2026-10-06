@@ -94,6 +94,16 @@ function workSummary(work) {
   return parts.join(", ");
 }
 const workRow = (e) => `<div class="chat-work-row k-${esc(e.k)}${e.err ? " err" : ""}" title="${esc(e.x)}"><span class="ico" aria-hidden="true">${WORK_ICON[e.k] || "•"}</span><span class="lbl">${esc(e.x)}</span>${e.err ? `<span class="x" aria-label="failed">✗</span>` : ""}</div>`;
+// Tokens: an answer's, and the conversation's so far (every answer since
+// it started, whatever session each carried on). Settings → Statistics has
+// the totals.
+const kfmt = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K` : String(n);
+const tokText = (u) => `${kfmt((u.in || 0) + (u.out || 0))} tokens`;
+function convTokens(msgs) {
+  let i = 0, o = 0;
+  for (const m of msgs) if (m.usage) { i += m.usage.in || 0; o += m.usage.out || 0; }
+  return i + o ? ` <span class="chat-tokens" title="This conversation: ${i.toLocaleString()} in, ${o.toLocaleString()} out (cached reads count as input)">${kfmt(i + o)} tokens</span>` : "";
+}
 const secsText = (s) => s >= 90 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
 
 // Who may run what without asking (Settings → Chat agent): navigation
@@ -346,7 +356,7 @@ export function initChat(host, { popout = false } = {}) {
     if (m.role === "event") return "";
     if (m.role === "user") return `<div class="chat-msg user" title="${esc(m.at ? new Date(m.at).toLocaleString() : "")}">${esc(m.content)}</div>`;
     if (m.error) return `<div class="chat-msg err" role="alert">${esc(m.content)} <button type="button" class="linkbtn" data-chat="retry">Retry</button></div>`;
-    const meta = [clock(m.at), m.model, m.secs ? `${m.secs}s` : ""].filter(Boolean).join(" · ");
+    const meta = [clock(m.at), m.model, m.secs ? `${m.secs}s` : "", m.usage ? tokText(m.usage) : ""].filter(Boolean).join(" · ");
     return `<div class="chat-msg bot">${workHTML(m.work, m.at, { secs: m.secs || 0, resumed: m.resumed })}<div class="chat-md">${md(m.content, host.unitLabel)}</div>
       ${(m.actions || []).map(actionHTML).join("")}
       <div class="chat-meta">${esc(meta)} <button type="button" class="linkbtn" data-chat="copy" data-i="${i}">copy</button></div></div>`;
@@ -381,7 +391,7 @@ export function initChat(host, { popout = false } = {}) {
     root.innerHTML = `
       ${!popout ? `<div class="chat-grip" data-grip title="Drag to resize"></div>` : ""}
       <div class="chat-head"${popout || st.mode === "dock" ? "" : ` data-drag title="Drag to move · double-click to put it back in the corner"`}>
-        <span class="chat-title">${ICON.chat} <b>Ask</b> <span class="chat-model" title="Chat agent model, set in Settings → Models">${esc(modelLabel())}</span></span>
+        <span class="chat-title">${ICON.chat} <b>Ask</b> <span class="chat-model" title="Chat agent model, set in Settings → Models">${esc(modelLabel())}</span>${convTokens(msgs)}</span>
         <span class="spacer"></span>
         ${msgs.length ? btn("new", ICON.fresh, "New conversation") : ""}
         ${popout ? btn("dock-back", ICON.back, "Put the chat back in the main window")
@@ -460,10 +470,11 @@ export function initChat(host, { popout = false } = {}) {
       });
       const actions = await Promise.all((res.actions || []).map(async (a, i) => {
         const d = await describe(a.name, a.args).catch(() => ({ label: a.name, risk: "outward" }));
-        return { id: `${Date.now().toString(36)}-${i}`, name: a.name, args: a.args || {}, why: a.why, label: d.label, preview: d.preview, risk: d.risk, status: "proposed" };
+        return { id: `${Date.now().toString(36)}-${i}`, name: a.name, args: a.args || {}, why: a.why, label: d.label, preview: d.preview, risk: d.risk, continues: d.continues, status: "proposed" };
       }));
       reply = { role: "assistant", content: res.answer, model: res.model, at: res.at || now(), secs: Math.round((performance.now() - t0) / 100) / 10, actions,
-        work: (res.work || []).slice(-MAX_WORK), resumed: !!res.resumed };
+        work: (res.work || []).slice(-MAX_WORK), resumed: !!res.resumed,
+        usage: res.usage ? { in: res.usage.input_tokens || 0, out: res.usage.output_tokens || 0 } : undefined };
     } catch (e) {
       reply = { role: "assistant", error: true, at: now(), content: e.name === "AbortError" ? "Stopped." : `The chat agent failed: ${e.message}` };
     }
@@ -531,7 +542,7 @@ export function initChat(host, { popout = false } = {}) {
     const cur = msgs.find((x) => x.at === m.at && x.role === "assistant") || m;
     const acts = cur.actions || [];
     if (acts.some((a) => a.status === "proposed" || a.status === "running")) return;
-    if (!acts.some((a) => a.status === "failed" || (a.status === "done" && a.risk !== "view"))) return;
+    if (!acts.some((a) => a.status === "failed" || (a.status === "done" && (a.risk !== "view" || a.continues)))) return;
     let chain = 0;
     for (let i = msgs.length - 1; i >= 0 && msgs[i].role !== "user"; i--) if (msgs[i].role === "assistant") chain++;
     if (chain > MAX_CHAIN || cid() !== id) return;
@@ -632,7 +643,7 @@ export function initChat(host, { popout = false } = {}) {
     if (e.target.id === "chat-input" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send(e.target.value);
-    } else if (e.key === "Escape" && !popout) acts.close();
+    }
   });
 
   // Position: the icon and the floating panel share one spot, kept as the
@@ -757,9 +768,17 @@ export function initChat(host, { popout = false } = {}) {
   }
 
   // The hotkey opens the chat with the cursor in the prompt, wherever it
-  // is: here, or in the pop-out. The collapse hotkey collapses it here.
+  // is: here, or in the pop-out. Esc and the collapse hotkey collapse it
+  // here, wherever the focus is, except in another field, where Esc is the
+  // field's (it drops a comment being written).
   document.addEventListener("keydown", (e) => {
-    if (!host.key() || document.querySelector("dialog[open]")) return;
+    if (document.querySelector("dialog[open]")) return;
+    if (!popout && !st.popped && st.open && e.key === "Escape" && !e.isComposing && !e.defaultPrevented
+      && (root.contains(e.target) || !e.target.closest?.("input, textarea, select, [contenteditable]:not([contenteditable=false])"))) {
+      acts.close();
+      return;
+    }
+    if (!host.key()) return;
     if (!popout && !st.popped && st.open && hideHotkey(e)) { e.preventDefault(); acts.close(); return; }
     if (!hotkey(e)) return;
     e.preventDefault();

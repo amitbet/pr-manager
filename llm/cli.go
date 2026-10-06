@@ -92,6 +92,13 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	var sess *Session
 	if ws != nil && !ws.Edit {
 		sess = ws.Session
+		// Codex writes nothing in read-only, so it builds in a scratch
+		// copy only (build.go).
+		if ws.Builds != "" && !ws.Scratch {
+			c := *ws
+			c.Builds = ""
+			ws = &c
+		}
 	}
 	resume := sess != nil && sess.ID != ""
 	// A resumed session keeps its sandbox and directory; exec resume takes
@@ -114,6 +121,7 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", effort))
 	}
 	args = append(args, codexReach(ws)...)
+	args = append(args, codexBuildArgs(ws)...)
 	// The read-only sandbox already lets it read anywhere; -C only sets
 	// where it starts.
 	cwd := dir
@@ -121,6 +129,11 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 		cwd = ws.Dir
 		if !resume {
 			args = append(args, "-C", ws.Dir)
+		}
+	}
+	if ws != nil && !ws.Edit {
+		for _, p := range ws.Images {
+			args = append(args, "-i", p)
 		}
 	}
 	if resume {
@@ -781,13 +794,21 @@ func claudeSettings(ws *Workspace) ([]byte, error) {
 				secrets = append(secrets, filepath.Join(home, p))
 			}
 		}
+		fsys := map[string]any{"denyWrite": deny, "denyRead": secrets}
+		if ws.Builds != "" {
+			fsys["allowWrite"] = []string{ws.Builds} // build output only (build.go)
+		}
 		s["sandbox"] = map[string]any{
 			"enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
-			"filesystem": map[string]any{"denyWrite": deny, "denyRead": secrets},
+			"filesystem": fsys,
 			"network":    map[string]any{"allowedDomains": []string{}},
 		}
 		// git must not take locks, ask for passwords or page.
-		s["env"] = map[string]string{"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat"}
+		env := map[string]string{"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat"}
+		for k, v := range buildEnv(ws) {
+			env[k] = v
+		}
+		s["env"] = env
 	}
 	return json.Marshal(s)
 }
@@ -804,7 +825,7 @@ const (
 // codexSandbox is the codex sandbox for ws: writable in its directory
 // when it edits, read-only otherwise.
 func codexSandbox(ws *Workspace) string {
-	if ws != nil && ws.Edit {
+	if ws != nil && ws.Edit || codexBuilds(ws) {
 		return "workspace-write"
 	}
 	return "read-only"
@@ -829,7 +850,7 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, ws *Workspace) (string, 
 	case ws != nil && ws.Edit:
 		fmt.Fprintf(&sb, "%s Make your changes by editing the files, then answer only with the JSON object.", tool.Description)
 	case ws != nil && ws.Shell:
-		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything.%s Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description, reachNote(ws))
+		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything.%s%s Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description, reachNote(ws), buildNote(ws))
 	case ws != nil:
 		fmt.Fprintf(&sb, "%s Read files if you need to, but do not change anything. Answer only with the JSON object.", tool.Description)
 	default:

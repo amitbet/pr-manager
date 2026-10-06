@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -41,6 +42,12 @@ func Run(ctx context.Context, dir string, args []string) (string, error) {
 	text := b.String()
 	if len(text) > Max {
 		text = text[:Max] + "\n[cut]\n"
+	}
+	// pr checks exits 8 while some checks are still pending: the list is
+	// the answer.
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 8 && len(args) > 1 && args[0] == "pr" && args[1] == "checks" {
+		return text + "\n(some checks are still pending)\n", nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("gh %s: %v\n%s", strings.Join(args, " "), err, text)

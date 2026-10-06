@@ -29,6 +29,7 @@ func (t *triager) overview(ctx context.Context, key string, jo jobOptions) (*tri
 	if err != nil {
 		return nil, err
 	}
+	ctx = usageCtx(ctx, "overview", r)
 	if r.Overview != nil {
 		return r.Overview, nil
 	}
@@ -102,6 +103,7 @@ func (t *triager) writeSequence(ctx context.Context, key string, o options) (*tr
 	if err != nil {
 		return nil, err
 	}
+	ctx = usageCtx(ctx, "sequence", r)
 	if r.Sequence != nil && r.Sequence.Version >= triage.SequenceVersion {
 		return r.Sequence, nil
 	}

@@ -127,7 +127,7 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 	defer cancel()
 	cv := t.openChat(req)
 	defer cv.close()
-	ctx = cv.ctx(ctx)
+	ctx = usageCtx(cv.ctx(ctx), "chat", r)
 
 	m := t.chatMaterial(ctx, r, req.View)
 	var ws *llm.Workspace

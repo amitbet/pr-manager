@@ -85,6 +85,7 @@ var chatLocks sync.Map // hash -> *sync.Mutex
 // chatConv is one answer's view of its conversation.
 type chatConv struct {
 	t          *triager
+	c          context.Context // the answer's (see ctx)
 	id, hash   string
 	dir        string // <cache>/chats/<hash>
 	sess       *chatSession
@@ -93,6 +94,7 @@ type chatConv struct {
 	at         string // when it answered
 	turns      []chatTurn
 	repo       string
+	scratch    bool // the workspace is the conversation's own worktree
 	resumed    bool
 	noWeb      bool
 	freshStart bool
@@ -135,10 +137,11 @@ func (cv *chatConv) close() {
 // ctx carries the answer's work log, when the UI follows it, with a
 // thread open: the CLIs' output is written to the thread in ctx.
 func (cv *chatConv) ctx(ctx context.Context) context.Context {
-	if cv.run == nil {
-		return ctx
+	if cv.run != nil {
+		ctx, cv.run.thread = activity.Start(activity.With(ctx, cv.run.log), "llm", "chat")
 	}
-	ctx, cv.run.thread = activity.Start(activity.With(ctx, cv.run.log), "llm", "chat")
+	ctx = llm.WithUsage(ctx, llm.UsageTag{Activity: "chat", Conv: cv.id})
+	cv.c = ctx
 	return ctx
 }
 
@@ -176,6 +179,7 @@ func (cv *chatConv) workspace(ctx context.Context, r *PRResult) (dir string, cle
 	}
 	now := time.Now()
 	_ = os.Chtimes(code, now, now) // in use: see pruneChats
+	cv.scratch = true
 	if d, err := filepath.EvalSymlinks(code); err == nil {
 		code = d
 	}
@@ -193,13 +197,14 @@ func convWorktree(ctx context.Context, repo, code, head string) error {
 		return err
 	}
 	if cur, err := triage.GitCtx(ctx, code, "rev-parse", "HEAD"); err == nil {
-		if strings.TrimSpace(cur) == head {
-			// Put back what StripAgentFiles took, to take it again.
-			_, err := triage.GitCtx(ctx, code, "checkout", "--force", "--detach", head)
+		// Put back what StripAgentFiles took, to take it again, and what
+		// an agent that builds here wrote (build.go in llm).
+		if _, err := triage.GitCtx(ctx, code, "checkout", "--force", "--detach", head); err == nil {
+			_, err = triage.GitCtx(ctx, code, "clean", "-fdq")
 			return err
 		}
-		if _, err := triage.GitCtx(ctx, code, "checkout", "--force", "--detach", head); err == nil {
-			return nil
+		if strings.TrimSpace(cur) == head {
+			return errors.New("can't check the worktree out again")
 		}
 	}
 	_, _ = triage.GitCtx(ctx, repo, "worktree", "remove", "--force", code)
@@ -232,6 +237,10 @@ func (cv *chatConv) bundle(m *chatMaterial) (dir string, done func(), err error)
 func (cv *chatConv) reach(ws *llm.Workspace, l llm.LLMTool, r *PRResult, m *chatMaterial) {
 	if ws == nil {
 		return
+	}
+	if llm.SupportsWorkspace(l) {
+		cv.builds(cv.c, ws)
+		cv.snapshots(ws)
 	}
 	// An API provider gets the app's fetch and gh tools (llm/webtool.go).
 	if !llm.SupportsWorkspace(l) {
@@ -500,6 +509,22 @@ func (t *triager) chatConvRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("POST /api/chats/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		change := r.URL.Query().Get("change")
+		var in struct {
+			PNG string `json:"png"` // a data URL
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, chatSnapshotMax)).Decode(&in); err != nil || change == "" {
+			writeErr(w, 400, errors.Join(err, errors.New("a change and a picture")))
+			return
+		}
+		p, err := t.saveSnapshot(change, in.PNG)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"path": p})
 	})
 	mux.HandleFunc("GET /api/chat-runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, ok := chatRuns.Load(r.PathValue("id"))

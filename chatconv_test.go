@@ -131,13 +131,30 @@ func TestWorkEntries(t *testing.T) {
 	for i, l := range lines {
 		th.Lines = append(th.Lines, activity.Line{T: now.Add(time.Duration(i) * time.Second), Text: l})
 	}
-	got := workEntries([]activity.Thread{th})
+	// An API provider's tool loop logs its calls another way.
+	for i, l := range []string{
+		"→ claude-api/opus reply: 9000 prompt chars, with 7 tools",
+		`  read_file {"path":"pkg/a.go"}: 1200 chars`,
+		`  grep {"glob":"*.go","pattern":"Retry\\("}: 300 chars`,
+		`  git {"args":["log","-L","10,12:a.go"]}: exit status 128`,
+		`  gh {"args":["pr","checks","12"]}: 800 chars`,
+		"← reply in 9s, 4 tool calls, 100 in / 20 out tokens",
+	} {
+		th.Lines = append(th.Lines, activity.Line{T: now.Add(time.Duration(20+i) * time.Second), Text: l})
+	}
+	th.Kind = "llm"
+	setup := activity.Thread{Kind: "git", Lines: []activity.Line{{T: now, Text: "in /cache/repos/acme"}, {T: now, Text: "ok in 118ms"}}}
+	got := workEntries([]activity.Thread{setup, th})
 	want := []workEntry{
 		{K: "think", X: "the retry loop looks unbounded"},
 		{K: "read", X: "Read a.go (from line 1, 40 lines)"},
 		{K: "run", X: "git log -L 10,12:a.go", Err: true},
 		{K: "web", X: "gh pr checks 12"},
 		{K: "progress", X: "thought ~400 tokens so far"},
+		{K: "read", X: "Read pkg/a.go"},
+		{K: "search", X: `Grep "Retry\\(" --glob *.go`},
+		{K: "run", X: "git log -L 10,12:a.go", Err: true},
+		{K: "web", X: "gh pr checks 12"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("entries %+v", got)
@@ -163,5 +180,43 @@ func TestChatRunLog(t *testing.T) {
 	cv.close()
 	if got := cv.run.entries(); len(got) != 1 || got[0].X != "Read a.go" {
 		t.Errorf("entries %+v", got)
+	}
+}
+
+// A snapshot is kept with its conversation, and the agent's next turn gets
+// the ones its new turns name, and only the conversation's own.
+func TestChatSnapshots(t *testing.T) {
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	p, err := tr.saveSnapshot("c1", png)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.saveSnapshot("c1", "data:image/png;base64,bm90IGEgcG5n"); err == nil {
+		t.Error("kept something that isn't a PNG")
+	}
+	other, _ := tr.saveSnapshot("c2", png)
+	cv := tr.openChat(chatRequest{Conversation: "c1", Messages: []chatTurn{
+		{Role: "user", Content: "look", At: "1"},
+		{Role: "assistant", Content: "ok", At: "2"},
+		{Role: "event", Content: "took a snapshot [snapshot: " + p + "] and [snapshot: " + other + "]", At: "3"},
+	}})
+	defer cv.close()
+	ws := &llm.Workspace{Dir: "/w"}
+	cv.snapshots(ws)
+	if len(ws.Images) != 1 || ws.Images[0] != p {
+		t.Errorf("images %v", ws.Images)
+	}
+	if len(ws.ReadDirs) != 1 || ws.ReadDirs[0] != tr.snapshotDir("c1") {
+		t.Errorf("read dirs %v", ws.ReadDirs)
+	}
+	cv.turns = append(cv.turns, chatTurn{Role: "assistant", Content: "it shows a diff", At: "4"}, chatTurn{Role: "user", Content: "and?", At: "5"})
+	ws = &llm.Workspace{Dir: "/w"}
+	cv.snapshots(ws)
+	if len(ws.Images) != 0 {
+		t.Errorf("a snapshot already answered about was attached again: %v", ws.Images)
 	}
 }

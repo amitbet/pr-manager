@@ -21,6 +21,9 @@
 .chat-float, .chat-dock, .chat-window { display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font-size: 14px; }
 .chat-float { position: fixed; right: 16px; bottom: var(--chat-bottom); z-index: 25; width: 420px; height: min(560px, calc(100vh - 54px - var(--chat-bottom) - 16px)); max-width: calc(100vw - 32px); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.22); overflow: hidden; }
 .chat-dock { position: fixed; top: 54px; right: 0; bottom: 0; z-index: 18; width: var(--chat-w); border-left: 1px solid var(--border); }
+/* Dark mode: the panel shares the page's background and a drop shadow barely shows, so the frame carries the edge. */
+:root[data-theme="dark"] .chat-float { border-color: #545d68; box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.65); }
+:root[data-theme="dark"] .chat-dock { border-left-color: #545d68; }
 .chat-window { position: fixed; inset: 0; }
 body.chat-page { margin: 0; }
 
@@ -98,3 +101,4 @@ button.chat-work-head:hover { color: var(--fg); }
 .chat-act.st-failed .chat-act-foot { color: var(--human); }
 .chat-act.st-declined, .chat-act.st-interrupted { opacity: .7; }
 .chat-time { margin-left: auto; font-size: 11px; color: var(--muted); }
+.chat-tokens { color: var(--muted); font-size: 11px; margin-left: 6px; white-space: nowrap; }

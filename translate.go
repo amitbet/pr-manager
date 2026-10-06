@@ -61,6 +61,7 @@ func (t *triager) translation(ctx context.Context, r *PRResult, jo jobOptions) (
 }
 
 func (t *triager) translate(ctx context.Context, r *PRResult, o options) (*translation, error) {
+	ctx = usageCtx(ctx, "translate", r)
 	lang := o.summaryLang
 	if triage.IsEnglish(lang) || strings.EqualFold(lang, r.SummaryLang) {
 		return &translation{Units: map[string]triage.UnitText{}}, nil

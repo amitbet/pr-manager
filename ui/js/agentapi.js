@@ -21,6 +21,7 @@ import { startFix } from "./fix.js";
 import { merge } from "./issues.js";
 import { refreshFixes } from "./fixes.js";
 import { fill } from "./viewctx.js";
+import { snapshot } from "./snapshot.js";
 
 let H = { showKey: async () => {} };
 
@@ -100,6 +101,19 @@ export const ACTIONS = {
       if (!["review", "issues", "sequence", "map"].includes(a.tab)) throw new Error(`no tab ${a.tab}`);
       S.tab = a.tab; syncURL(); render();
       return `opened the ${a.tab} tab`;
+    },
+  },
+  snapshot: {
+    // continues: the agent answers again when it is taken, to look at it.
+    risk: "view", continues: true, label: () => "Take a snapshot of the page",
+    run: async () => {
+      const shot = await snapshot();
+      let saved = "";
+      if (shot.png) {
+        const out = await postJSON(`/api/chats/snapshot?change=${encodeURIComponent(changeOf(S.result))}`, { png: shot.png });
+        saved = ` [snapshot: ${out.path}]`;
+      }
+      return `took a snapshot of the page, ${shot.width}x${shot.height}, without the chat panel${saved || " (this browser can't draw the page as a picture; here is its text)"}. The page's text:\n${shot.text}`;
     },
   },
   fill_field: {
@@ -290,7 +304,7 @@ function tryThread(id) {
 export function describe(name, args = {}) {
   const a = ACTIONS[name];
   if (!a) return { label: `Unknown action ${name}`, risk: "outward" };
-  return { label: a.label(args), preview: a.preview?.(args), risk: a.risk };
+  return { label: a.label(args), preview: a.preview?.(args), risk: a.risk, continues: !!a.continues };
 }
 
 // run runs an action on the result on screen. progress gets a job's stage.

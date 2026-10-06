@@ -1,5 +1,6 @@
 // Settings dialog: provider and model pickers, code map sources, summary
 // language, review budget, walkthrough steps and review tools. Choices are kept in localStorage under pr-manager.<key>.
+import { showStats } from "./stats.js";
 import { $, esc, api, BUCKETS, LABEL, askText } from "./util.js";
 import { S, render, diffViewDefault, reviewModeDefault, focusTop } from "./state.js";
 import * as budget from "./budget.js";
@@ -310,7 +311,23 @@ export function initSettings(changed, langChanged) {
   onBudget = changed;
   onLang = langChanged;
   const dlg = $("#settings");
-  $("#settings-btn").onclick = () => { showBudget(); dlg.showModal(); };
+  // Side tabs: each section belongs to one (data-tab); Statistics loads
+  // when it is shown (stats.js). The last tab opened is kept for the session.
+  const showTab = (tab) => {
+    sessionStorage.setItem("prm-settings-tab", tab);
+    for (const b of dlg.querySelectorAll("[data-set-tab]")) { const on = b.dataset.setTab === tab; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); }
+    let first = true;
+    for (const sec of dlg.querySelectorAll(".set-panes > section")) {
+      const shown = sec.dataset.tab === tab && sec.style.display !== "none";
+      sec.hidden = sec.dataset.tab !== tab;
+      sec.classList.toggle("first", shown && first);
+      if (shown) first = false;
+    }
+    dlg.classList.toggle("wide", tab === "stats");
+    if (tab === "stats") showStats($("#stats-pane"));
+  };
+  dlg.querySelector(".set-tabs").onclick = (e) => { const b = e.target.closest("[data-set-tab]"); if (b) showTab(b.dataset.setTab); };
+  $("#settings-btn").onclick = () => { showBudget(); showTab(sessionStorage.getItem("prm-settings-tab") || "models"); dlg.showModal(); };
   $("#theme-btn").onclick = () => window.toggleTheme();
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); }); // backdrop
   for (const el of dlg.querySelectorAll(".info")) {

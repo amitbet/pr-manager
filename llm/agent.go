@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +52,7 @@ func callInWorkspace(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatM
 // arguments of its call to final, which ends it. The last round forces
 // final, so an answer comes out of a long search too.
 func CallWithTools(ctx context.Context, l LLMTool, msgs []ChatMessage, final ToolDefinition, tools []LocalTool, maxTokens int32) (args map[string]any, usage Usage, err error) {
+	defer recordUsage(ctx, l, final.Name, &usage)
 	defs := []ToolDefinition{final}
 	byName := map[string]LocalTool{}
 	for _, t := range tools {
@@ -177,7 +179,9 @@ func runLocal(ctx context.Context, byName map[string]LocalTool, calls []ToolCall
 			text, err := t.Run(ctx, argsOrEmpty(c.Arguments))
 			if err != nil {
 				text, out[i].IsError = err.Error(), true
-				activity.Errorf(ctx, "  %s %s: %v", c.Name, argsLine(c.Arguments), err)
+				// One line: the model gets the whole error.
+				msg, _, _ := strings.Cut(err.Error(), "\n")
+				activity.Errorf(ctx, "  %s %s: %s", c.Name, argsLine(c.Arguments), msg)
 			} else {
 				activity.Printf(ctx, "  %s %s: %d chars", c.Name, argsLine(c.Arguments), len(text))
 			}

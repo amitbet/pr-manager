@@ -92,7 +92,10 @@ type Workspace struct {
 	Shell    bool
 	NoWrite  []string
 	Web      bool
-	GH       string // an API provider's gh tool runs here ("": none)
+	GH       string   // an API provider's gh tool runs here ("": none)
+	Builds   string   // where builds and tests may write (build.go; "": no builds)
+	Scratch  bool     // Dir is a throwaway copy, which codex may write to
+	Images   []string // pictures for this turn: codex attaches them, Claude Code reads them
 	MCP      []MCPServer
 	Session  *Session
 }
@@ -261,6 +264,7 @@ func CallToolReading(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatM
 // CallToolIn is CallTool with a workspace the provider may read (nil: none).
 // The API providers ignore it; CallToolReading gives it to them as tools.
 func CallToolIn(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatMessage, tool ToolDefinition, maxTokens int32) (args map[string]any, usage Usage, err error) {
+	defer recordUsage(ctx, l, tool.Name, &usage)
 	chars := 0
 	for _, m := range msgs {
 		chars += len(m.Content)

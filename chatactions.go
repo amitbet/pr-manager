@@ -30,6 +30,7 @@ import (
 // wait for the reader unless Settings lets them run, outward always waits.
 var chatActions = []struct{ name, risk, args, does string }{
 	{"open_unit", "view", `{"unit": ID}`, "show a unit in the Review tab"},
+	{"snapshot", "view", `{}`, "take a picture of the page as the reader sees it, without the chat panel, when what is on screen matters (a layout, a chart, where something is); you get it in your next turn, with the page's text"},
 	{"open_tab", "view", `{"tab": "review"|"issues"|"sequence"|"map"}`, "switch tab"},
 	{"fill_field", "view", `{"field": "comment"|"dismiss_reason"|"review_summary", "text": text} (comment: also "path", "line", "side": "RIGHT"|"LEFT" to open one where none is open)`, "write into a text box on the page (the open ones are listed with the reader's turn, with what they say): replaces its text, which the reader then edits and saves; use it when they ask you to write or rewrite what they are typing"},
 	{"draft_comment", "local", `{"unit": ID, "line": n, "side": "RIGHT"|"LEFT" (LEFT: a line of the old file), "body": text, "id": draft id to replace}`, "save a pending review comment on a changed line (or within 3 lines of one), or rewrite one; nothing is posted until the reader submits the review"},
@@ -70,7 +71,7 @@ Besides answering, you can act, by listing actions in your reply. The reader see
 		fmt.Fprintf(&b, "- %s %s: %s.\n", a.name, a.args, a.does)
 	}
 	b.WriteString(`
-What happens comes back as an [event] turn with its time: the result, or why it failed or was declined. Jobs take a while; when one finishes the material below is the new result. Then continue: report what changed, briefly, and propose the next step only if one is needed. Don't repeat an action that already ran.`)
+What happens comes back as an [event] turn with its time: the result, or why it failed or was declined. Jobs take a while; when one finishes the material below is the new result. Then continue: report what changed, briefly, and propose the next step only if one is needed. Don't repeat an action that already ran. A snapshot's event names its picture as [snapshot: <file>]: read that file to see it, unless it is attached to the turn already; without either, go by the page's text the event carries.`)
 	return b.String()
 }
 
@@ -340,6 +341,7 @@ func (t *triager) threadAction(ctx context.Context, r *PRResult, action, threadI
 
 func (t *triager) chatActionRoutes(mux *http.ServeMux) {
 	t.chatConvRoutes(mux)
+	t.usageRoutes(mux)
 	mux.HandleFunc("POST /api/results/{key}/reanalyze", func(w http.ResponseWriter, r *http.Request) {
 		var req reanalyzeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
