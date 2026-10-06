@@ -128,11 +128,11 @@ function prHeadHTML(r) {
   const branch = (ref) => (pr.single_commit || !ref ? "" : refLink(w, ref));
   const commit = (oid) => (pr.base_ref === "empty tree" && oid === pr.base_oid ? "" : commitLink(w, oid));
   const tl = titleLink(pr, w);
-  const title = (h) => (tl ? `<a class="title" href="${esc(tl.url)}" target="_blank" rel="noopener" title="${esc(tl.what)}">${h}</a>${local ? iconLink(tl.url, tl.what) : ""}` : h);
+  const title = (h) => (tl ? `<a class="title" href="${esc(tl.url)}" target="_blank" rel="noopener" title="${esc(tl.what)}">${h}</a>` : h);
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
   return `
     <div class="pr-head">
-      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>${iconLink(pr.url, `Open the PR on ${w?.forge || "GitHub"}`)}`} <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span></h2>
+      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}">${KIND_TITLE[kindOf(pr)]}</span></h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
         <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·
