@@ -39,6 +39,18 @@ func writeChatBundle(m *chatMaterial) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return writeChatBundleAt(m, dir)
+}
+
+// writeChatBundleAt writes m to dir, which it empties first: a
+// conversation's, which stays where it is from turn to turn.
+func writeChatBundleAt(m *chatMaterial, dir string) (string, error) {
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
 	if d, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = d
 	}
@@ -134,7 +146,7 @@ func threadText(th activity.Thread, dataMax int) string {
 
 // writeLogIndex lists the logs in the bundle, for a prompt that can read
 // them.
-func writeLogIndex(b *strings.Builder, jobs []savedLog, bundle string) {
+func writeLogIndex(b *strings.Builder, jobs []savedLog, bundle string, most int) {
 	if len(jobs) == 0 {
 		b.WriteString("\n# Job logs\n\nNone saved for this result: it was triaged before logs were kept, or by another pr-manager.\n")
 		return
@@ -144,7 +156,7 @@ func writeLogIndex(b *strings.Builder, jobs []savedLog, bundle string) {
 	for i, s := range jobs {
 		fmt.Fprintf(b, "\n## %s\n", jobLine(s.Job))
 		for k, th := range s.Threads {
-			if n++; n > chatLogIndex {
+			if n++; n > most {
 				fmt.Fprintf(b, "[more threads: see logs/INDEX.md]\n")
 				return
 			}

@@ -21,8 +21,10 @@ import (
 // everything the app knows about the change, written down as text: the PR,
 // the overview, the sequence diagram, every unit's review, issues, lint,
 // GitHub threads, code-map impact and likelihood, the fixes, and the
-// activity of this server's jobs on the PR. The codex and claude-code
-// providers can also read the code at the reviewed revision.
+// activity of this server's jobs on the PR. It can also read the code at
+// the reviewed revision, the material in full and the app's data, with a
+// read-only shell on codex and claude-code and with the workspace tools
+// (llm/fstools.go) on the API providers.
 
 const (
 	chatMaxBody     = 2 << 20 // bytes of request body
@@ -37,6 +39,12 @@ const (
 type chatRequest struct {
 	Messages []chatTurn `json:"messages"`
 	View     chatView   `json:"view"`
+	// Conversation is the change it is about (the UI's id for it): its
+	// session and worktree are kept (chatconv.go). Run names the answer's
+	// work log, which the UI follows while it waits (chatwork.go).
+	Conversation string `json:"conversation,omitempty"`
+	Run          string `json:"run,omitempty"`
+	NoWeb        bool   `json:"no_web,omitempty"` // no web search or fetch
 	jobOptions
 }
 
@@ -47,6 +55,10 @@ type chatView struct {
 	Where string   `json:"where"`
 	Units []string `json:"units,omitempty"` // unit ids on screen
 	Path  string   `json:"path,omitempty"`  // the open file
+	// Selection is the text selected on the page; Fields the text boxes
+	// open on it (see chatview.go).
+	Selection *chatSelection `json:"selection,omitempty"`
+	Fields    []chatField    `json:"fields,omitempty"`
 }
 
 type chatResponse struct {
@@ -58,6 +70,10 @@ type chatResponse struct {
 	// Actions are what the agent proposes to do (see chatactions.go).
 	Actions []chatAction `json:"actions"`
 	At      string       `json:"at"` // when it answered
+	// Work is what it did to answer (chatwork.go); Resumed, whether it
+	// carried on its CLI session.
+	Work    []workEntry `json:"work,omitempty"`
+	Resumed bool        `json:"resumed,omitempty"`
 }
 
 const chatSystem = `You are the chat agent of pr-manager, a tool that triages and reviews pull requests. A reviewer is reading the change described below and asks you about it: what it does, whether a reported issue is real, what a fix changed, how risky a part is, what to check, or how to word a review comment.
@@ -109,11 +125,14 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	cv := t.openChat(req)
+	defer cv.close()
+	ctx = cv.ctx(ctx)
 
 	m := t.chatMaterial(ctx, r, req.View)
 	var ws *llm.Workspace
-	if llm.SupportsWorkspace(l) {
-		dir, cleanup, note, err := t.chatWorkspace(ctx, r)
+	if llm.ReadsWorkspace(l) {
+		dir, cleanup, note, err := cv.workspace(ctx, r)
 		defer cleanup()
 		switch {
 		case err != nil:
@@ -124,8 +143,8 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 		}
 		// Everything, unabridged, as files the agent can search: the
 		// full diffs and every thread of the job logs.
-		if bundle, err := writeChatBundle(m); err == nil {
-			defer os.RemoveAll(bundle)
+		if bundle, done, err := cv.bundle(m); err == nil {
+			defer done()
 			m.bundle = bundle
 			if ws == nil {
 				ws = &llm.Workspace{Dir: bundle}
@@ -140,13 +159,20 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 			}
 			places := t.chatPlaces(r, ws.Dir)
 			shellWorkspace(ws, places, t.opts.cache)
-			m.codeNote = strings.TrimSpace(m.codeNote + "\n\n" + chatPlacesText(places))
+			cv.reach(ws, l, r, m)
+			m.codeNote = strings.TrimSpace(m.codeNote + "\n\n" + chatPlacesText(places, llm.SupportsWorkspace(l)))
 		}
 	}
 	now := time.Now()
-	text := chatNow(r, now) + "\n\n" + chatContext(m, promptLimits)
-	all := append([]llm.ChatMessage{{Role: "system", Content: chatSystem + "\n\n" + chatActionsDoc() + "\n\n" + text}}, msgs...)
-	args, usage, err := llm.CallToolIn(ctx, l, ws, all, chatTool, chatMaxTokens)
+	lim, budget, maxTokens := windowLimits(llm.ContextTokens(ctx, l))
+	head := chatSystem + "\n\n" + chatActionsDoc() + "\n\n"
+	text := chatNow(r, now) + "\n\n" + chatContext(m, lim)
+	if budget > 0 {
+		msgs = fitTurns(msgs, budget/4)
+		text = fitText(text, budget-len(head)-turnsLen(msgs), m.bundle)
+	}
+	all := append([]llm.ChatMessage{{Role: "system", Content: head + text}}, msgs...)
+	args, usage, err := cv.call(ctx, l, ws, all, req.View, maxTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +181,7 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 		return nil, fmt.Errorf("%s/%s answered nothing", l.Name(), l.ModelID())
 	}
 	return &chatResponse{Answer: answer, Model: l.Name() + "/" + l.ModelID(), Usage: usage, ContextChars: len(text), ReadsCode: ws != nil,
-		Actions: parseActions(args["actions"]), At: time.Now().Format(time.RFC3339)}, nil
+		Actions: parseActions(args["actions"]), At: cv.answeredAt(), Work: cv.run.entries(), Resumed: cv.resumed}, nil
 }
 
 // chatTurns keeps the last turns of the conversation, each cut to a size
@@ -192,12 +218,16 @@ func chatTurns(in []chatTurn) []llm.ChatMessage {
 		}
 		out = append(out, llm.ChatMessage{Role: m.Role, Content: c})
 	}
+	var dropped []llm.ChatMessage
 	if len(out) > chatMaxMessages {
-		out = out[len(out)-chatMaxMessages:]
+		dropped, out = out[:len(out)-chatMaxMessages], out[len(out)-chatMaxMessages:]
 	}
 	// A conversation starts with the reader.
 	for len(out) > 0 && out[0].Role != "user" {
-		out = out[1:]
+		dropped, out = append(dropped, out[0]), out[1:]
+	}
+	if d := chatDigest(dropped); d != "" && len(out) > 0 {
+		out[0].Content = d + "\n\n" + out[0].Content
 	}
 	return out
 }
@@ -321,12 +351,60 @@ func (t *triager) chatMaterial(ctx context.Context, r *PRResult, view chatView) 
 }
 
 // chatLimits bound what goes into the prompt; the bundle has no bounds.
-type chatLimits struct{ diff, unitDiff, logs int }
+// index is the most log threads the prompt lists.
+type chatLimits struct{ diff, unitDiff, logs, index int }
 
 var (
-	promptLimits = chatLimits{diff: chatDiffBudget, unitDiff: chatUnitDiff, logs: chatLogBudget}
+	promptLimits = chatLimits{diff: chatDiffBudget, unitDiff: chatUnitDiff, logs: chatLogBudget, index: chatLogIndex}
 	bundleLimits = chatLimits{diff: math.MaxInt, unitDiff: math.MaxInt}
 )
+
+// windowLimits are the prompt's limits for a model with a window of
+// tokens (0: large enough), the most chars the prompt may have (0: no
+// bound) and the answer's tokens. A small window gets half of it for the
+// prompt, the rest left for reading and answering: the agent can read the
+// whole material in the bundle.
+func windowLimits(tokens int) (lim chatLimits, budget int, maxTokens int32) {
+	if tokens == 0 {
+		return promptLimits, 0, chatMaxTokens
+	}
+	answer := min(chatMaxTokens, tokens/4)
+	budget = (tokens - answer) * llm.CharsPerToken / 2
+	return chatLimits{diff: budget / 4, unitDiff: budget / 16, logs: budget / 6, index: 40}, budget, int32(answer)
+}
+
+// fitTurns keeps the newest turns within n chars, and the last always.
+func fitTurns(msgs []llm.ChatMessage, n int) []llm.ChatMessage {
+	for len(msgs) > 1 && turnsLen(msgs) > n {
+		msgs = msgs[1:]
+		for len(msgs) > 1 && msgs[0].Role != "user" {
+			msgs = msgs[1:]
+		}
+	}
+	return msgs
+}
+
+func turnsLen(msgs []llm.ChatMessage) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)
+	}
+	return n
+}
+
+// fitText cuts the material to n chars, pointing at the bundle for the
+// rest.
+func fitText(text string, n int, bundle string) string {
+	n = max(n, 2000)
+	if len(text) <= n {
+		return text
+	}
+	note := "\n\n[The rest of the material is cut to fit your context window.]\n"
+	if bundle != "" {
+		note = fmt.Sprintf("\n\n[The rest of the material is cut to fit your context window: read it in %s, context.md and logs/INDEX.md.]\n", bundle)
+	}
+	return text[:n] + note
+}
 
 // chatContext writes down what the app knows about a result for the chat
 // agent.
@@ -367,12 +445,9 @@ func chatContext(m *chatMaterial, lim chatLimits) string {
 		w("\n<commit_messages>\n%s\n</commit_messages>\n", clipText(strings.Join(p.Commits, "\n---\n"), 6000))
 	}
 
-	w("\n# What the reader is looking at\n\n%s\n", orDefault(view.Where, "unknown"))
-	if view.Path != "" {
-		w("Open file: %s\n", view.Path)
-	}
-	if len(view.Units) > 0 {
-		w("Units on screen: %s\n", strings.Join(view.Units, ", "))
+	// What the reader is looking at goes with their turn (chatview.go).
+	if m.codeNote != "" || m.bundle != "" {
+		w("\n# What you can read\n")
 	}
 	if m.codeNote != "" {
 		w("\n%s\n", m.codeNote)
@@ -439,7 +514,7 @@ func chatContext(m *chatMaterial, lim chatLimits) string {
 	switch {
 	case lim.diff == math.MaxInt: // the bundle: logs are files of their own
 	case m.bundle != "":
-		writeLogIndex(&b, m.jobs, m.bundle)
+		writeLogIndex(&b, m.jobs, m.bundle, lim.index)
 	default:
 		writeLogs(&b, m.jobs, view, lim.logs)
 	}
@@ -456,7 +531,7 @@ func writeDrafts(b *strings.Builder, ds []Draft) {
 		if d.Side == "LEFT" {
 			side = "old"
 		}
-		fmt.Fprintf(b, "- %s:%d (%s file): %s\n", d.Path, d.Line, side, clipText(strings.ReplaceAll(d.Body, "\n", " "), 2000))
+		fmt.Fprintf(b, "- id %s, %s:%d (%s file): %s\n", d.ID, d.Path, d.Line, side, clipText(strings.ReplaceAll(d.Body, "\n", " "), 2000))
 	}
 }
 

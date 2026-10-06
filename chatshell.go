@@ -15,9 +15,10 @@ import (
 	"github.com/amitbet/pr-manager/triage"
 )
 
-// The chat agent on codex and claude-code gets a shell to dig with: rg,
+// The chat agent gets a shell to dig with: on codex and claude-code rg,
 // git log, show, blame and diff, ls, pipes, all read-only (see
-// llm.Workspace.Shell). It is told where the app keeps things, so it can
+// llm.Workspace.Shell); on the API providers the workspace tools, with git
+// for the history (see llm/fstools.go). It is told where the app keeps things, so it can
 // look past the material it was given: the repository's clone with its
 // whole history, the fix checkout, the saved results and the logs of
 // every analysis, the review drafts, the dismissals and the code map.
@@ -55,13 +56,24 @@ func (t *triager) chatPlaces(r *PRResult, workDir string) []chatPlace {
 	if d := t.opts.codemapDir; d != "" && d != "off" {
 		add(d, "the code map: the indexed repositories' symbols, callers, ranks and file history")
 	}
-	return out
+	// Other repositories and dependency sources (chatrepos.go).
+	for _, p := range t.repoPlaces(r) {
+		if p.dir != workDir {
+			out = append(out, p)
+		}
+	}
+	return dedupePlaces(out)
 }
 
-// chatPlacesText tells the agent about the places and how to dig in them.
-func chatPlacesText(places []chatPlace) string {
+// chatPlacesText tells the agent about the places and how to dig in them:
+// with a shell (cli), or with the workspace tools.
+func chatPlacesText(places []chatPlace, cli bool) string {
 	var b strings.Builder
-	b.WriteString("You can run read-only shell commands: rg, git (log, show, blame, diff, grep), ls, cat, head, pipes. Writes and the network are blocked. Not every tool may be installed (check with rg --version or git --version, and use grep -r or git grep without rg). Prefer a command over guessing: who changed a line and why (git log -L, git blame), what a file looked like before, where else a function is called, what an earlier run or a fix's log said. Keep output small: filter with rg, -n and head.\n\nWhere things are:\n")
+	if cli {
+		b.WriteString("You can run read-only shell commands: rg, git (log, show, blame, diff, grep), ls, cat, head, pipes. Writes and the network are blocked. Not every tool may be installed (check with rg --version or git --version, and use grep -r or git grep without rg). Prefer a command over guessing: who changed a line and why (git log -L, git blame), what a file looked like before, where else a function is called, what an earlier run or a fix's log said. Keep output small: filter with rg, -n and head.\n\nWhere things are:\n")
+	} else {
+		b.WriteString("You have tools to read with: read_file, list_dir, glob, grep, and git for commands that read (log, show, blame, diff, grep). Paths are relative to your working directory, or absolute in the places below; nothing can be changed. Call several at once when they don't depend on each other. Prefer a tool over guessing: who changed a line and why (git log -L, git blame), what a file looked like before (git show <rev>:<path>), where else a function is called (grep), what an earlier run or a fix's log said. Keep output small: grep with a glob or a path, read files in pages, git with -n or a path. When you know enough, answer with the reply tool.\n\nWhere things are:\n")
+	}
 	for _, p := range places {
 		fmt.Fprintf(&b, "- %s: %s\n", p.dir, p.what)
 	}

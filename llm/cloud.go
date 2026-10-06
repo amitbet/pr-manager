@@ -270,7 +270,7 @@ var (
 // Converse also rejects a specific tool choice for models without it (Llama,
 // some Mistral), which then land in noForcedTool.
 func converseForced(model string, req LLMRequest) bool {
-	return req.ToolChoice == ToolChoiceRequired && len(req.Tools) > 0 && forcedToolOK(bedrockBaseModel(model))
+	return (req.ToolChoice == ToolChoiceRequired || req.ToolChoice == ToolChoiceAny) && len(req.Tools) > 0 && forcedToolOK(bedrockBaseModel(model))
 }
 
 // toolChoiceRejected: a Converse 400 about toolChoice, e.g. "This model
@@ -305,8 +305,8 @@ func (b *BedrockLLM) converse(ctx context.Context, req LLMRequest) (*LLMResponse
 }
 
 // converseInput builds a Converse request. Without forced, a
-// ToolChoiceRequired request gets auto tool choice and an instruction to
-// call the first tool.
+// ToolChoiceRequired or ToolChoiceAny request gets auto tool choice and an
+// instruction to call the tools.
 func converseInput(model string, req LLMRequest, forced bool) *bedrockruntime.ConverseInput {
 	in := &bedrockruntime.ConverseInput{ModelId: aws.String(model)}
 	for _, m := range req.Messages {
@@ -314,10 +314,23 @@ func converseInput(model string, req LLMRequest, forced bool) *bedrockruntime.Co
 		case "system":
 			in.System = append(in.System, &brtypes.SystemContentBlockMemberText{Value: m.Content})
 		case "user", "assistant":
-			in.Messages = append(in.Messages, brtypes.Message{
-				Role:    brtypes.ConversationRole(m.Role),
-				Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: m.Content}},
-			})
+			var content []brtypes.ContentBlock
+			for _, r := range m.ToolResults {
+				res := brtypes.ToolResultBlock{ToolUseId: aws.String(r.CallID), Content: []brtypes.ToolResultContentBlock{&brtypes.ToolResultContentBlockMemberText{Value: orNone(r.Content)}}}
+				if r.IsError {
+					res.Status = brtypes.ToolResultStatusError
+				}
+				content = append(content, &brtypes.ContentBlockMemberToolResult{Value: res})
+			}
+			if m.Content != "" || len(m.ToolCalls)+len(m.ToolResults) == 0 {
+				content = append(content, &brtypes.ContentBlockMemberText{Value: m.Content})
+			}
+			for _, c := range m.ToolCalls {
+				content = append(content, &brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
+					ToolUseId: aws.String(c.CallID), Name: aws.String(c.Name), Input: document.NewLazyDocument(argsOrEmpty(c.Arguments)),
+				}})
+			}
+			in.Messages = append(in.Messages, brtypes.Message{Role: brtypes.ConversationRole(m.Role), Content: content})
 		}
 	}
 	maxTokens := req.MaxTokens
@@ -339,12 +352,12 @@ func converseInput(model string, req LLMRequest, forced bool) *bedrockruntime.Co
 			}})
 		}
 		switch {
+		case forced && req.ToolChoice == ToolChoiceAny:
+			cfg.ToolChoice = &brtypes.ToolChoiceMemberAny{Value: brtypes.AnyToolChoice{}}
 		case forced && req.ToolChoice == ToolChoiceRequired:
 			cfg.ToolChoice = &brtypes.ToolChoiceMemberTool{Value: brtypes.SpecificToolChoice{Name: aws.String(req.Tools[0].Name)}}
-		case req.ToolChoice == ToolChoiceRequired:
-			in.System = append(in.System, &brtypes.SystemContentBlockMemberText{
-				Value: fmt.Sprintf("Answer by calling the %s tool exactly once. Do not answer in text.", req.Tools[0].Name),
-			})
+		case req.ToolChoice == ToolChoiceRequired || req.ToolChoice == ToolChoiceAny:
+			in.System = append(in.System, &brtypes.SystemContentBlockMemberText{Value: unforcedInstruction(req)})
 			cfg.ToolChoice = &brtypes.ToolChoiceMemberAuto{Value: brtypes.AutoToolChoice{}}
 		default:
 			cfg.ToolChoice = &brtypes.ToolChoiceMemberAuto{Value: brtypes.AutoToolChoice{}}

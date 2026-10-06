@@ -20,6 +20,7 @@ import { pollJob, refreshJobs, stageText } from "./jobs.js";
 import { startFix } from "./fix.js";
 import { merge } from "./issues.js";
 import { refreshFixes } from "./fixes.js";
+import { fill } from "./viewctx.js";
 
 let H = { showKey: async () => {} };
 
@@ -68,6 +69,21 @@ async function followJob(j, progress, open = true) {
   return j;
 }
 
+// fixOutcome says what a finished fix or change job did: what it fixed or
+// changed, and where the commit is.
+async function fixOutcome(j) {
+  let fixed = "";
+  if (j.key) {
+    const r = await api(`/api/results/${encodeURIComponent(j.key)}`).catch(() => null);
+    const f = r?.fixed_issues || [];
+    const changed = f.filter((x) => x.severity === "change"), issues = f.filter((x) => x.severity !== "change");
+    fixed = `${changed.length ? ` Changed: ${changed.map((x) => `"${x.title}"`).join("; ")}.` : ""}${issues.length ? ` Fixed: ${issues.map((x) => `"${x.title}"`).join("; ")}.` : ""}`;
+    if (r && !f.length) fixed = " It recorded nothing as fixed or changed: see its warning, or the fix's diff in the fixes list.";
+  }
+  refreshFixes();
+  return `fix job ${j.id} finished in ${j.secs}s${j.warning ? `, with a warning: ${j.warning}` : ""}.${fixed}${S.result.pr.local_path ? ` Its result ${j.key} is open.` : " The fix is a commit in the PR's fix checkout, not pushed; push_fix pushes it."}`;
+}
+
 const reanalyze = (body, progress) => postJSON(resultURL("/reanalyze"), { ...jobSettings(), ...body }).then((j) => followJob(j, progress));
 
 // ACTIONS are the catalog. risk: view runs at once; local and job wait
@@ -86,16 +102,27 @@ export const ACTIONS = {
       return `opened the ${a.tab} tab`;
     },
   },
+  fill_field: {
+    risk: "view", label: (a) => `Write into ${FIELD_LABEL[a.field] || a.field}`, preview: (a) => a.text,
+    run: async (a) => {
+      const was = fill(need(a.field, "field"), need(a.text, "text"), a);
+      return `wrote ${String(a.text).length} chars into ${FIELD_LABEL[a.field] || a.field}${was ? ` (it said before: ${JSON.stringify(was.slice(0, 2000))})` : ""}; the reader saves it`;
+    },
+  },
   draft_comment: {
-    risk: "local", label: (a) => `Draft a comment on ${tryName(a.unit)} line ${a.line}`, preview: (a) => a.body,
+    risk: "local", label: (a) => `${a.id ? "Rewrite the pending comment" : "Draft a comment"} on ${tryName(a.unit)} ${a.side === "LEFT" ? "old " : ""}line ${a.line}`, preview: (a) => a.body,
     run: async (a) => {
       const { u, f } = unitOf(need(a.unit, "unit"));
       const line = Number(need(a.line, "line"));
-      const near = (u.hunks || []).some((h) => line >= h.new_start - 3 && line < h.new_start + h.new_lines + 3);
-      if (!near) throw new Error(`line ${line} is not a changed line of ${u.id} (or within 3 lines of one), so GitHub would not take a comment there`);
-      S.drafts = await postJSON(`${prBase()}/drafts`, { path: f.path, side: "RIGHT", line, body: need(a.body, "body") });
+      const side = a.side === "LEFT" ? "LEFT" : "RIGHT";
+      const near = (u.hunks || []).some((h) => side === "LEFT"
+        ? line >= h.old_start - 3 && line < h.old_start + h.old_lines + 3
+        : line >= h.new_start - 3 && line < h.new_start + h.new_lines + 3);
+      if (!near) throw new Error(`${side === "LEFT" ? "old" : "new"} line ${line} is not a changed line of ${u.id} (or within 3 lines of one), so GitHub would not take a comment there`);
+      if (a.id && !S.drafts.some((d) => d.id === a.id)) throw new Error(`no pending comment ${a.id}`);
+      S.drafts = await postJSON(`${prBase()}/drafts`, { id: a.id || undefined, path: f.path, side, line, body: need(a.body, "body") });
       render();
-      return `added a pending comment on ${f.path}:${line} (${S.drafts.length} pending); nothing is posted until the review is submitted`;
+      return `${a.id ? "rewrote" : "added"} a pending comment on ${f.path}:${line}${side === "LEFT" ? " (old file)" : ""} (${S.drafts.length} pending); nothing is posted until the review is submitted`;
     },
   },
   delete_draft: {
@@ -155,15 +182,18 @@ export const ACTIONS = {
       }
       const id = await startFix(target);
       if (!id) throw new Error("the fix did not start (another fix of this checkout is running, or the reader cancelled)");
-      const j = await followJob({ id, status: "running" }, progress, !!S.result.pr.local_path);
-      let fixed = "";
-      if (j.key) {
-        const r = await api(`/api/results/${encodeURIComponent(j.key)}`).catch(() => null);
-        const f = r?.fixed_issues || [];
-        fixed = f.length ? ` Fixed: ${f.map((x) => `"${x.title}"`).join("; ")}.` : "";
-      }
-      refreshFixes();
-      return `fix job ${j.id} finished in ${j.secs}s${j.warning ? `, with a warning: ${j.warning}` : ""}.${fixed}${S.result.pr.local_path ? ` Its result ${j.key} is open.` : " The fix is a commit in the PR's fix checkout, not pushed; push_fix pushes it."}`;
+      return fixOutcome(await followJob({ id, status: "running" }, progress, !!S.result.pr.local_path));
+    },
+  },
+  change: {
+    risk: "job", label: (a) => `Change ${(a.files || []).join(", ") || "the code"}`, preview: (a) => a.instructions,
+    run: async (a, progress) => {
+      const files = need(a.files, "files");
+      if (!Array.isArray(files) || !files.length) throw new Error("files must list the files the change may touch");
+      if (a.unit) unitOf(a.unit);
+      const id = await startFix({ change: { instructions: need(a.instructions, "instructions"), files, unit_id: a.unit || "" } });
+      if (!id) throw new Error("the change did not start (another fix of this checkout is running, or the reader cancelled)");
+      return fixOutcome(await followJob({ id, status: "running" }, progress, !!S.result.pr.local_path));
     },
   },
   reanalyze_units: {
@@ -245,6 +275,8 @@ export const ACTIONS = {
     },
   },
 };
+
+const FIELD_LABEL = { comment: "the comment box", dismiss_reason: "the dismissal's reason", review_summary: "the review summary" };
 
 function tryName(id) {
   try { return nameOf(unitOf(id).u); } catch { return String(id); }

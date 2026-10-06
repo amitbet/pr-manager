@@ -46,6 +46,25 @@ body.chat-page { margin: 0; }
 .chat-msg.user { align-self: flex-end; max-width: 88%; white-space: pre-wrap; background: var(--bg3); border-radius: 10px 10px 2px 10px; padding: 6px 10px; }
 .chat-msg.err { color: var(--human); font-size: 13px; }
 .chat-msg.thinking { color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.chat-msg.thinking .chat-work { flex: 1; min-width: 0; margin: 0; }
+.chat-where .linkbtn { font-size: 12px; }
+
+/* The work log: what the agent did to answer (chatwork.go). */
+.chat-work { margin: 0 0 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.chat-work-head { display: flex; gap: 6px; align-items: center; background: none; border: 0; padding: 0; color: var(--muted); font: inherit; text-align: left; cursor: default; }
+button.chat-work-head { cursor: pointer; }
+button.chat-work-head:hover { color: var(--fg); }
+.chat-work-list { margin: 3px 0 0 4px; padding-left: 8px; border-left: 2px solid var(--border); max-height: 280px; overflow: auto; }
+.chat-work.live .chat-work-list { max-height: none; overflow: hidden; }
+.chat-work.live.open .chat-work-list { max-height: 280px; overflow: auto; }
+.chat-work-row { display: flex; gap: 6px; align-items: baseline; line-height: 20px; min-width: 0; }
+.chat-work-row .ico { flex: none; width: 12px; text-align: center; font: 11px var(--mono); opacity: .8; }
+.chat-work-row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-work-row.k-run .lbl, .chat-work-row.k-read .lbl, .chat-work-row.k-search .lbl, .chat-work-row.k-web .lbl { font-family: var(--mono); font-size: 11px; }
+.chat-work-row.k-think .lbl { font-style: italic; }
+.chat-work-row.err, .chat-work-row .x { color: var(--red, #d33); }
+.chat-work.live .chat-work-row:last-child .lbl { animation: chat-shine 1.6s linear infinite; }
+@keyframes chat-shine { 50% { opacity: .55; } }
 .chat-meta { color: var(--muted); font-size: 11px; margin-top: 2px; display: flex; gap: 8px; align-items: center; }
 .chat-meta .linkbtn { font-size: 11px; }
 .chat-md p, .chat-md ul, .chat-md ol { margin: 0 0 6px; }

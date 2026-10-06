@@ -92,6 +92,12 @@ func main() {
 		case "version", "--version", "-version":
 			fmt.Printf("pr-manager %s (commit %s, built %s)\n", version, commit, date)
 			return
+		case "mcp": // the chat agent's gh and fetch, see mcpserver.go
+			if err := runMCP(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "mcp:", err)
+				os.Exit(1)
+			}
+			return
 		case "codemap":
 			if err := indexer.Run(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "codemap:", err)

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,10 +88,24 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	if err := os.WriteFile(schemaPath, schema, 0o600); err != nil {
 		return nil, err
 	}
-	args := []string{
-		"exec", "--json", "--ephemeral", "--skip-git-repo-check",
-		"--ignore-user-config", "--ignore-rules", "-s", codexSandbox(req.Workspace),
-		"--model", c.ModelID(), "--output-schema", schemaPath,
+	ws := req.Workspace
+	var sess *Session
+	if ws != nil && !ws.Edit {
+		sess = ws.Session
+	}
+	resume := sess != nil && sess.ID != ""
+	// A resumed session keeps its sandbox and directory; exec resume takes
+	// neither -s nor -C, so the sandbox is set again as configuration.
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
+		"--model", c.ModelID(), "--output-schema", schemaPath}
+	if resume {
+		args = append([]string{"exec", "resume"}, args[1:]...)
+		args = append(args, "--config", fmt.Sprintf("sandbox_mode=%q", codexSandbox(ws)))
+	} else {
+		args = append(args, "-s", codexSandbox(ws))
+	}
+	if sess == nil {
+		args = append(args, "--ephemeral")
 	}
 	// No AGENTS.md or AGENTS.override.md from the workspace, the untrusted
 	// PR head, as project instructions.
@@ -98,17 +113,33 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	if effort := codexEffort(c.Effort); effort != "" {
 		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", effort))
 	}
+	args = append(args, codexReach(ws)...)
 	// The read-only sandbox already lets it read anywhere; -C only sets
 	// where it starts.
 	cwd := dir
-	if ws := req.Workspace; ws != nil {
+	if ws != nil {
 		cwd = ws.Dir
-		args = append(args, "-C", ws.Dir)
+		if !resume {
+			args = append(args, "-C", ws.Dir)
+		}
+	}
+	if resume {
+		args = append(args, sess.ID)
 	}
 	args = append(args, "-")
-	system, prompt := cliPrompt(req.Messages, tool, req.Workspace)
+	system, prompt := cliPrompt(req.Messages, tool, ws)
+	// The system prompt is part of codex's transcript: a resumed session
+	// gets it again only when it changed.
 	if system != "" {
-		prompt = system + "\n\n" + prompt
+		switch h := hashText(system); {
+		case !resume:
+			prompt = system + "\n\n" + prompt
+		case h != sess.System:
+			prompt = "What you were told at the start has changed; this replaces it:\n\n" + system + "\n\n" + prompt
+		}
+		if sess != nil {
+			sess.System = hashText(system)
+		}
 	}
 	out, err := runCLI(ctx, orDefault(c.Binary, "codex"), args, cwd, prompt, callTimeout(req), codexEvent, "OPENAI_API_KEY", "CODEX_API_KEY")
 	if err != nil {
@@ -119,8 +150,9 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	var usage Usage
 	for _, line := range strings.Split(string(out), "\n") {
 		var ev struct {
-			Type string `json:"type"`
-			Item struct {
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+			Item     struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"item"`
@@ -137,6 +169,10 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 			continue
 		}
 		switch ev.Type {
+		case "thread.started":
+			if sess != nil && ev.ThreadID != "" {
+				sess.ID = ev.ThreadID
+			}
 		case "item.completed":
 			if ev.Item.Type == "agent_message" {
 				text = ev.Item.Text
@@ -157,10 +193,18 @@ func codexEvent(line string) string {
 	var ev struct {
 		Type string `json:"type"`
 		Item struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			Command  string `json:"command"`
-			ExitCode *int   `json:"exit_code"`
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Command   string          `json:"command"`
+			ExitCode  *int            `json:"exit_code"`
+			Server    string          `json:"server"`
+			Tool      string          `json:"tool"`
+			Arguments json.RawMessage `json:"arguments"`
+			Query     string          `json:"query"`
+			Status    string          `json:"status"`
+			Error     *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		} `json:"item"`
 		Message string `json:"message"`
 	}
@@ -169,8 +213,11 @@ func codexEvent(line string) string {
 	}
 	switch ev.Type {
 	case "item.started":
-		if ev.Item.Type == "command_execution" {
+		switch ev.Item.Type {
+		case "command_execution":
 			return "$ " + ev.Item.Command
+		case "mcp_tool_call":
+			return "→ " + mcpCall(ev.Item.Server, ev.Item.Tool, ev.Item.Arguments)
 		}
 	case "item.completed":
 		switch ev.Item.Type {
@@ -180,6 +227,16 @@ func codexEvent(line string) string {
 			if ev.Item.ExitCode != nil && *ev.Item.ExitCode != 0 {
 				return fmt.Sprintf("  exit %d: %s", *ev.Item.ExitCode, ev.Item.Command)
 			}
+		case "mcp_tool_call":
+			if ev.Item.Error != nil || ev.Item.Status == "failed" {
+				msg := ev.Item.Status
+				if ev.Item.Error != nil {
+					msg = ev.Item.Error.Message
+				}
+				return "  error: " + truncate(msg, 300)
+			}
+		case "web_search":
+			return "→ WebSearch " + strconv.Quote(ev.Item.Query)
 		case "agent_message":
 		default:
 			return ev.Item.Type + ": " + ev.Item.Text
@@ -232,12 +289,23 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	}
 	system, prompt := cliPrompt(req.Messages, tool, req.Workspace)
 	tools, cwd := "", dir
+	reachTools, reachAllowed, reachArgs, err := claudeReach(req.Workspace, dir)
+	if err != nil {
+		return nil, err
+	}
+	var sess *Session
 	if ws := req.Workspace; ws != nil {
 		tools, cwd = readOnlyTools, ws.Dir
 		if ws.Edit {
 			tools = editTools
-		} else if ws.Shell {
-			tools += ",Bash"
+		} else {
+			if ws.Shell {
+				tools += ",Bash"
+			}
+			if reachTools != "" {
+				tools += "," + reachTools
+			}
+			sess = ws.Session
 		}
 	}
 	// Anything long or multi-line goes in a file, not on the command line:
@@ -259,8 +327,21 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		"--include-partial-messages", // see claudeStream
 		"--model", c.ModelID(), "--tools", tools, "--disable-slash-commands",
 		"--strict-mcp-config", "--permission-mode", "dontAsk",
-		"--no-session-persistence", "--setting-sources", "user", "--settings", settingsPath,
+		"--setting-sources", "user", "--settings", settingsPath,
 	}
+	// A session is kept, under the working directory's project, only when
+	// the caller carries the conversation on (see session.go).
+	newSession := ""
+	switch {
+	case sess == nil:
+		args = append(args, "--no-session-persistence")
+	case sess.ID != "":
+		args = append(args, "--resume", sess.ID)
+	default:
+		newSession = newSessionID()
+		args = append(args, "--session-id", newSession)
+	}
+	args = append(args, reachArgs...)
 	if ws := req.Workspace; ws != nil {
 		// dontAsk denies anything not allowed up front: edits only in
 		// the working directory.
@@ -269,6 +350,9 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 			allowed = editAllowed
 		} else if ws.Shell {
 			allowed += "," + shellAllowed()
+		}
+		if !ws.Edit && reachAllowed != "" {
+			allowed += "," + reachAllowed
 		}
 		args = append(args, "--allowedTools", allowed)
 		for _, d := range ws.ReadDirs {
@@ -300,6 +384,7 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		Type             string         `json:"type"`
 		IsError          bool           `json:"is_error"`
 		Result           string         `json:"result"`
+		SessionID        string         `json:"session_id"`
 		StructuredOutput map[string]any `json:"structured_output"`
 		Usage            struct {
 			InputTokens              int `json:"input_tokens"`
@@ -320,6 +405,10 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	}
 	if res.IsError {
 		return nil, fmt.Errorf("claude-code/%s: %s", c.ModelID(), res.Result)
+	}
+	if sess != nil {
+		sess.ID = orDefault(res.SessionID, orDefault(newSession, sess.ID))
+		sess.System = hashText(system)
 	}
 	usage := Usage{
 		InputTokens:  res.Usage.InputTokens + res.Usage.CacheCreationInputTokens + res.Usage.CacheReadInputTokens,
@@ -607,6 +696,24 @@ func claudeToolCall(name string, input json.RawMessage, rel func(string) string)
 			s += " (waits for it)"
 		}
 		return s
+	case "WebFetch":
+		var w struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(input, &w)
+		return "Fetch " + w.URL
+	case "WebSearch":
+		var w struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(input, &w)
+		return fmt.Sprintf("WebSearch %q", w.Query)
+	case "Bash":
+		var b struct {
+			Command string `json:"command"`
+		}
+		_ = json.Unmarshal(input, &b)
+		return "$ " + truncate(b.Command, 300)
 	case "Grep", "Glob":
 		s := fmt.Sprintf("%s %q", name, in.Pattern)
 		if in.Glob != "" {
@@ -616,6 +723,10 @@ func claudeToolCall(name string, input json.RawMessage, rel func(string) string)
 			s += " in " + rel(in.Path)
 		}
 		return s
+	}
+	if rest, ok := strings.CutPrefix(name, "mcp__"); ok {
+		server, tool, _ := strings.Cut(rest, "__")
+		return mcpCall(server, tool, input)
 	}
 	return name + " " + truncate(string(input), 200)
 }
@@ -718,7 +829,7 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, ws *Workspace) (string, 
 	case ws != nil && ws.Edit:
 		fmt.Fprintf(&sb, "%s Make your changes by editing the files, then answer only with the JSON object.", tool.Description)
 	case ws != nil && ws.Shell:
-		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything. Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description)
+		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything.%s Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description, reachNote(ws))
 	case ws != nil:
 		fmt.Fprintf(&sb, "%s Read files if you need to, but do not change anything. Answer only with the JSON object.", tool.Description)
 	default:

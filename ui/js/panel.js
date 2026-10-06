@@ -15,6 +15,15 @@ function review() {
 }
 let onJump = () => {};
 
+// reviewBody and setReviewBody are the summary being written, for the
+// chat agent (viewctx.js).
+export const reviewBody = () => review().body;
+export function setReviewBody(text) {
+  review().body = text;
+  const ta = $("#rv-body");
+  if (ta) ta.value = text;
+}
+
 export const panelOpen = () => !$("#panel").hidden;
 export const closePanel = () => { $("#panel").hidden = true; };
 

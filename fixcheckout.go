@@ -560,15 +560,19 @@ func (co *repoCheckout) commitFix(ctx context.Context, n int, files []string, e 
 // fixCommitMessage says what a fix fixed.
 func fixCommitMessage(e fixEntry) string {
 	var subject string
-	switch len(e.Fixed) {
-	case 0:
+	// A change the reader asked for comes first, and is named as asked.
+	change := len(e.Fixed) > 0 && e.Fixed[0].Severity == "change"
+	switch {
+	case change:
+		subject = e.Fixed[0].Title
+	case len(e.Fixed) == 0:
 		subject = "Fix review issues"
-	case 1:
+	case len(e.Fixed) == 1:
 		subject = "Fix: " + e.Fixed[0].Title
 	default:
 		subject = fmt.Sprintf("Fix %d review issues", len(e.Fixed))
 	}
-	if len(e.Fixed) != 1 {
+	if len(e.Fixed) != 1 && !change {
 		// The files, when they fit; base names, when those do.
 		names := make([]string, len(e.Files))
 		for i, f := range e.Files {

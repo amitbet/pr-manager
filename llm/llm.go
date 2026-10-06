@@ -16,10 +16,22 @@ import (
 	"github.com/amitbet/pr-manager/internal/activity"
 )
 
-// ChatMessage is a minimal role/content pair used across providers
+// ChatMessage is a minimal role/content pair used across providers. In a
+// tool loop (see agent.go) an assistant turn also carries the ToolCalls it
+// made, and the user turn after it their ToolResults.
 type ChatMessage struct {
-	Role    string `json:"role"`
+	Role        string       `json:"role"`
+	Content     string       `json:"content"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults []ToolResult `json:"tool_results,omitempty"`
+}
+
+// ToolResult is what running a ToolCall gave, sent back to the model.
+type ToolResult struct {
+	CallID  string `json:"call_id"`
+	Name    string `json:"name"`
 	Content string `json:"content"`
+	IsError bool   `json:"is_error,omitempty"`
 }
 
 type ToolDefinition struct {
@@ -42,6 +54,9 @@ const (
 	// ToolChoiceRequired forces the model to call the first tool in
 	// LLMRequest.Tools. Used for structured output.
 	ToolChoiceRequired ToolChoiceType = "required"
+	// ToolChoiceAny makes the model call one or more of the tools, any of
+	// them. Used by the tool loop.
+	ToolChoiceAny ToolChoiceType = "any"
 )
 
 type LLMRequest struct {
@@ -50,7 +65,8 @@ type LLMRequest struct {
 	ToolChoice ToolChoiceType   `json:"tool_choice,omitempty"`
 	MaxTokens  int32            `json:"max_tokens,omitempty"`
 	// Workspace, if set, lets providers that run an agent (the CLIs) read
-	// files while answering. The API providers ignore it.
+	// files while answering. The API providers ignore it: CallToolReading
+	// gives them the workspace as tools instead (see agent.go).
 	Workspace *Workspace `json:"-"`
 }
 
@@ -65,18 +81,37 @@ type LLMRequest struct {
 // Code in its OS sandbox with every write and the network denied, or,
 // where that sandbox can't run (Windows), only a list of read-only
 // commands. NoWrite are more directories it must not write to.
+//
+// The CLIs also take, without Edit: Web, to search and fetch the web with
+// their own tools (an API provider gets the app's fetch, webtool.go); MCP, servers whose tools it may call (they run outside
+// the sandbox, see session.go); and Session, to carry on a conversation.
 type Workspace struct {
 	Dir      string
 	ReadDirs []string
 	Edit     bool
 	Shell    bool
 	NoWrite  []string
+	Web      bool
+	MCP      []MCPServer
+	Session  *Session
 }
 
-// SupportsWorkspace reports whether l can use LLMRequest.Workspace.
+// SupportsWorkspace reports whether l can use LLMRequest.Workspace: the
+// CLIs, which run their own agent.
 func SupportsWorkspace(l LLMTool) bool {
 	switch l.(type) {
 	case *CodexCLI, *ClaudeCodeCLI:
+		return true
+	}
+	return false
+}
+
+// ReadsWorkspace reports whether CallToolReading can let l read a
+// workspace without Edit: the CLIs on their own, and every API provider through the
+// workspace tools (see fstools.go), which the app runs for it.
+func ReadsWorkspace(l LLMTool) bool {
+	switch l.(type) {
+	case *CodexCLI, *ClaudeCodeCLI, *AnthropicLLM, *OpenAILLM, *OllamaLLM, *BedrockLLM:
 		return true
 	}
 	return false
@@ -209,7 +244,21 @@ func CallTool(ctx context.Context, l LLMTool, msgs []ChatMessage, tool ToolDefin
 	return CallToolIn(ctx, l, nil, msgs, tool, maxTokens)
 }
 
+// CallToolReading is CallToolIn for every provider that ReadsWorkspace: a
+// CLI reads ws with its own tools, an API provider gets the workspace
+// tools and answers in a loop (see agent.go). Only the CLIs can Edit.
+func CallToolReading(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatMessage, tool ToolDefinition, maxTokens int32) (map[string]any, Usage, error) {
+	if ws == nil || SupportsWorkspace(l) {
+		return CallToolIn(ctx, l, ws, msgs, tool, maxTokens)
+	}
+	if ws.Edit {
+		return nil, Usage{}, fmt.Errorf("%s can't edit files: use codex or claude-code", l.Name())
+	}
+	return callInWorkspace(ctx, l, ws, msgs, tool, maxTokens)
+}
+
 // CallToolIn is CallTool with a workspace the provider may read (nil: none).
+// The API providers ignore it; CallToolReading gives it to them as tools.
 func CallToolIn(ctx context.Context, l LLMTool, ws *Workspace, msgs []ChatMessage, tool ToolDefinition, maxTokens int32) (args map[string]any, usage Usage, err error) {
 	chars := 0
 	for _, m := range msgs {

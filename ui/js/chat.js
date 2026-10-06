@@ -21,23 +21,80 @@
 // turn with its time, and the agent continues from there.
 //
 // Conversations are kept per change (the PR, or the local checkout), so
-// they carry on across re-triages and fixes, in localStorage under
-// prm-chat.<change>, outside pr-manager.*, so they don't go into the
-// server's settings file. Every turn has its time.
+// they carry on across re-triages and fixes, on the server under
+// <cache>/chats (GET/PUT /api/chats, see chatconv.go), where the agent's
+// CLI session is kept too. A conversation from before, in localStorage
+// under prm-chat.<change>, moves there when it is first opened, and
+// localStorage keeps one the server couldn't take. Every turn has its time.
+//
+// While the agent works, the chat shows what it does (chatwork.go): one
+// line for the step it is on under "Working for 12s", all of them on a
+// click; the answer keeps them, folded, as "Worked for 40s · read 6 files,
+// ran 3 commands".
 import { esc, api, say } from "./util.js";
 
 const ls = (k) => localStorage.getItem(`pr-manager.${k}`) || "";
 const setLs = (k, v) => localStorage.setItem(`pr-manager.${k}`, v);
 const convKey = (id) => `prm-chat.${id}`;
 const MAX_KEPT = 80;
+const MAX_WORK = 120;
+
+const convs = new Map(); // conversation -> its turns, as loaded or saved here
+const loading = new Map(); // conversation -> the GET in flight
+const putTimers = new Map();
+let convLoaded = () => {};
+const legacy = (id) => { try { return JSON.parse(localStorage.getItem(convKey(id))) || []; } catch { return []; } };
+const convURL = (id) => `/api/chats?change=${encodeURIComponent(id)}`;
 
 function loadConv(id) {
-  try { return JSON.parse(localStorage.getItem(convKey(id))) || []; } catch { return []; }
+  if (convs.has(id)) return convs.get(id);
+  ensureConv(id);
+  return legacy(id);
+}
+// ensureConv loads a conversation from the server, once.
+function ensureConv(id) {
+  if (convs.has(id)) return Promise.resolve(convs.get(id));
+  if (!loading.has(id)) {
+    loading.set(id, api(convURL(id)).then((r) => {
+      let msgs = r.messages || [];
+      const old = legacy(id);
+      if (!msgs.length && old.length) { msgs = old; putConv(id, msgs); }
+      else localStorage.removeItem(convKey(id));
+      if (!convs.has(id)) convs.set(id, msgs); // a save while it loaded wins
+    }, () => { if (!convs.has(id)) convs.set(id, legacy(id)); })
+      .then(() => { loading.delete(id); convLoaded(id); return convs.get(id); }));
+  }
+  return loading.get(id);
 }
 function saveConv(id, msgs) {
-  if (msgs.length) localStorage.setItem(convKey(id), JSON.stringify(msgs.slice(-MAX_KEPT)));
-  else localStorage.removeItem(convKey(id));
+  msgs = msgs.slice(-MAX_KEPT);
+  convs.set(id, msgs);
+  channel?.postMessage({ type: "conv-data", key: id, msgs });
+  clearTimeout(putTimers.get(id));
+  putTimers.set(id, setTimeout(() => { putTimers.delete(id); putConv(id, convs.get(id) || []); }, 300));
 }
+function putConv(id, msgs, keepalive = false) {
+  return fetch(convURL(id), { method: "PUT", keepalive, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: msgs }) })
+    .then((r) => { if (!r.ok) throw new Error(r.statusText); localStorage.removeItem(convKey(id)); })
+    .catch(() => { if (msgs.length) localStorage.setItem(convKey(id), JSON.stringify(msgs)); });
+}
+// A save still waiting goes out as the page closes.
+addEventListener("pagehide", () => {
+  for (const [id, t] of putTimers) { clearTimeout(t); putConv(id, convs.get(id) || [], true); }
+  putTimers.clear();
+});
+
+// The work log's lines (workEntry in chatwork.go).
+const WORK_ICON = { think: "✱", read: "▤", search: "⌕", run: "$", web: "◍", tool: "•", note: "›", error: "✗", progress: "…" };
+function workSummary(work) {
+  const n = (k) => work.filter((e) => e.k === k).length;
+  const say = (k, one, many) => { const c = n(k); return c ? (c === 1 ? one : many.replace("#", c)) : ""; };
+  const parts = [say("read", "read a file", "read # files"), say("search", "searched once", "searched # times"), say("run", "ran a command", "ran # commands"), say("web", "made a GitHub or web call", "made # GitHub or web calls")].filter(Boolean);
+  if (!parts.length && n("think")) parts.push("thought");
+  return parts.join(", ");
+}
+const workRow = (e) => `<div class="chat-work-row k-${esc(e.k)}${e.err ? " err" : ""}" title="${esc(e.x)}"><span class="ico" aria-hidden="true">${WORK_ICON[e.k] || "•"}</span><span class="lbl">${esc(e.x)}</span>${e.err ? `<span class="x" aria-label="failed">✗</span>` : ""}</div>`;
+const secsText = (s) => s >= 90 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
 
 // Who may run what without asking (Settings → Chat agent): navigation
 // always; with "local" also drafts, dismissals and marks; with "job" also
@@ -202,6 +259,8 @@ export function initChat(host, { popout = false } = {}) {
   const remoteBusy = new Set(); // conversations the other window is waiting on
   const drafts = {};
   const progress = new Map(); // action id -> a running job's stage
+  const live = new Map(); // conversation -> {t0, entries}: the answer being written's work log
+  const workOpen = new Set(); // work logs unfolded: "live", or an answer's time
   let popWin = null, drawn = "", lastCount = -1;
   // cid is the open conversation: the change's. One kept under the result
   // key, from before conversations followed the change, moves over.
@@ -242,7 +301,27 @@ export function initChat(host, { popout = false } = {}) {
     const w = host.where() || {};
     const units = (w.units || []).slice(0, 3).map((id) => host.unitLabel(id));
     const more = (w.units || []).length > 3 ? ` +${w.units.length - 3}` : "";
-    return [w.where, w.path, units.length ? units.join(", ") + more : ""].filter(Boolean).join(" · ");
+    return [w.where, w.path, units.length ? units.join(", ") + more : "", selText(w.selection), w.field_text].filter(Boolean).join(" · ");
+  }
+  function selText(sl) {
+    if (!sl) return "";
+    const lines = sl.new_start ? `:${sl.new_start}${sl.new_end > sl.new_start ? `-${sl.new_end}` : ""}` : sl.old_start ? ` old :${sl.old_start}${sl.old_end > sl.old_start ? `-${sl.old_end}` : ""}` : "";
+    return sl.path ? `selected ${sl.path.split("/").pop()}${lines}` : `selected "${sl.text.trim().slice(0, 30)}${sl.text.trim().length > 30 ? "…" : ""}"`;
+  }
+
+  // workHTML is a work log: while it is written, the step it is on;
+  // after, folded into what it did. key says which one is unfolded.
+  function workHTML(work, key, { running = false, secs = 0, resumed = false } = {}) {
+    const open = workOpen.has(key);
+    const shown = (work || []).filter((e) => e.k !== "progress");
+    if (!running && !shown.length) return "";
+    const head = running ? `<span class="spinner"></span> Working for ${secsText(secs)}`
+      : `Worked for ${secsText(secs)}${workSummary(shown) ? ` · ${esc(workSummary(shown))}` : ""}${resumed ? ` · <span title="Carried on the agent's session, with what it read before">same session</span>` : ""}`;
+    const last = [...(work || [])].reverse().find((e) => e.k !== "note") || null;
+    const body = open ? shown.map(workRow).join("") : running ? (last ? workRow(last) : `<div class="chat-work-row k-think"><span class="ico">✱</span><span class="lbl">Thinking…</span></div>`) : "";
+    return `<div class="chat-work${running ? " live" : ""}${open ? " open" : ""}">
+      ${shown.length ? `<button type="button" class="chat-work-head" data-chat="work-toggle" data-w="${esc(key)}" aria-expanded="${open}">${open ? "▾" : "▸"} ${head}</button>` : `<div class="chat-work-head">${head}</div>`}
+      ${body ? `<div class="chat-work-list">${body}</div>` : ""}</div>`;
   }
 
   function actionHTML(a) {
@@ -268,7 +347,7 @@ export function initChat(host, { popout = false } = {}) {
     if (m.role === "user") return `<div class="chat-msg user" title="${esc(m.at ? new Date(m.at).toLocaleString() : "")}">${esc(m.content)}</div>`;
     if (m.error) return `<div class="chat-msg err" role="alert">${esc(m.content)} <button type="button" class="linkbtn" data-chat="retry">Retry</button></div>`;
     const meta = [clock(m.at), m.model, m.secs ? `${m.secs}s` : ""].filter(Boolean).join(" · ");
-    return `<div class="chat-msg bot"><div class="chat-md">${md(m.content, host.unitLabel)}</div>
+    return `<div class="chat-msg bot">${workHTML(m.work, m.at, { secs: m.secs || 0, resumed: m.resumed })}<div class="chat-md">${md(m.content, host.unitLabel)}</div>
       ${(m.actions || []).map(actionHTML).join("")}
       <div class="chat-meta">${esc(meta)} <button type="button" class="linkbtn" data-chat="copy" data-i="${i}">copy</button></div></div>`;
   }
@@ -308,11 +387,11 @@ export function initChat(host, { popout = false } = {}) {
         ${popout ? btn("dock-back", ICON.back, "Put the chat back in the main window")
           : `${btn("mode", st.mode === "dock" ? ICON.float : ICON.dock, st.mode === "dock" ? "Float over the page" : "Dock to the right")}${canPopOut ? btn("popout", ICON.out, "Pop out into its own window") : ""}${btn("close", ICON.min, `Collapse to an icon (${hideLabel()})`)}`}
       </div>
-      <div class="chat-where" title="Sent with each question, so the agent knows what you mean by &quot;this&quot;">${popout && host.title() ? `<b>${esc(host.title())}</b> · ` : ""}Looking at: ${esc(whereText() || "—")}</div>
+      <div class="chat-where" title="Sent with each question, so the agent knows what you mean by &quot;this&quot;">${popout && host.title() ? `<b>${esc(host.title())}</b> · ` : ""}Looking at: ${esc(whereText() || "—")}${!popout && host.where()?.selection ? ` <button type="button" class="linkbtn" data-chat="clear-sel" title="Don't send the selection">clear selection</button>` : ""}</div>
       <div class="chat-log" aria-live="polite">
         ${msgs.length ? msgs.map(messageHTML).join("") : `<div class="chat-empty"><p>Ask about this PR. The agent has the review, issues, code map, sequence, fixes and job activity, and knows what you are looking at. It can also act for you: draft comments, dismiss or fix issues, analyze parts again, and reply on GitHub, each with your OK.</p>
           ${SUGGEST.map((s) => `<button type="button" class="chat-suggest" data-chat="ask">${esc(s)}</button>`).join("")}</div>`}
-        ${waiting ? `<div class="chat-msg bot thinking"><span class="spinner"></span> Thinking…</div>` : ""}
+        ${waiting ? `<div class="chat-msg bot thinking">${workHTML(live.get(id)?.entries, "live", { running: true, secs: (Date.now() - (live.get(id)?.t0 || Date.now())) / 1000 })}</div>` : ""}
       </div>
       <form class="chat-form" data-chat-form>
         <textarea id="chat-input" rows="1" placeholder="Ask about this PR… (Esc to collapse)" aria-label="Ask the chat agent" spellcheck="true">${esc(drafts[id] || "")}</textarea>
@@ -349,6 +428,8 @@ export function initChat(host, { popout = false } = {}) {
     const key = host.key(), id = cid();
     text = text.trim();
     if (!key || busy.has(id) || remoteBusy.has(id)) return;
+    await ensureConv(id);
+    if (busy.has(id) || remoteBusy.has(id)) return;
     let msgs = loadConv(id);
     if (text) msgs = [...msgs, { role: "user", content: text, at: now() }];
     else if (!msgs.length) return;
@@ -359,20 +440,35 @@ export function initChat(host, { popout = false } = {}) {
     post({ type: "busy", key: id, on: true });
     draw();
     const t0 = performance.now();
+    // The work log of this answer, followed while it is written.
+    const run = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    live.set(id, { t0: Date.now(), entries: [] });
+    const follow = setInterval(async () => {
+      const r = await api(`/api/chat-runs/${run}`).catch(() => null);
+      const l = live.get(id);
+      if (!r || !l || !busy.has(id)) return;
+      l.entries = r.entries || [];
+      post({ type: "work", key: id, t0: l.t0, entries: l.entries });
+      if (cid() === id && st.open) draw();
+    }, 1000);
     let reply;
     try {
+      const { field_text, ...view } = host.where() || {};
       const res = await api(`/api/results/${encodeURIComponent(key)}/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
-        body: JSON.stringify({ messages: msgs.filter((m) => !m.error).map(turnOf), view: host.where() || {}, ...modelPick() }),
+        body: JSON.stringify({ messages: msgs.filter((m) => !m.error).map(turnOf), view, conversation: id, run, no_web: ls("chat_web") === "0", ...modelPick() }),
       });
       const actions = await Promise.all((res.actions || []).map(async (a, i) => {
         const d = await describe(a.name, a.args).catch(() => ({ label: a.name, risk: "outward" }));
         return { id: `${Date.now().toString(36)}-${i}`, name: a.name, args: a.args || {}, why: a.why, label: d.label, preview: d.preview, risk: d.risk, status: "proposed" };
       }));
-      reply = { role: "assistant", content: res.answer, model: res.model, at: res.at || now(), secs: Math.round((performance.now() - t0) / 100) / 10, actions };
+      reply = { role: "assistant", content: res.answer, model: res.model, at: res.at || now(), secs: Math.round((performance.now() - t0) / 100) / 10, actions,
+        work: (res.work || []).slice(-MAX_WORK), resumed: !!res.resumed };
     } catch (e) {
       reply = { role: "assistant", error: true, at: now(), content: e.name === "AbortError" ? "Stopped." : `The chat agent failed: ${e.message}` };
     }
+    clearInterval(follow);
+    live.delete(id);
     busy.delete(id);
     saveConv(id, [...loadConv(id), reply]);
     if (!st.open || st.popped || cid() !== id) st.unread = !popout;
@@ -456,14 +552,16 @@ export function initChat(host, { popout = false } = {}) {
   const describe = (name, args) => popout ? rpc("describe", name, args) : Promise.resolve(host.describe(name, args));
   const runAction = (name, args, onProgress) => popout ? rpc("run", name, args, onProgress) : host.runAction(name, args, onProgress);
 
-  // A page reload loses track of what was running.
-  {
-    const id = host.key() && cid();
-    const msgs = id ? loadConv(id) : [];
+  // A page reload loses track of what was running: when a conversation
+  // first loads here, nothing of it runs here yet.
+  convLoaded = (id) => {
+    const msgs = convs.get(id) || [];
     let stale = false;
-    for (const m of msgs) for (const a of m.actions || []) if (a.status === "running" && !popout) { a.status = "interrupted"; stale = true; }
+    if (!popout) for (const m of msgs) for (const a of m.actions || []) if (a.status === "running" && !progress.has(a.id)) { a.status = "interrupted"; stale = true; }
     if (stale) saveConv(id, msgs);
-  }
+    if (id === cid()) draw();
+  };
+  if (host.key()) ensureConv(cid());
 
   function popOut() {
     const key = host.key();
@@ -502,6 +600,8 @@ export function initChat(host, { popout = false } = {}) {
       saveConv(id, msgs);
       if (q) send(q.content);
     },
+    "work-toggle": (el) => { const k = el.dataset.w; workOpen.has(k) ? workOpen.delete(k) : workOpen.add(k); draw(); },
+    "clear-sel": () => { host.clearSelection?.(); draw(); },
     "act-run": (el) => runAct(cid(), el.dataset.a),
     "act-skip": (el) => runAct(cid(), el.dataset.a, true),
     copy: async (el) => {
@@ -619,8 +719,10 @@ export function initChat(host, { popout = false } = {}) {
   }
 
   channel?.addEventListener("message", ({ data: m }) => {
-    if (m.type === "busy") { m.on ? remoteBusy.add(m.key) : remoteBusy.delete(m.key); if (m.key === cid()) draw(); }
+    if (m.type === "busy") { m.on ? remoteBusy.add(m.key) : (remoteBusy.delete(m.key), busy.has(m.key) || live.delete(m.key)); if (m.key === cid()) draw(); }
     else if (m.type === "conv") { if (m.key === cid()) draw(); }
+    else if (m.type === "conv-data") { convs.set(m.key, m.msgs); if (m.key === cid()) draw(); }
+    else if (m.type === "work") { if (remoteBusy.has(m.key)) { live.set(m.key, { t0: m.t0, entries: m.entries }); if (m.key === cid()) draw(); } }
     else if (!popout && m.type === "rpc") {
       // The pop-out's action, run here, where the app is.
       const reply = (x) => post({ type: "rpc-done", rid: m.rid, ...x });
@@ -670,6 +772,8 @@ export function initChat(host, { popout = false } = {}) {
   // A new hotkey in Settings (here, or in another window) renames it in
   // the hover text.
   addEventListener("prm-hotkey", () => draw());
+  // What is selected, or being typed, changed (viewctx.js).
+  addEventListener("prm-view", () => { sendView(false); if (sig() !== drawn) draw(); });
   addEventListener("storage", (e) => { if (e.key === "pr-manager.chat_hotkey" || e.key === "pr-manager.chat_hide_hotkey") draw(); });
 
   if (popout) {

@@ -83,11 +83,7 @@ func (o *OpenAILLM) useResponses() bool {
 
 func (o *OpenAILLM) buildPayload(req LLMRequest) map[string]any {
 	model := o.ModelID()
-	msgs := make([]map[string]any, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
-	}
-	payload := map[string]any{"model": model, "messages": msgs}
+	payload := map[string]any{"model": model, "messages": openAIMessages(req.Messages)}
 	if req.MaxTokens > 0 {
 		if isGPT5(model) {
 			payload["max_completion_tokens"] = req.MaxTokens
@@ -121,6 +117,8 @@ func (o *OpenAILLM) buildPayload(req LLMRequest) map[string]any {
 		switch req.ToolChoice {
 		case ToolChoiceNone:
 			payload["tool_choice"] = "none"
+		case ToolChoiceAny:
+			payload["tool_choice"] = "required"
 		case ToolChoiceRequired:
 			payload["tool_choice"] = map[string]any{
 				"type":     "function",
@@ -131,6 +129,41 @@ func (o *OpenAILLM) buildPayload(req LLMRequest) map[string]any {
 		}
 	}
 	return payload
+}
+
+// openAIMessages is the Chat Completions form of msgs: an assistant turn's
+// tool calls go with it, and each result is a message of its own.
+func openAIMessages(in []ChatMessage) []map[string]any {
+	msgs := make([]map[string]any, 0, len(in))
+	for _, m := range in {
+		for _, r := range m.ToolResults {
+			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": r.CallID, "content": orNone(r.Content)})
+		}
+		if len(m.ToolCalls) > 0 {
+			calls := make([]map[string]any, 0, len(m.ToolCalls))
+			for _, c := range m.ToolCalls {
+				calls = append(calls, map[string]any{"id": c.CallID, "type": "function", "function": map[string]any{"name": c.Name, "arguments": argsJSON(c.Arguments)}})
+			}
+			msg := map[string]any{"role": m.Role, "content": nil, "tool_calls": calls}
+			if m.Content != "" {
+				msg["content"] = m.Content
+			}
+			msgs = append(msgs, msg)
+			continue
+		}
+		if m.Content != "" || len(m.ToolResults) == 0 {
+			msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+		}
+	}
+	return msgs
+}
+
+func argsJSON(a map[string]any) string {
+	b, err := json.Marshal(argsOrEmpty(a))
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func (o *OpenAILLM) post(ctx context.Context, path string, payload map[string]any) ([]byte, error) {
@@ -245,7 +278,15 @@ func mapOpenAIFinishReason(s string) StopReason {
 func (o *OpenAILLM) buildResponsesPayload(req LLMRequest) map[string]any {
 	input := make([]map[string]any, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		input = append(input, map[string]any{"role": m.Role, "content": m.Content})
+		for _, r := range m.ToolResults {
+			input = append(input, map[string]any{"type": "function_call_output", "call_id": r.CallID, "output": orNone(r.Content)})
+		}
+		if m.Content != "" || len(m.ToolCalls)+len(m.ToolResults) == 0 {
+			input = append(input, map[string]any{"role": m.Role, "content": m.Content})
+		}
+		for _, c := range m.ToolCalls {
+			input = append(input, map[string]any{"type": "function_call", "call_id": c.CallID, "name": c.Name, "arguments": argsJSON(c.Arguments)})
+		}
 	}
 	payload := map[string]any{"model": o.ModelID(), "input": input, "reasoning": map[string]any{"effort": o.Effort}, "store": false}
 	if req.MaxTokens > 0 {
@@ -264,6 +305,8 @@ func (o *OpenAILLM) buildResponsesPayload(req LLMRequest) map[string]any {
 		switch req.ToolChoice {
 		case ToolChoiceNone:
 			payload["tool_choice"] = "none"
+		case ToolChoiceAny:
+			payload["tool_choice"] = "required"
 		case ToolChoiceRequired:
 			payload["tool_choice"] = map[string]any{"type": "function", "name": req.Tools[0].Name}
 		default:

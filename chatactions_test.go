@@ -82,7 +82,7 @@ func TestChatPlaces(t *testing.T) {
 	}
 	r := &PRResult{Key: "k1", PR: &triage.PRInfo{LocalPath: t.TempDir()}, LocalFixDir: "/nowhere"}
 	places := tr.chatPlaces(r, r.PR.LocalPath)
-	text := chatPlacesText(places)
+	text := chatPlacesText(places, true)
 	for _, want := range []string{r.PR.LocalPath, tr.results, "k1.json"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("places lack %q:\n%s", want, text)

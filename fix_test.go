@@ -1008,3 +1008,61 @@ func TestFixScratchCarriesTheCheckoutsFilesAndPatchesBack(t *testing.T) {
 		t.Errorf("worktrees = %q", wt)
 	}
 }
+
+func TestFixChange(t *testing.T) {
+	for _, c := range []fixChange{
+		{Instructions: " ", Files: []string{"a.go"}},
+		{Instructions: "rename f", Files: nil},
+		{Instructions: "rename f", Files: []string{"../outside.go"}},
+		{Instructions: "rename f", Files: []string{".git/config"}},
+	} {
+		if err := c.check(); err == nil {
+			t.Errorf("accepted %+v", c)
+		}
+	}
+	c := &fixChange{Instructions: "  Rename f to g\nand update the callers  ", Files: []string{"./a.go", "b/c.go"}}
+	if err := c.check(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Files[0] != "a.go" || c.title() != "Rename f to g" {
+		t.Errorf("files=%v title=%q", c.Files, c.title())
+	}
+	r := &PRResult{Files: []resultFile{{FileDiff: triage.FileDiff{Path: "a.go"}, Units: []resultUnit{
+		{Unit: &triage.Unit{ID: "a.go:f", Issues: []triage.Issue{{Title: "one"}}}},
+	}}}}
+	targets := fixTargets(r, fixRequest{Change: c})
+	if len(targets) != 1 || targets[0].Change != c || targets[0].reviewIssue() {
+		t.Fatalf("targets = %+v", targets)
+	}
+	if files := fixFiles(targets); !files["a.go"] || !files["b/c.go"] || len(files) != 2 {
+		t.Errorf("files = %v", files)
+	}
+	// The change isn't an issue: the review's issues stay out of its
+	// rounds, and are shown as the PR's other issues, which it may resolve.
+	if skip := untargeted(r, targets); !skip[issueScope("a.go:f", triage.Issue{Title: "one"})] {
+		t.Errorf("untargeted = %v", skip)
+	}
+	if side := sideIssues(r, targets, nil, nil); len(side) != 1 || side[0].Title != "one" {
+		t.Errorf("side = %+v", side)
+	}
+
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644)
+	found := targetedIssue{UnitID: "a.go:f", File: "a.go", Issue: triage.Issue{Title: "a new bug"}}
+	prompt, err := fixPrompt(dir, r, []targetedIssue{targets[0], found}, nil, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, rest, ok := strings.Cut(prompt, "<untrusted")
+	if !ok || !strings.Contains(ask, "The reader asks for this change:\n\n"+c.Instructions) || !strings.Contains(rest, "a new bug") {
+		t.Errorf("the change isn't the request, before the data:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, `"a.go", "b/c.go"`) {
+		t.Errorf("the prompt doesn't list the change's files:\n%s", prompt)
+	}
+
+	msg := fixCommitMessage(fixEntry{Files: c.Files, Fixed: []fixedIssue{{Severity: "change", Title: c.title()}, {Severity: "high", Title: "a new bug", File: "a.go"}}})
+	if !strings.HasPrefix(msg, "Rename f to g\n\n") {
+		t.Errorf("commit message = %q", msg)
+	}
+}

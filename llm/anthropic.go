@@ -79,6 +79,15 @@ func (a *AnthropicLLM) Name() string {
 	return ClaudeAPI
 }
 
+// unforcedInstruction is what a model that can't be made to call a tool
+// is told instead.
+func unforcedInstruction(req LLMRequest) string {
+	if req.ToolChoice == ToolChoiceAny {
+		return fmt.Sprintf("Always answer with tool calls, never in text alone. When you are done, answer by calling the %s tool.", req.Tools[0].Name)
+	}
+	return fmt.Sprintf("Answer by calling the %s tool exactly once. Do not answer in text.", req.Tools[0].Name)
+}
+
 // noForcedTool: models that reject tool_choice "tool" (and "any") with a
 // 400. They get tool_choice "auto" and an instruction to call the tool;
 // CallTool still fails if the answer has no call. Deployment names on
@@ -108,13 +117,46 @@ func buildAnthropicMessages(messages []ChatMessage) ([]map[string]any, []string)
 				system = append(system, m.Content)
 			}
 		case "user", "assistant":
-			out = append(out, map[string]any{
-				"role":    m.Role,
-				"content": []map[string]any{{"type": "text", "text": m.Content}},
-			})
+			var content []map[string]any
+			for _, r := range m.ToolResults {
+				content = append(content, map[string]any{"type": "tool_result", "tool_use_id": r.CallID, "content": orNone(r.Content), "is_error": r.IsError})
+			}
+			if m.Content != "" || len(m.ToolCalls)+len(m.ToolResults) == 0 {
+				content = append(content, map[string]any{"type": "text", "text": m.Content})
+			}
+			for _, c := range m.ToolCalls {
+				content = append(content, map[string]any{"type": "tool_use", "id": c.CallID, "name": c.Name, "input": argsOrEmpty(c.Arguments)})
+			}
+			out = append(out, map[string]any{"role": m.Role, "content": content})
 		}
 	}
 	return out, system
+}
+
+// argsOrEmpty is a tool call's arguments as the APIs want them: an object.
+func argsOrEmpty(a map[string]any) map[string]any {
+	if a == nil {
+		return map[string]any{}
+	}
+	return a
+}
+
+// orNone: the APIs reject an empty tool result.
+func orNone(s string) string {
+	if s == "" {
+		return "(no output)"
+	}
+	return s
+}
+
+// hasToolResults is whether msgs are a tool loop's.
+func hasToolResults(msgs []ChatMessage) bool {
+	for _, m := range msgs {
+		if len(m.ToolResults) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func buildAnthropicTools(defs []ToolDefinition) []map[string]any {
@@ -145,10 +187,16 @@ func (a *AnthropicLLM) buildPayload(req LLMRequest) map[string]any {
 		"max_tokens": maxTokens,
 	}
 	tools := buildAnthropicTools(req.Tools)
-	forced := req.ToolChoice == ToolChoiceRequired && len(tools) > 0
+	forced := (req.ToolChoice == ToolChoiceRequired || req.ToolChoice == ToolChoiceAny) && len(tools) > 0
 	if forced && !forcedToolOK(a.ModelID()) {
 		forced = false
-		system = append(system, fmt.Sprintf("Answer by calling the %s tool exactly once. Do not answer in text.", req.Tools[0].Name))
+		system = append(system, unforcedInstruction(req))
+	}
+	// A tool loop resends the conversation each round: a breakpoint on its
+	// last block bills what came before at the cache rate.
+	if hasToolResults(req.Messages) && len(messages) > 0 {
+		blocks := messages[len(messages)-1]["content"].([]map[string]any)
+		blocks[len(blocks)-1]["cache_control"] = map[string]any{"type": "ephemeral"}
 	}
 	if len(system) > 0 {
 		// The system prompt is identical across every unit in a run, so a
@@ -165,6 +213,8 @@ func (a *AnthropicLLM) buildPayload(req LLMRequest) map[string]any {
 		switch {
 		case req.ToolChoice == ToolChoiceNone:
 			payload["tool_choice"] = map[string]any{"type": "none"}
+		case forced && req.ToolChoice == ToolChoiceAny:
+			payload["tool_choice"] = map[string]any{"type": "any"}
 		case forced:
 			payload["tool_choice"] = map[string]any{"type": "tool", "name": req.Tools[0].Name}
 		default:
@@ -176,7 +226,7 @@ func (a *AnthropicLLM) buildPayload(req LLMRequest) map[string]any {
 
 func (a *AnthropicLLM) Call(ctx context.Context, req LLMRequest) (*LLMResponse, error) {
 	status, body, err := a.post(ctx, req)
-	if err == nil && status == http.StatusBadRequest && req.ToolChoice == ToolChoiceRequired &&
+	if err == nil && status == http.StatusBadRequest && (req.ToolChoice == ToolChoiceRequired || req.ToolChoice == ToolChoiceAny) &&
 		forcedToolOK(a.ModelID()) && bytes.Contains(body, []byte("tool_choice")) {
 		noForcedTool.Store(a.ModelID(), true)
 		status, body, err = a.post(ctx, req)

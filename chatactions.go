@@ -16,8 +16,8 @@ import (
 )
 
 // The chat agent can ask the UI to act: open a unit, draft or post a
-// comment, dismiss an issue, fix issues, analyze parts of the change
-// again. It answers with a list of actions next to its text; the UI's
+// comment, dismiss an issue, fix issues, change the code as asked,
+// analyze parts of the change again. It answers with a list of actions next to its text; the UI's
 // agent API (ui/js/agentapi.js) runs them, after the reader approves the
 // ones that change something, and sends back what happened, with the time,
 // as an event turn. This file has the catalog the agent is told about, and
@@ -31,12 +31,14 @@ import (
 var chatActions = []struct{ name, risk, args, does string }{
 	{"open_unit", "view", `{"unit": ID}`, "show a unit in the Review tab"},
 	{"open_tab", "view", `{"tab": "review"|"issues"|"sequence"|"map"}`, "switch tab"},
-	{"draft_comment", "local", `{"unit": ID, "line": new-file line, "body": text}`, "add a pending review comment on a changed line (or within 3 lines of one); nothing is posted until the reader submits the review"},
+	{"fill_field", "view", `{"field": "comment"|"dismiss_reason"|"review_summary", "text": text} (comment: also "path", "line", "side": "RIGHT"|"LEFT" to open one where none is open)`, "write into a text box on the page (the open ones are listed with the reader's turn, with what they say): replaces its text, which the reader then edits and saves; use it when they ask you to write or rewrite what they are typing"},
+	{"draft_comment", "local", `{"unit": ID, "line": n, "side": "RIGHT"|"LEFT" (LEFT: a line of the old file), "body": text, "id": draft id to replace}`, "save a pending review comment on a changed line (or within 3 lines of one), or rewrite one; nothing is posted until the reader submits the review"},
 	{"delete_draft", "local", `{"id": draft id}`, "remove a pending comment"},
 	{"dismiss", "local", `{"unit": ID, "kind": "issue"|"lint", "index": n, "reason": text}`, "dismiss a review issue or lint finding the reader agrees is wrong, with the reason"},
 	{"restore", "local", `{"unit": ID, "kind": "issue"|"lint", "index": n}`, "undo a dismissal"},
 	{"mark_reviewed", "local", `{"units": [ID...], "reviewed": true|false}`, "tick units off in the walkthrough"},
 	{"fix", "job", `{"targets": [{"unit": ID, "issue": n} | {"unit": ID, "thread": thread id}]} or {"all": true, "comments": bool}`, "fix issues or confirmed review comments in a separate checkout, then re-check and re-triage the result; takes minutes"},
+	{"change", "job", `{"instructions": text, "files": [path...], "unit": ID}` + " (files: every file it may change, relative to the repository, 1 to 20; unit: optional)", "change the code as the reader asks, by an agent in the fix checkout, then re-check and re-triage the result, like fix; the reader's words, written out in full, are its instructions; takes minutes; push_fix pushes it"},
 	{"reanalyze_units", "job", `{"units": [ID...]}`, "review these units again with the reviewer model, keeping every other unit's review"},
 	{"retriage", "job", `{"fresh": bool}`, "triage the change again: the latest code, comments and code map; units whose code didn't change keep their review unless fresh"},
 	{"refresh_comments", "job", `{}`, "fetch the PR's review comments from GitHub again and judge the new ones"},
@@ -125,10 +127,11 @@ func atText(at string) string {
 	return " at " + at
 }
 
-// chatNow is the clock line at the top of the material: when it was
-// gathered, and how old its parts are.
-func chatNow(r *PRResult, now time.Time) string {
-	s := fmt.Sprintf("Now: %s. Result %s was triaged %s", now.Format(time.RFC3339), r.Key, r.CreatedAt.Format(time.RFC3339))
+// chatNow is the clock line at the top of the material: how old its parts
+// are. Now is the time of the reader's newest turn, so the material stays
+// the same from turn to turn while the result does.
+func chatNow(r *PRResult, _ time.Time) string {
+	s := fmt.Sprintf("Result %s was triaged %s", r.Key, r.CreatedAt.Format(time.RFC3339))
 	if r.Threads != nil && !r.Threads.FetchedAt.IsZero() {
 		s += fmt.Sprintf("; its GitHub review comments were fetched %s", r.Threads.FetchedAt.Format(time.RFC3339))
 	}
@@ -336,6 +339,7 @@ func (t *triager) threadAction(ctx context.Context, r *PRResult, action, threadI
 }
 
 func (t *triager) chatActionRoutes(mux *http.ServeMux) {
+	t.chatConvRoutes(mux)
 	mux.HandleFunc("POST /api/results/{key}/reanalyze", func(w http.ResponseWriter, r *http.Request) {
 		var req reanalyzeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

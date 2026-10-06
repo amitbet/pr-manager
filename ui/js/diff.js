@@ -211,7 +211,7 @@ function unifiedTable(f, rows) {
       out += threadRow(f, anchors, 3);
     }
   }
-  return `<table class="diff unified"><colgroup><col style="width:52px"><col style="width:52px"><col></colgroup>${out}</table>`;
+  return `<table class="diff unified" data-path="${esc(f.path)}"><colgroup><col style="width:52px"><col style="width:52px"><col></colgroup>${out}</table>`;
 }
 
 function splitTable(f, rows) {
@@ -251,7 +251,7 @@ function splitTable(f, rows) {
       out += threadRow(f, anchors, 4);
     }
   }
-  return `<table class="diff split"><colgroup><col style="width:52px"><col><col style="width:52px"><col></colgroup>${out}</table>`;
+  return `<table class="diff split" data-path="${esc(f.path)}"><colgroup><col style="width:52px"><col><col style="width:52px"><col></colgroup>${out}</table>`;
 }
 
 // diffTable renders rows as a split or unified table.

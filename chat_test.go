@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestChatTurns(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Errorf("turn %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
@@ -78,7 +79,7 @@ func TestChatContext(t *testing.T) {
 		t.Errorf("answer %+v", out)
 	}
 	sys := fake.req.Messages[0].Content
-	for _, want := range []string{"Flaky fetches.", "walkthrough step 2 of 2", "retries forever", "capped by ctx", "+retry()", "Renames a flag"} {
+	for _, want := range []string{"Flaky fetches.", "retries forever", "capped by ctx", "+retry()", "Renames a flag"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("context lacks %q", want)
 		}
@@ -86,7 +87,8 @@ func TestChatContext(t *testing.T) {
 	if strings.Index(sys, "## unit:a.go") > strings.Index(sys, "## unit:b.go") {
 		t.Error("the unit on screen should come first")
 	}
-	if last := fake.req.Messages[len(fake.req.Messages)-1]; last.Role != "user" || last.Content != "is the dismissed issue right?" {
+	// What is on screen goes with the question.
+	if last := fake.req.Messages[len(fake.req.Messages)-1]; last.Role != "user" || !strings.HasPrefix(last.Content, "is the dismissed issue right?") || !strings.Contains(last.Content, "walkthrough step 2 of 2") {
 		t.Errorf("last message %+v", last)
 	}
 
@@ -181,5 +183,27 @@ func TestChatLogs(t *testing.T) {
 	idx := chatContext(m, promptLimits)
 	if !strings.Contains(idx, logFile(0, jobs[0].Job, 1, jobs[0].Threads[1])) || strings.Contains(idx, long) {
 		t.Error("with a bundle the prompt should list the thread's file, not its text")
+	}
+}
+
+// A small window gets a prompt that fits half of it: the newest turns,
+// the material cut with a pointer to the bundle.
+func TestChatWindow(t *testing.T) {
+	if lim, budget, _ := windowLimits(0); budget != 0 || lim != promptLimits {
+		t.Errorf("large window: %+v %d", lim, budget)
+	}
+	lim, budget, answer := windowLimits(32768)
+	if budget != (32768-8192)*llm.CharsPerToken/2 || answer != 8192 || lim.diff >= chatDiffBudget {
+		t.Errorf("32K: %+v %d %d", lim, budget, answer)
+	}
+	if _, budget, answer := windowLimits(8192); budget <= 0 || answer != 2048 {
+		t.Errorf("8K: %d %d", budget, answer)
+	}
+	msgs := fitTurns([]llm.ChatMessage{{Role: "user", Content: strings.Repeat("a", 100)}, {Role: "assistant", Content: "b"}, {Role: "user", Content: "c"}}, 50)
+	if len(msgs) != 1 || msgs[0].Content != "c" {
+		t.Errorf("turns %+v", msgs)
+	}
+	if got := fitText(strings.Repeat("x", 5000), 3000, "/tmp/b"); len(got) > 3200 || !strings.Contains(got, "/tmp/b") {
+		t.Errorf("text %d chars", len(got))
 	}
 }

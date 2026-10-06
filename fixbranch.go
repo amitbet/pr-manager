@@ -27,9 +27,12 @@ import (
 func targetScopes(issues []targetedIssue) []string {
 	var out []string
 	for _, x := range issues {
-		if x.Comment != nil {
+		switch {
+		case x.Change != nil:
+			out = append(out, changeScope(x.Change))
+		case x.Comment != nil:
 			out = append(out, threadScope(x.Comment.Thread))
-		} else {
+		default:
 			out = append(out, issueScope(x.UnitID, x.Issue))
 		}
 	}

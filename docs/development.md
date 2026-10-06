@@ -18,7 +18,7 @@ chatlog.go       job activity logs saved with the results they made (results/log
 review.go        draft comments, file content for context expansion, review submission
 ui/              the UI, embedded into the binary: index.html, css/ per component, js/ ES modules (no build step;
                  main.js renders the page and routes data-act clicks to each component's `actions`)
-llm/             provider adapters for Anthropic, OpenAI, Ollama, Codex and Claude Code, plus Bedrock, Vertex AI, Foundry and Azure OpenAI (cloud.go)
+llm/             provider adapters for Anthropic, OpenAI, Ollama, Codex and Claude Code, plus Bedrock, Vertex AI, Foundry and Azure OpenAI (cloud.go); the tool loop that lets the API providers read a workspace (agent.go, fstools.go)
                  (Call only, forced tool choice, per-response usage) + OpenJev client
 triage/          diff, units, policy, presort, impact, likelihood, classify, prcontext (rest of the PR for review), summarize,
                  workspace (review tools), tiers, pipeline, render, eval, pr (GitHub fetch)

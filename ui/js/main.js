@@ -28,6 +28,7 @@ import { issuesHTML, syncDismiss, actions as issueActions } from "./issues.js";
 import { initFixes, actions as pendingActions } from "./fixes.js";
 import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeydown } from "./sequence.js";
 import { initChat } from "./chat.js";
+import { initViewCtx, selection, clearSelection, fields as openFields, fieldText } from "./viewctx.js";
 import { initAgentAPI, changeOf, describe as agentDescribe, run as agentRun } from "./agentapi.js";
 import * as budget from "./budget.js";
 
@@ -154,9 +155,14 @@ function keepTyping(draw) {
 }
 
 // chatWhere tells the chat agent what is on screen, so "this" in a
-// question means something.
+// question means something: the tab and mode, what is selected, and the
+// text boxes open (viewctx.js).
 function chatWhere() {
   if (!S.result) return {};
+  const sel = selection(), fs = openFields();
+  return { ...chatPlace(), ...(sel ? { selection: sel } : {}), ...(fs.length ? { fields: fs, field_text: fieldText() } : {}) };
+}
+function chatPlace() {
   if (S.tab === "review") {
     if (S.mode === "walk") {
       const s = shownStep();
@@ -175,6 +181,7 @@ const chat = initChat({
   key: () => S.result?.key || null,
   title: () => S.result?.pr.title || S.result?.pr.head_ref || "",
   where: chatWhere,
+  clearSelection,
   openUnit: jumpToUnit,
   unitLabel: (id) => { const x = S.result && allUnits().find(({ u }) => u.id === id); return x ? unitName(x.u) : id; },
   labels: () => Object.fromEntries((S.result ? allUnits() : []).map(({ u }) => [u.id, unitName(u)])),
@@ -270,6 +277,7 @@ document.addEventListener("keydown", seqKeydown);
   initFix(showKey);
   initFixes(showKey);
   initAgentAPI({ showKey });
+  initViewCtx();
   initSettings(() => { if (S.result) { budget.apply(S.result, S.cfg); render(); } }, translate);
   await loadList();
   const q = new URLSearchParams(location.search);
