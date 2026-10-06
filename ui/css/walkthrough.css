@@ -19,7 +19,7 @@
 .wz-dot.done.aux { background: var(--aux); color: var(--bg); }
 .wz-dot.done.none { background: var(--none); color: var(--bg); }
 .wz-dot.cur { box-shadow: 0 0 0 3px var(--accent); }
-.wz-card { --wz-nav-h: 52px; border: 1px solid var(--border); border-top: 6px solid var(--border); border-radius: 10px; background: var(--bg); }
+.wz-card { --wz-nav-h: 52px; min-height: calc(100vh - var(--pin-top) - var(--wz-steps-h)); box-sizing: border-box; border: 1px solid var(--border); border-top: 6px solid var(--border); border-radius: 10px; background: var(--bg); }
 /* Step bar: fixed to the bottom of the window beside the sidebar, every
    button always present, so nothing moves between clicks or on scroll. */
 .wz-nav { position: fixed; left: var(--side-w); right: 0; bottom: 0; z-index: 15; height: var(--wz-nav-h); display: flex; gap: 8px; align-items: center; padding: 0 24px; background: var(--bg2); border-top: 1px solid var(--border); box-shadow: 0 -4px 12px rgba(0,0,0,.08); }

@@ -209,8 +209,12 @@ function scrollToUnit(id) {
   if (row) { row.scrollIntoView({ block: "center" }); row.classList.add("flash"); }
 }
 
-// leadUnit is the highest-ranked of units.
-export const leadUnit = (units) => units.map((u, i) => ({ u, i })).sort(byRank)[0].u;
+// firstHumanNote is the review, highest on the page, of a unit in human
+// review; null when the page has none.
+export function firstHumanNote() {
+  const human = new Set(allUnits().filter(({ u }) => u.decision.bucket === "human").map(({ u }) => u.id));
+  return [...document.querySelectorAll(".wz-note[data-note]")].find((n) => human.has(n.dataset.note)) || null;
+}
 
 // scrollToSeg puts unit id's review and code at the top, just under the
 // pinned header and step dots. A single-unit step has no review beside its
@@ -230,10 +234,12 @@ export function scrollToSeg(id) {
 
 // go shows step i. When the page is scrolled past the card, it scrolls back
 // to the card's top, just under the pinned step dots, so the new step is
-// read from its start. With Settings → Review view → focus on, a step of
-// several changes, or one showing its whole file, opens on its
-// highest-ranked change instead.
-function go(i) {
+// read from its start. With Settings → Review view → focus on, a step
+// opens on its first change in human review instead, when that isn't
+// already its first row (or the step shows its whole file), unless atTop:
+// a step picked by its dot opens at its top, so the page doesn't jump down
+// under the click.
+function go(i, atTop = false) {
   const st = steps();
   if (!st.length) return;
   const s = st[Math.max(0, Math.min(st.length - 1, i))];
@@ -242,12 +248,32 @@ function go(i) {
   S.composer = null;
   save();
   render();
-  if (focusTop() && (s.lead !== s.members[0] || fullyExpanded(s.lead.f)) && scrollToSeg(s.lead.u.id)) return;
+  if (!atTop && focusTop()) {
+    const id = focusTarget(s);
+    if (id && scrollToSeg(id)) return;
+  }
+  toCardTop();
+}
+// toCardTop scrolls a card the page is scrolled past back to its top, just
+// under the pinned step dots, and leaves a page that isn't alone: a reader
+// scrolled down far enough to pin the tabs keeps them pinned, one at the
+// top of the page keeps the PR header in view. The card is at least a
+// window tall (walkthrough.css), so a short step can always sit there.
+function toCardTop() {
   const card = $(".wz-card");
   if (!card) return;
   const top = card.getBoundingClientRect().top + card.clientTop; // inside the colored top border
   const pinned = pinTop() + ($(".wz-steps")?.offsetHeight || 0);
   if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
+}
+// focusTarget is the unit go scrolls to with focus on: the step's first
+// change in human review, unless the step starts with it. A single-unit
+// step has no review rows, so it only scrolls when it shows its whole file.
+function focusTarget(s) {
+  const first = $(".wz-note[data-note]");
+  if (!first) return s.lead.u.decision.bucket === "human" && fullyExpanded(s.lead.f) ? s.lead.u.id : null;
+  const n = firstHumanNote();
+  return n && (n !== first || fullyExpanded(s.lead.f)) ? n.dataset.note : null;
 }
 // step moves d steps; back from the first step is the overview.
 function step(d) {
@@ -260,7 +286,7 @@ function showIntro() {
   S.wz.finished = false;
   S.composer = null;
   render();
-  window.scrollTo({ top: 0 });
+  toCardTop();
 }
 
 function toggleReviewed() {
@@ -286,7 +312,7 @@ function markAndNext() {
   S.wz.finished = true;
   save();
   render();
-  window.scrollTo({ top: 0 });
+  toCardTop();
 }
 
 // Dismissed issues are left out here: the walkthrough is the reading
@@ -613,7 +639,7 @@ export const actions = {
     if ((await diffActions["expand-all"](el)) === false) return false;
     if (opening) setTimeout(() => document.querySelector(".wz-code tr.focus-start")?.scrollIntoView({ block: "center" }));
   },
-  "wz-go": (el) => { go(+el.dataset.i); return false; },
+  "wz-go": (el) => { go(+el.dataset.i, true); return false; },
   "wz-intro": () => { showIntro(); return false; },
   "wz-start": () => { go(current(steps())); return false; },
   "wz-prev": () => { step(-1); return false; },

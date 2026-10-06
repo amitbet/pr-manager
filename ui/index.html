@@ -112,14 +112,14 @@
       <label class="check">Grouping <select id="wz_steps" aria-label="walkthrough grouping"><option value="unit">none</option><option value="file">by file</option><option value="related">by relation</option></select></label>
     </section>
     <section data-tab="review">
-      <h4>Review view <span class="info" tabindex="0" aria-label="About review view">i<span class="tip" role="tooltip">What the app opens with. The buttons on the page switch the mode and the diff view until the next reload. With focus on, a walkthrough step of several changes (or showing a whole file), or any file in the Files mode, opens scrolled to its highest-ranked change (by bucket, then score) instead of its top.</span></span></h4>
+      <h4>Review view <span class="info" tabindex="0" aria-label="About review view">i<span class="tip" role="tooltip">What the app opens with. The buttons on the page switch the mode and the diff view until the next reload. With focus on, a walkthrough step of several changes (or showing a whole file), or any file in the Files mode, opens scrolled to its first change in human review instead of its top. A step picked by its numbered dot always opens at its top.</span></span></h4>
       <div class="grid review-view">
         <label for="review_mode">Open PRs in</label>
         <select id="review_mode" aria-label="default review mode"><option value="walk">Walkthrough</option><option value="files">Files</option><option value="classic">Classic</option></select>
         <label for="diff_view">Diffs</label>
         <select id="diff_view" aria-label="default diff view"><option value="unified">Unified</option><option value="split">Split</option></select>
       </div>
-      <label class="check"><input type="checkbox" id="focus_top"> scroll to the highest-ranked change when opening a step or file</label>
+      <label class="check"><input type="checkbox" id="focus_top"> scroll to the first human-review change when opening a step or file</label>
     </section>
     <section data-tab="chat">
       <h4>Chat hotkeys <span class="info" tabindex="0" aria-label="About the chat hotkeys">i<span class="tip" role="tooltip">Open puts the cursor in the chat agent&#39;s prompt, or brings its pop-out window to the front; the default is A, or Ctrl+/ (⌘/ on a Mac) from anywhere. Collapse turns the open chat back into its icon; Esc always does while you are in the chat, and the key set here does from anywhere. Give both the same key to toggle the chat with it. Click a field and press the keys. A key without Ctrl, Alt or ⌘ only works when you aren&#39;t typing in a field.</span></span></h4>

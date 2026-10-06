@@ -22,7 +22,7 @@ export const reviewModeDefault = () => {
   return v === "files" || v === "classic" ? v : "walk";
 };
 // focusTop is whether opening a walkthrough step of several changes, or a
-// file in the Files mode, scrolls to the highest-ranked change.
+// file in the Files mode, scrolls to the first change in human review.
 export const focusTop = () => localStorage.getItem("pr-manager.focus_top") === "1";
 
 export const S = {

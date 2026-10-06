@@ -5,7 +5,7 @@ import { $, esc, BUCKETS, LABEL } from "./util.js";
 import { S, render, fileOfUnit, focusTop } from "./state.js";
 import { SEV_RANK, SEV_CLASS } from "./scores.js";
 import { canExpand, fullyExpanded, expandAllButton, expandWhole } from "./diff.js";
-import { unitSegmentsHTML, noteHTML, markReviewed, leadUnit, scrollToSeg, pinTop } from "./walkthrough.js";
+import { unitSegmentsHTML, noteHTML, markReviewed, firstHumanNote, scrollToSeg, pinTop } from "./walkthrough.js";
 
 // bucketOf is a file's most important bucket: BUCKETS runs from human
 // review down to no review.
@@ -152,7 +152,8 @@ function whenLoaded(f, fn) {
 }
 
 // open shows file path, back at the top of the file when scrolled past it,
-// or, with Settings → Review view → focus on, at its highest-ranked change.
+// or, with Settings → Review view → focus on, at its first change in human
+// review (a file without one opens at its top).
 function open(path) {
   S.fv.path = path;
   S.composer = null;
@@ -160,10 +161,12 @@ function open(path) {
   const f = S.result.files.find((x) => x.path === path);
   // The whole file shows, so even a first change can be far down.
   if (focusTop() && f?.units?.length) {
-    const id = leadUnit(f.units).id;
-    whenLoaded(f, () => scrollToSeg(id));
+    whenLoaded(f, () => { const n = firstHumanNote(); if (!(n && scrollToSeg(n.dataset.note))) toFileTop(); });
     return;
   }
+  toFileTop();
+}
+function toFileTop() {
   const top = $(".fv-main")?.getBoundingClientRect().top, pinned = pinTop();
   if (top < pinned) window.scrollTo({ top: top + window.scrollY - pinned });
 }
