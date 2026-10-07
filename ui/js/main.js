@@ -5,7 +5,7 @@
 // export `actions`: handlers keyed by data-act. A handler changes state and
 // returns nothing to have the page re-rendered, or false when it rendered
 // (or deliberately didn't) itself.
-import { $, esc, api, postJSON, say, kindBadge, kindOf, prState, KIND_TITLE } from "./util.js";
+import { $, esc, api, postJSON, ask, say, kindBadge, kindOf, prState, KIND_TITLE } from "./util.js";
 import { S, onRender, render, syncURL, prBase, repoName, localSrc, allUnits } from "./state.js";
 import { impactPill, likelihoodPill, attLevel } from "./scores.js";
 import { prepare, actions as diffActions } from "./diff.js";
@@ -71,6 +71,30 @@ const actions = {
       render();
       triageURL(out.url);
     } catch (e) { say(e.message); el.disabled = false; el.textContent = "Create PR"; }
+    return false;
+  },
+  "update-pr": async (el) => {
+    const ok = await ask("Update PR pushes this branch and replaces the PR's description with one written from this review. Anything written in the description by hand is replaced, but you can restore it afterwards with Restore previous description.", "Update PR");
+    if (!ok) return false;
+    el.disabled = true;
+    el.textContent = "Writing description…";
+    try {
+      const out = await postJSON(`/api/local/${encodeURIComponent(S.result.key)}/publish`, jobSettings());
+      S.result.pr.url = out.url;
+      if (out.updated) S.result.prev_description = out.prev_description;
+      render();
+      if (!out.updated) say("Pushed the branch. The PR's description was left as it was: no new one could be written.");
+    } catch (e) { say(e.message); el.disabled = false; el.textContent = "Update PR"; }
+    return false;
+  },
+  "restore-description": async (el) => {
+    if (!(await ask("Put back the description the PR had before the update? This replaces its current description.", "Restore"))) return false;
+    el.disabled = true;
+    try {
+      await postJSON(`/api/local/${encodeURIComponent(S.result.key)}/restore-description`, {});
+      delete S.result.prev_description;
+      render();
+    } catch (e) { say(e.message); el.disabled = false; }
     return false;
   },
 };
@@ -140,7 +164,7 @@ function prHeadHTML(r) {
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>${commit(pr.head_oid)}, from its parent</div>` : ""}
       ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}</div>` : ""}
-      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a>` : `<button class="primary" data-act="create-pr" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>Create PR</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}`}</div>` : ""}
+      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : "Create PR"}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}</div>` : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${impactPill(r.impact, "max impact")}${r.impact?.basis ? `<code>${esc(r.impact.basis)}</code>` : ""}
         ${likelihoodPill(r.likelihood, "max likelihood")}

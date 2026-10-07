@@ -34,6 +34,7 @@ input, select, button, textarea { font: inherit; color: var(--fg); background: v
 #url[data-kind] { background: var(--k-bg, var(--bg)); border-color: var(--k, var(--border)); }
 button { cursor: pointer; background: var(--bg3); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.primary.update-pr { background: #bf8700; border-color: #bf8700; }
 button:disabled { opacity: .6; cursor: default; }
 button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 5px; line-height: 0; }
 #theme-btn .sun, [data-theme="dark"] #theme-btn .moon { display: none; }

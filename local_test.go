@@ -464,3 +464,15 @@ func TestInspectRevShallowBoundary(t *testing.T) {
 		t.Fatalf("deepened: %+v %s", c.info, c.raw)
 	}
 }
+
+func TestPRExists(t *testing.T) {
+	msg := `gh pr create: exit status 1: a pull request for branch "PSD-10240/ff-kill-switch" into branch "main" already exists:
+https://github.com/perfectscale/psc-autoscaler/pull/497`
+	m := prExists.FindStringSubmatch(msg)
+	if m == nil || m[1] != "https://github.com/perfectscale/psc-autoscaler/pull/497" {
+		t.Fatalf("match: %q", m)
+	}
+	if prExists.FindStringSubmatch("gh pr create: exit status 1: no commits between main and x") != nil {
+		t.Fatal("matched an unrelated error")
+	}
+}

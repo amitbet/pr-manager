@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/amitbet/pr-manager/codemap"
 	"github.com/amitbet/pr-manager/internal/proc"
@@ -459,9 +461,19 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	if err := ensureLocalCodeMap(ctx, o, s.info, progress); err != nil {
 		return nil, err
 	}
+	// The branch's PR, opened from here or anywhere else, so the result
+	// offers to update it rather than to open another.
+	if s.info.Rev == "" {
+		s.info.URL = openPRFor(ctx, s.info, s.info.HeadRef)
+	}
 	key := localCacheKey(s, o)
 	if !jo.rerun() {
 		if r, err := t.Load(key); err == nil {
+			if s.info.URL != "" && r.PR.URL != s.info.URL {
+				if u, err := t.updateResult(key, func(r *PRResult) { r.PR.URL = s.info.URL }); err == nil {
+					r = u
+				}
+			}
 			return r, nil
 		}
 	}
@@ -536,67 +548,114 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 	return j, nil
 }
 
-// publishLocal pushes a local result's branch and opens its PR. describe
-// writes the PR body once the checks pass; an empty one leaves it to
-// gh's --fill, from the commit messages.
-func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (string, error) {
+// publishOutcome is what publishLocal did: opened the PR at URL, or, when
+// the branch had one already, pushed to it and, with Updated, replaced
+// its description, which was Previous.
+type publishOutcome struct {
+	URL      string
+	Updated  bool
+	Previous string
+}
+
+// publishLocal pushes a local result's branch and opens its PR, or
+// updates the description of the one the branch already has. describe
+// writes the PR body once the checks pass; an empty one leaves a new PR
+// to gh's --fill, from the commit messages, and an existing one as it is.
+func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOutcome, error) {
+	var none publishOutcome
 	if r.PR.LocalPath == "" {
-		return "", errors.New("this is not a local result")
-	}
-	if r.PR.URL != "" {
-		return r.PR.URL, nil
+		return none, errors.New("this is not a local result")
 	}
 	if r.PR.Rev != "" {
-		return "", errors.New("create PRs from the checked-out branch")
+		return none, errors.New("create PRs from the checked-out branch")
 	}
 	if _, err := triage.Git(r.PR.LocalPath, "fetch", "--quiet", "--no-tags", "origin", fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", r.PR.BaseRef, r.PR.BaseRef)); err != nil {
-		return "", err
+		return none, err
 	}
 	s, err := inspectLocal(context.Background(), r.PR.LocalPath)
 	if err != nil {
-		return "", err
+		return none, err
 	}
 	p := s.info
 	if p.HeadOid != r.PR.HeadOid || p.BaseOid != r.PR.BaseOid || p.SnapshotHash != r.PR.SnapshotHash || p.HeadRef != r.PR.HeadRef {
-		return "", errors.New("repository changed since triage; triage it again")
+		return none, errors.New("repository changed since triage; triage it again")
 	}
 	if p.Uncommitted {
-		return "", errors.New("commit the working tree changes, then triage again before creating a PR")
+		return none, errors.New("commit the working tree changes, then triage again before creating a PR")
 	}
 	if p.Ahead == 0 {
-		return "", errors.New("branch has no commits ahead of origin/" + p.BaseRef)
+		return none, errors.New("branch has no commits ahead of origin/" + p.BaseRef)
 	}
 	if p.Owner == "local" {
-		return "", errors.New("origin must be a GitHub repository to create a PR")
+		return none, errors.New("origin must be a GitHub repository to create a PR")
 	}
 	if p.HeadRef == p.BaseRef {
 		name := "pr-manager/" + p.HeadOid[:10]
 		if tip, err := triage.Git(p.LocalPath, "rev-parse", "--verify", "refs/heads/"+name); err == nil {
 			if strings.TrimSpace(tip) != p.HeadOid {
-				return "", errors.New("generated PR branch already exists at a different commit")
+				return none, errors.New("generated PR branch already exists at a different commit")
 			}
 			if _, err = triage.Git(p.LocalPath, "switch", name); err != nil {
-				return "", err
+				return none, err
 			}
 		} else if _, err = triage.Git(p.LocalPath, "switch", "-c", name); err != nil {
-			return "", err
+			return none, err
 		}
 		p.HeadRef = name
 	}
+	// Looked up again rather than taken from the result: the PR may have
+	// been opened, or closed, since the triage.
+	existing := openPRFor(context.Background(), p, p.HeadRef)
 	body := ""
 	if describe != nil {
 		body = describe(p)
 	}
 	if _, err := triage.Git(p.LocalPath, "push", "-u", "origin", p.HeadRef); err != nil {
-		return "", err
+		return none, err
 	}
-	args := []string{"pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill"}
+	if existing == "" {
+		url, err := ghPR(p.LocalPath, body, "pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill")
+		if err == nil {
+			return publishOutcome{URL: url}, nil
+		}
+		// Opened where the lookup didn't see it: update that one instead.
+		m := prExists.FindStringSubmatch(err.Error())
+		if m == nil {
+			return none, err
+		}
+		existing = m[1]
+	}
+	if body == "" {
+		return publishOutcome{URL: existing}, nil
+	}
+	prev, err := ghPR(p.LocalPath, "", "pr", "view", existing, "--json", "body", "--jq", ".body")
+	if err != nil {
+		return none, err
+	}
+	if _, err := ghPR(p.LocalPath, body, "pr", "edit", existing); err != nil {
+		return none, err
+	}
+	return publishOutcome{URL: existing, Updated: true, Previous: prev}, nil
+}
+
+// prExists finds the PR gh pr create names when the branch has one.
+var prExists = regexp.MustCompile(`already exists:\s*(https://\S+/pull/\d+)`)
+
+// setPRBody replaces the description of the PR at url with body.
+func setPRBody(dir, url, body string) error {
+	_, err := ghPR(dir, body, "pr", "edit", url)
+	return err
+}
+
+// ghPR runs a gh pr command in dir and returns its output, trimmed. A
+// body goes to gh on stdin as --body-file -; with create, it overrides
+// --fill's body and the title still comes from it.
+func ghPR(dir, body string, args ...string) (string, error) {
 	if body != "" {
-		// --body-file overrides --fill's body; the title still comes from it.
 		args = append(args, "--body-file", "-")
 	}
 	cmd := proc.Command("gh", args...)
-	cmd.Dir = p.LocalPath
+	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.Output()
 	if err != nil {
@@ -604,11 +663,32 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (string, er
 			if ghErr := triage.GHError(err, e.Stderr); ghErr != nil {
 				return "", ghErr
 			}
-			return "", fmt.Errorf("gh pr create: %w: %s", err, strings.TrimSpace(string(e.Stderr)))
+			return "", fmt.Errorf("gh %s %s: %w: %s", args[0], args[1], err, strings.TrimSpace(string(e.Stderr)))
 		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// openPRFor is the URL of the open PR from branch head into p's base on
+// the checkout's origin; empty when there is none, origin isn't on
+// GitHub, or gh can't tell.
+func openPRFor(ctx context.Context, p *triage.PRInfo, head string) string {
+	if p.Owner == "local" || head == "" || head == p.BaseRef || strings.Contains(strings.ToLower(p.HostName()), "gitlab") {
+		return ""
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := proc.CommandContext(ctx, "gh", "pr", "list", "-R", p.RepoArg(), "--head", head, "--base", p.BaseRef, "--state", "open", "--limit", "1", "--json", "url", "--jq", ".[0].url // empty")
+	cmd.Dir = p.LocalPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // localSource is what a local result was triaged from: the checkout's

@@ -52,6 +52,9 @@ type PRResult struct {
 	// Overview is nil for results from before overviews, and when it
 	// could not be written; see overview.
 	Overview *triage.Overview `json:"overview,omitempty"`
+	// PrevDescription is the PR's description from before Update PR last
+	// replaced it, kept so it can be put back; empty when there is none.
+	PrevDescription string `json:"prev_description,omitempty"`
 	// Sequence is the changed call flow, written in the background once
 	// the result is saved, or when a result without one is opened; see
 	// sequence.
@@ -1137,17 +1140,21 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, err)
 			return
 		}
-		url, err := publishLocal(res, func(p *triage.PRInfo) string {
+		out, err := publishLocal(res, func(p *triage.PRInfo) string {
 			return t.prDescription(r.Context(), res.Key, jo, p.LocalPath)
 		})
 		if err != nil {
 			writeErr(w, 400, err)
 			return
 		}
+		url := out.URL
 		res.PR.URL = url
 		res.PR.State = "OPEN"
 		if _, err := t.updateResult(res.Key, func(r *PRResult) {
 			r.PR.URL, r.PR.State = url, "OPEN"
+			if out.Updated {
+				r.PrevDescription = out.Previous
+			}
 		}); err != nil {
 			log.Printf("save published PR link: %v", err)
 		}
@@ -1175,7 +1182,26 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			}
 			rv.dmu.Unlock()
 		}
-		writeJSON(w, 200, map[string]string{"url": url})
+		writeJSON(w, 200, map[string]any{"url": url, "updated": out.Updated, "prev_description": out.Previous})
+	})
+	mux.HandleFunc("POST /api/local/{key}/restore-description", func(w http.ResponseWriter, r *http.Request) {
+		res, err := t.Load(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		if res.PR.LocalPath == "" || res.PR.URL == "" || res.PrevDescription == "" {
+			writeErr(w, 400, errors.New("no earlier description to restore"))
+			return
+		}
+		if err := setPRBody(res.PR.LocalPath, res.PR.URL, res.PrevDescription); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if _, err := t.updateResult(res.Key, func(r *PRResult) { r.PrevDescription = "" }); err != nil {
+			log.Printf("clear restored PR description: %v", err)
+		}
+		writeJSON(w, 200, map[string]string{"url": res.PR.URL})
 	})
 	mux.HandleFunc("POST /api/fix", func(w http.ResponseWriter, r *http.Request) {
 		var req fixRequest
