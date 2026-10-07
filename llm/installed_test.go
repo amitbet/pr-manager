@@ -53,7 +53,7 @@ func TestClaudeCodeInstalled(t *testing.T) {
 			t.Errorf("installed has %s: %q", a, args)
 		}
 	}
-	if v, _ := argOf(args, "--permission-mode"); v != "acceptEdits" {
+	if v, _ := argOf(args, "--permission-mode"); v != "bypassPermissions" {
 		t.Errorf("--permission-mode = %q", v)
 	}
 	if v, _ := argOf(args, "--setting-sources"); v != "user" {
@@ -148,5 +148,23 @@ func TestCodexInstalled(t *testing.T) {
 	args = fakeCall(t, &CodexCLI{}, out, &Workspace{Dir: t.TempDir(), Shell: true})
 	if !slices.Contains(args, "--ignore-user-config") || !slices.Contains(args, "--ignore-rules") {
 		t.Errorf("read-only args = %q", args)
+	}
+}
+
+// A denied command's event carries its message as a string, not a message
+// object: it is dropped, and the tool's error that follows says why.
+func TestClaudeStreamPermissionDenied(t *testing.T) {
+	s := newClaudeStream(context.Background(), t.TempDir())
+	if got := s.line(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","message":"This command requires approval"}`); got != "" {
+		t.Errorf("permission_denied line = %q", got)
+	}
+}
+
+func TestCodexEventErrorsAndEdits(t *testing.T) {
+	if got := codexEvent(`{"type":"item.completed","item":{"type":"error","message":"Codex is ignoring 2 unrecognized configuration settings."}}`); !strings.Contains(got, "ignoring 2") {
+		t.Errorf("error item = %q", got)
+	}
+	if got := codexEvent(`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.go","kind":"update"},{"path":"b.go","kind":"add"}]}}`); got != "→ Edit a.go, b.go" {
+		t.Errorf("file_change = %q", got)
 	}
 }

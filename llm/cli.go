@@ -215,8 +215,13 @@ func codexEvent(line string) string {
 	var ev struct {
 		Type string `json:"type"`
 		Item struct {
-			Type      string          `json:"type"`
-			Text      string          `json:"text"`
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Message string `json:"message"`
+			Changes []struct {
+				Path string `json:"path"`
+				Kind string `json:"kind"`
+			} `json:"changes"`
 			Command   string          `json:"command"`
 			ExitCode  *int            `json:"exit_code"`
 			Server    string          `json:"server"`
@@ -259,6 +264,15 @@ func codexEvent(line string) string {
 			}
 		case "web_search":
 			return "→ WebSearch " + strconv.Quote(ev.Item.Query)
+		case "file_change":
+			var paths []string
+			for _, ch := range ev.Item.Changes {
+				paths = append(paths, ch.Path)
+			}
+			return "→ Edit " + strings.Join(paths, ", ")
+		case "error":
+			// Warnings too, such as the reader's config's unknown keys.
+			return "  error: " + truncate(ev.Item.Message, 300)
 		case "agent_message":
 		default:
 			return ev.Item.Type + ": " + ev.Item.Text
@@ -589,13 +603,17 @@ func (c *claudeStream) line(line string) string {
 			ToolUses   int `json:"tool_uses"`
 			DurationMS int `json:"duration_ms"`
 		} `json:"usage"`
-		Message struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"message"`
+		// An object on assistant and user messages, a string on
+		// system events such as permission_denied.
+		Message json.RawMessage `json:"message"`
 	}
 	if json.Unmarshal([]byte(line), &ev) != nil {
 		return line
 	}
+	var msg struct {
+		Content json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(ev.Message, &msg)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Where the event's lines go: a subagent's thread, or the run's.
@@ -640,6 +658,9 @@ func (c *claudeStream) line(line string) string {
 		case "thinking_tokens":
 			progress.thinking += ev.ThinkingDelta
 			return out([]string{c.tick(progress)})
+		case "permission_denied":
+			// The tool's error follows as its result.
+			return ""
 		}
 		return ""
 	case "stream_event":
@@ -662,7 +683,7 @@ func (c *claudeStream) line(line string) string {
 		IsError  bool            `json:"is_error"`
 		Content  json.RawMessage `json:"content"`
 	}
-	_ = json.Unmarshal(ev.Message.Content, &blocks) // a string for synthetic messages
+	_ = json.Unmarshal(msg.Content, &blocks) // a string for synthetic messages
 	var lines []string
 	switch ev.Type {
 	case "assistant":

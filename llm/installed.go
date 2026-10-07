@@ -13,9 +13,10 @@ import (
 // through the UI as before.
 //
 // What it must not do is post or push on its own: that goes through the
-// actions, which the reader approves. Claude Code is denied the gh and git
-// push commands (gh still reads through the app's MCP server), and edits
-// outside its working directory. Codex has no rule for that, so its
+// actions, which the reader approves. Claude Code runs every other command
+// without asking (bypassPermissions), but deny rules still hold: the gh
+// and git push commands (gh still reads through the app's MCP server),
+// compound ones included, and edits of the directories it reads. Codex has no rule for that, so its
 // sandbox gets no network: gh and git push fail, and its web search and
 // the app's MCP server, which run outside the sandbox, still work. These
 // are guards for an agent that means well, not a sandbox against one
@@ -32,9 +33,9 @@ func claudeInstalledArgs(ws *Workspace, allowed string) []string {
 	if ws.Project {
 		sources = "user,project,local"
 	}
-	// acceptEdits: a -p call can't ask, so edits in the working
-	// directory go ahead, and commands follow the reader's own rules.
-	args := []string{"--permission-mode", "acceptEdits", "--setting-sources", sources}
+	// A -p call can't ask, so everything not denied below runs, as the
+	// reader's own agent would with them approving.
+	args := []string{"--permission-mode", "bypassPermissions", "--setting-sources", sources}
 	if allowed != "" {
 		args = append(args, "--allowedTools", allowed)
 	}
@@ -42,8 +43,7 @@ func claudeInstalledArgs(ws *Workspace, allowed string) []string {
 	if !ws.Web {
 		deny = append(deny, "WebFetch", "WebSearch")
 	}
-	// The other places are there to read: acceptEdits would let it edit
-	// any directory it is given. One that holds the working directory,
+	// The other places are there to read. One that holds the working directory,
 	// such as the cache the conversation's worktree is in, stays open.
 	for _, d := range append(append([]string(nil), ws.ReadDirs...), ws.NoWrite...) {
 		if !within(ws.Dir, d) {
