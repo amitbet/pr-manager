@@ -555,6 +555,8 @@ type publishOutcome struct {
 	URL      string
 	Updated  bool
 	Previous string
+	// Pushed is false when origin had the branch at its head already.
+	Pushed bool
 }
 
 // publishLocal pushes a local result's branch and opens its PR, or
@@ -590,7 +592,7 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 		return none, errors.New("origin must be a GitHub repository to create a PR")
 	}
 	if p.HeadRef == p.BaseRef {
-		name := "pr-manager/" + p.HeadOid[:10]
+		name := publishBranch(p)
 		if tip, err := triage.Git(p.LocalPath, "rev-parse", "--verify", "refs/heads/"+name); err == nil {
 			if strings.TrimSpace(tip) != p.HeadOid {
 				return none, errors.New("generated PR branch already exists at a different commit")
@@ -610,13 +612,16 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	if describe != nil {
 		body = describe(p)
 	}
-	if _, err := triage.Git(p.LocalPath, "push", "-u", "origin", p.HeadRef); err != nil {
-		return none, err
+	pushed := remoteTip(context.Background(), p.LocalPath, p.HeadRef) != p.HeadOid
+	if pushed {
+		if _, err := triage.Git(p.LocalPath, "push", "-u", "origin", p.HeadRef); err != nil {
+			return none, err
+		}
 	}
 	if existing == "" {
 		url, err := ghPR(p.LocalPath, body, "pr", "create", "--base", p.BaseRef, "--head", p.HeadRef, "--fill")
 		if err == nil {
-			return publishOutcome{URL: url}, nil
+			return publishOutcome{URL: url, Pushed: pushed}, nil
 		}
 		// Opened where the lookup didn't see it: update that one instead.
 		m := prExists.FindStringSubmatch(err.Error())
@@ -626,7 +631,7 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 		existing = m[1]
 	}
 	if body == "" {
-		return publishOutcome{URL: existing}, nil
+		return publishOutcome{URL: existing, Pushed: pushed}, nil
 	}
 	prev, err := ghPR(p.LocalPath, "", "pr", "view", existing, "--json", "body", "--jq", ".body")
 	if err != nil {
@@ -635,7 +640,31 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	if _, err := ghPR(p.LocalPath, body, "pr", "edit", existing); err != nil {
 		return none, err
 	}
-	return publishOutcome{URL: existing, Updated: true, Previous: prev}, nil
+	return publishOutcome{URL: existing, Updated: true, Previous: prev, Pushed: pushed}, nil
+}
+
+// publishBranch is the branch a local result's PR is opened from: its own,
+// or a generated one when it is on the base branch.
+func publishBranch(p *triage.PRInfo) string {
+	if p.HeadRef == p.BaseRef {
+		return "pr-manager/" + p.HeadOid[:10]
+	}
+	return p.HeadRef
+}
+
+// remoteTip is the commit branch is at on dir's origin; empty when origin
+// doesn't have it or can't be reached.
+func remoteTip(ctx context.Context, dir, branch string) string {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := triage.GitCtx(ctx, dir, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	if err != nil {
+		return ""
+	}
+	if f := strings.Fields(out); len(f) > 0 {
+		return f[0]
+	}
+	return ""
 }
 
 // prExists finds the PR gh pr create names when the branch has one.

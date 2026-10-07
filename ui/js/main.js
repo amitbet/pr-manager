@@ -74,7 +74,12 @@ const actions = {
     return false;
   },
   "update-pr": async (el) => {
-    const ok = await ask("Update PR pushes this branch and replaces the PR's description with one written from this review. Anything written in the description by hand is replaced, but you can restore it afterwards with Restore previous description.", "Update PR");
+    el.disabled = true;
+    const key = encodeURIComponent(S.result.key);
+    // When origin has this branch already, only the description changes.
+    const pushed = await api(`/api/local/${key}/pushed`).then((o) => o.pushed, () => false);
+    el.disabled = false;
+    const ok = await ask(`${pushed ? "The branch is already pushed, so Update PR only replaces the PR's description" : "Update PR pushes this branch and replaces the PR's description"} with one written from this review. Anything written in the description by hand is replaced, but you can restore it afterwards with Restore previous description.`, pushed ? "Update description" : "Update PR");
     if (!ok) return false;
     el.disabled = true;
     el.textContent = "Writing description…";
@@ -83,7 +88,7 @@ const actions = {
       S.result.pr.url = out.url;
       if (out.updated) S.result.prev_description = out.prev_description;
       render();
-      if (!out.updated) say("Pushed the branch. The PR's description was left as it was: no new one could be written.");
+      if (!out.updated) say(`${out.pushed ? "Pushed the branch. " : ""}The PR's description was left as it was: no new one could be written.`);
     } catch (e) { say(e.message); el.disabled = false; el.textContent = "Update PR"; }
     return false;
   },

@@ -1182,7 +1182,22 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			}
 			rv.dmu.Unlock()
 		}
-		writeJSON(w, 200, map[string]any{"url": url, "updated": out.Updated, "prev_description": out.Previous})
+		writeJSON(w, 200, map[string]any{"url": url, "updated": out.Updated, "prev_description": out.Previous, "pushed": out.Pushed})
+	})
+	// Whether origin has the branch at the reviewed head already, so
+	// Update PR only has the description to change.
+	mux.HandleFunc("GET /api/local/{key}/pushed", func(w http.ResponseWriter, r *http.Request) {
+		res, err := t.Load(r.PathValue("key"))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		if res.PR.LocalPath == "" || res.PR.Rev != "" {
+			writeErr(w, 400, errors.New("this is not a local branch result"))
+			return
+		}
+		tip := remoteTip(r.Context(), res.PR.LocalPath, publishBranch(res.PR))
+		writeJSON(w, 200, map[string]any{"pushed": tip != "" && tip == res.PR.HeadOid && !res.PR.Uncommitted})
 	})
 	mux.HandleFunc("POST /api/local/{key}/restore-description", func(w http.ResponseWriter, r *http.Request) {
 		res, err := t.Load(r.PathValue("key"))

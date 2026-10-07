@@ -476,3 +476,30 @@ https://github.com/perfectscale/psc-autoscaler/pull/497`
 		t.Fatal("matched an unrelated error")
 	}
 }
+
+// remoteTip tells a branch origin has at the local head from one it
+// doesn't have or has behind, which is what lets Update PR skip the push.
+func TestRemoteTip(t *testing.T) {
+	origin, dir := t.TempDir(), t.TempDir()
+	gitTest(t, origin, "init", "-q", "--bare")
+	gitTest(t, dir, "init", "-q", "-b", "feature")
+	gitTest(t, dir, "remote", "add", "origin", origin)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", ".")
+	gitTest(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a")
+	ctx := context.Background()
+	if tip := remoteTip(ctx, dir, "feature"); tip != "" {
+		t.Fatalf("unpushed branch tip = %q", tip)
+	}
+	gitTest(t, dir, "push", "-q", "origin", "feature")
+	head := gitTest(t, dir, "rev-parse", "HEAD")
+	if tip := remoteTip(ctx, dir, "feature"); tip != head {
+		t.Fatalf("pushed branch tip = %q, want %q", tip, head)
+	}
+	gitTest(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b")
+	if tip := remoteTip(ctx, dir, "feature"); tip != head {
+		t.Fatalf("tip after a local commit = %q, want the pushed %q", tip, head)
+	}
+}
