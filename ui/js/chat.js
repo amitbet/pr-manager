@@ -466,7 +466,7 @@ export function initChat(host, { popout = false } = {}) {
       const { field_text, ...view } = host.where() || {};
       const res = await api(`/api/results/${encodeURIComponent(key)}/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
-        body: JSON.stringify({ messages: msgs.filter((m) => !m.error).map(turnOf), view, conversation: id, run, no_web: ls("chat_web") === "0", ...modelPick() }),
+        body: JSON.stringify({ messages: msgs.filter((m) => !m.error).map(turnOf), view, conversation: id, run, no_web: ls("chat_web") === "0", agent: ls("chat_agent") === "installed" ? "installed" : "", ...modelPick() }),
       });
       const actions = await Promise.all((res.actions || []).map(async (a, i) => {
         const d = await describe(a.name, a.args).catch(() => ({ label: a.name, risk: "outward" }));

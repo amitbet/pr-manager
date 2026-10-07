@@ -105,6 +105,11 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	// neither -s nor -C, so the sandbox is set again as configuration.
 	args := []string{"exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
 		"--model", c.ModelID(), "--output-schema", schemaPath}
+	installed := ws != nil && ws.Installed && !ws.Edit
+	if installed {
+		// The reader's own config and rules (installed.go).
+		args = slices.DeleteFunc(args, func(a string) bool { return a == "--ignore-user-config" || a == "--ignore-rules" })
+	}
 	if resume {
 		args = append([]string{"exec", "resume"}, args[1:]...)
 		args = append(args, "--config", fmt.Sprintf("sandbox_mode=%q", codexSandbox(ws)))
@@ -114,9 +119,13 @@ func (c *CodexCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse, erro
 	if sess == nil {
 		args = append(args, "--ephemeral")
 	}
-	// No AGENTS.md or AGENTS.override.md from the workspace, the untrusted
-	// PR head, as project instructions.
-	args = append(args, "--config", "project_doc_max_bytes=0")
+	if installed {
+		args = append(args, codexInstalledArgs(ws)...)
+	} else {
+		// No AGENTS.md or AGENTS.override.md from the workspace, the
+		// untrusted PR head, as project instructions.
+		args = append(args, "--config", "project_doc_max_bytes=0")
+	}
 	if effort := codexEffort(c.Effort); effort != "" {
 		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", effort))
 	}
@@ -307,9 +316,12 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		return nil, err
 	}
 	var sess *Session
+	installed := req.Workspace != nil && req.Workspace.Installed && !req.Workspace.Edit
 	if ws := req.Workspace; ws != nil {
 		tools, cwd = readOnlyTools, ws.Dir
-		if ws.Edit {
+		if installed {
+			sess = ws.Session
+		} else if ws.Edit {
 			tools = editTools
 		} else {
 			if ws.Shell {
@@ -338,9 +350,14 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--json-schema", cmdSafeJSON(schema),
 		"--include-partial-messages", // see claudeStream
-		"--model", c.ModelID(), "--tools", tools, "--disable-slash-commands",
-		"--strict-mcp-config", "--permission-mode", "dontAsk",
-		"--setting-sources", "user", "--settings", settingsPath,
+		"--model", c.ModelID(), "--settings", settingsPath,
+	}
+	if installed {
+		// The reader's own tools, servers, skills and rules (installed.go).
+		args = append(args, claudeInstalledArgs(req.Workspace, reachAllowed)...)
+	} else {
+		args = append(args, "--tools", tools, "--disable-slash-commands",
+			"--strict-mcp-config", "--permission-mode", "dontAsk", "--setting-sources", "user")
 	}
 	// A session is kept, under the working directory's project, only when
 	// the caller carries the conversation on (see session.go).
@@ -355,7 +372,7 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		args = append(args, "--session-id", newSession)
 	}
 	args = append(args, reachArgs...)
-	if ws := req.Workspace; ws != nil {
+	if ws := req.Workspace; ws != nil && !installed {
 		// dontAsk denies anything not allowed up front: edits only in
 		// the working directory.
 		allowed := readOnlyTools
@@ -377,7 +394,12 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 		if err := os.WriteFile(systemPath, []byte(system), 0o600); err != nil {
 			return nil, err
 		}
-		args = append(args, "--system-prompt-file", systemPath)
+		// An Installed agent keeps Claude Code's own system prompt.
+		flag := "--system-prompt-file"
+		if installed {
+			flag = "--append-system-prompt-file"
+		}
+		args = append(args, flag, systemPath)
 	}
 	// Haiku has no effort setting.
 	if e := c.Effort; e != "" && e != "none" && !strings.Contains(c.ModelID(), "haiku") {
@@ -784,6 +806,10 @@ func shellAllowed() string {
 // temp directory), can't reach the network, and can't read the usual
 // credential stores.
 func claudeSettings(ws *Workspace) ([]byte, error) {
+	if ws != nil && ws.Installed && !ws.Edit {
+		// The reader's hooks and sandbox stay as they set them.
+		return json.Marshal(map[string]any{"env": map[string]string{"GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat"}})
+	}
 	s := map[string]any{"disableAllHooks": true}
 	if ws != nil && ws.Shell && !ws.Edit {
 		deny := append(append([]string{ws.Dir}, ws.ReadDirs...), ws.NoWrite...)
@@ -823,9 +849,9 @@ const (
 )
 
 // codexSandbox is the codex sandbox for ws: writable in its directory
-// when it edits, read-only otherwise.
+// when it edits or is Installed, read-only otherwise.
 func codexSandbox(ws *Workspace) string {
-	if ws != nil && ws.Edit || codexBuilds(ws) {
+	if ws != nil && (ws.Edit || ws.Installed) || codexBuilds(ws) {
 		return "workspace-write"
 	}
 	return "read-only"
@@ -849,6 +875,8 @@ func cliPrompt(msgs []ChatMessage, tool ToolDefinition, ws *Workspace) (string, 
 	switch {
 	case ws != nil && ws.Edit:
 		fmt.Fprintf(&sb, "%s Make your changes by editing the files, then answer only with the JSON object.", tool.Description)
+	case ws != nil && ws.Installed:
+		fmt.Fprintf(&sb, "%s %s Answer only with the JSON object.", tool.Description, installedNote(ws))
 	case ws != nil && ws.Shell:
 		fmt.Fprintf(&sb, "%s Read files and run read-only shell commands (rg, git log/show/blame/diff/grep, ls, cat, pipes) if you need to; you are in a sandbox where writes and the network fail, so don't try to change anything.%s%s Not every tool may be installed: check (rg --version, git --version) and use what there is. Answer only with the JSON object.", tool.Description, reachNote(ws), buildNote(ws))
 	case ws != nil:

@@ -40,6 +40,7 @@ var chatActions = []struct{ name, risk, args, does string }{
 	{"mark_reviewed", "local", `{"units": [ID...], "reviewed": true|false}`, "tick units off in the walkthrough"},
 	{"fix", "job", `{"targets": [{"unit": ID, "issue": n} | {"unit": ID, "thread": thread id}]} or {"all": true, "comments": bool}`, "fix issues or confirmed review comments in a separate checkout, then re-check and re-triage the result; takes minutes"},
 	{"change", "job", `{"instructions": text, "files": [path...], "unit": ID}` + " (files: every file it may change, relative to the repository, 1 to 20; unit: optional)", "change the code as the reader asks, by an agent in the fix checkout, then re-check and re-triage the result, like fix; the reader's words, written out in full, are its instructions; takes minutes; push_fix pushes it"},
+	{"commit_edits", "job", `{"title": text, "unit": ID}` + " (title: the commit's first line; unit: optional)", "make the edits in your working directory a commit of the fix checkout, then re-check and re-triage the result, like a change; takes minutes; push_fix pushes it"},
 	{"reanalyze_units", "job", `{"units": [ID...]}`, "review these units again with the reviewer model, keeping every other unit's review"},
 	{"retriage", "job", `{"fresh": bool}`, "triage the change again: the latest code, comments and code map; units whose code didn't change keep their review unless fresh"},
 	{"refresh_comments", "job", `{}`, "fetch the PR's review comments from GitHub again and judge the new ones"},
@@ -59,8 +60,10 @@ func chatActionNames() []string {
 	return names
 }
 
-// chatActionsDoc tells the agent what it can do and how.
-func chatActionsDoc() string {
+// chatActionsDoc tells the agent what it can do and how. The reader's own
+// agent (installed) edits the code itself and commits its edits; the
+// read-only one asks for a change.
+func chatActionsDoc(installed bool) string {
 	var b strings.Builder
 	b.WriteString(`## Actions
 
@@ -68,6 +71,9 @@ Besides answering, you can act, by listing actions in your reply. The reader see
 
 `)
 	for _, a := range chatActions {
+		if a.name == "change" && installed || a.name == "commit_edits" && !installed {
+			continue
+		}
 		fmt.Fprintf(&b, "- %s %s: %s.\n", a.name, a.args, a.does)
 	}
 	b.WriteString(`

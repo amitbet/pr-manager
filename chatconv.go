@@ -59,6 +59,9 @@ type chatSession struct {
 	Dir      string      `json:"dir"`            // the agent's working directory
 	Repo     string      `json:"repo,omitempty"` // the clone the worktree is of
 	Session  llm.Session `json:"session"`
+	// Installed is the reader's own agent's session, which the read-only
+	// one doesn't carry on, nor it the read-only one's.
+	Installed bool `json:"installed,omitempty"`
 	// Turns are how many turns of the conversation the session has seen,
 	// its answer included; Prefix is their hash (turnsHash).
 	Turns  int       `json:"turns"`
@@ -98,6 +101,7 @@ type chatConv struct {
 	resumed    bool
 	noWeb      bool
 	freshStart bool
+	installed  bool // the reader's own agent (chatedits.go)
 }
 
 // openChat opens req's conversation, waiting for an answer to it already
@@ -152,23 +156,45 @@ func (cv *chatConv) workspace(ctx context.Context, r *PRResult) (dir string, cle
 		st, err := os.Stat(d)
 		return err == nil && st.IsDir()
 	}
-	stable := (r.LocalFixDir != "" && exists(r.LocalFixDir)) || (r.PR.LocalPath != "" && r.PR.Rev == "" && exists(r.PR.LocalPath))
-	if cv.id == "" || stable {
+	fixDir := r.LocalFixDir != "" && exists(r.LocalFixDir)
+	local := r.PR.LocalPath != "" && r.PR.Rev == "" && exists(r.PR.LocalPath)
+	if cv.installed && local {
+		return r.PR.LocalPath, func() {}, "the reader's own checkout, as it is now (it may have changed since it was triaged). Your edits land in it, theirs to keep, commit or undo; suggest retriage when they want the review to see them.", nil
+	}
+	// The reader's agent edits a worktree of its own, a fix's included,
+	// which goes on with the fix checkout's commits.
+	if cv.id == "" || local || fixDir && !cv.installed {
 		return cv.t.chatWorkspace(ctx, r)
 	}
 	cleanup = func() {}
 	t := cv.t
-	repo := r.PR.LocalPath
+	repo, head, what := r.PR.LocalPath, r.PR.HeadOid, "the reviewed head commit"
 	if repo == "" && t.fetcher != nil {
 		repo = t.fetcher.RepoDir(r.PR.PRRef)
 	}
-	if repo == "" || r.PR.HeadOid == "" || !exists(repo) {
+	if fixDir {
+		repo, what = r.LocalFixDir, "the fix checkout's commit"
+		out, err := triage.GitCtx(ctx, repo, "rev-parse", "HEAD")
+		if err != nil {
+			return "", cleanup, "", err
+		}
+		head = strings.TrimSpace(out)
+	}
+	if repo == "" || head == "" || !exists(repo) {
 		return "", cleanup, "", nil
 	}
 	cv.repo = repo
 	code := filepath.Join(cv.dir, "code")
-	if err := convWorktree(ctx, repo, code, r.PR.HeadOid); err != nil {
-		return "", cleanup, "", err
+	carried := ""
+	if cv.installed {
+		if carried, err = installedWorktree(ctx, repo, cv.dir, head); err != nil {
+			return "", cleanup, "", err
+		}
+	} else {
+		carried = keepEdits(ctx, cv.dir)
+		if err := convWorktree(ctx, repo, code, head); err != nil {
+			return "", cleanup, "", err
+		}
 	}
 	// The PR head is untrusted: its agent files must not reach the agent
 	// as the project's instructions.
@@ -183,7 +209,10 @@ func (cv *chatConv) workspace(ctx context.Context, r *PRResult) (dir string, cle
 	if d, err := filepath.EvalSymlinks(code); err == nil {
 		code = d
 	}
-	return code, cleanup, "the repository at the reviewed head commit " + short(r.PR.HeadOid) + ".", nil
+	if cv.installed {
+		return code, cleanup, fmt.Sprintf("a worktree of the repository at %s %s, your own, kept between answers.%s Edit it as the reader asks; your edits stay here until commit_edits makes them a commit of the fix checkout, checked and re-triaged.", what, short(head), carried), nil
+	}
+	return code, cleanup, "the repository at " + what + " " + short(head) + "." + carried, nil
 }
 
 // convWorktree makes code a detached worktree of repo at head: as it is
@@ -239,7 +268,14 @@ func (cv *chatConv) reach(ws *llm.Workspace, l llm.LLMTool, r *PRResult, m *chat
 		return
 	}
 	if llm.SupportsWorkspace(l) {
-		cv.builds(cv.c, ws)
+		if ws.Installed {
+			// It builds on its own; codex's sandbox has no network.
+			if goModule(ws.Dir) {
+				fetchModules(cv.c, ws.Dir)
+			}
+		} else {
+			cv.builds(cv.c, ws)
+		}
 		cv.snapshots(ws)
 	}
 	// An API provider gets the app's fetch and gh tools (llm/webtool.go).
@@ -340,7 +376,7 @@ func withView(msgs []llm.ChatMessage, view chatView) []llm.ChatMessage {
 // beginning of this conversation, with this model, in this directory.
 func (cv *chatConv) resumable(l llm.LLMTool, ws *llm.Workspace) *chatSession {
 	s := cv.sess
-	if s == nil || s.Session.ID == "" || s.Provider != l.Name() || s.Model != l.ModelID() || s.Dir != ws.Dir {
+	if s == nil || s.Session.ID == "" || s.Provider != l.Name() || s.Model != l.ModelID() || s.Dir != ws.Dir || s.Installed != ws.Installed {
 		return nil
 	}
 	if s.Turns <= 0 || s.Turns >= len(cv.turns) || turnsHash(cv.turns[:s.Turns]) != s.Prefix {
@@ -357,7 +393,7 @@ func (cv *chatConv) saveSession(l llm.LLMTool, ws *llm.Workspace) {
 		return
 	}
 	turns := append(append([]chatTurn(nil), cv.turns...), chatTurn{Role: "assistant", At: cv.at})
-	s := chatSession{Provider: l.Name(), Model: l.ModelID(), Dir: ws.Dir, Repo: cv.repo, Session: *ws.Session,
+	s := chatSession{Provider: l.Name(), Model: l.ModelID(), Dir: ws.Dir, Repo: cv.repo, Session: *ws.Session, Installed: ws.Installed,
 		Turns: len(turns), Prefix: turnsHash(turns), At: time.Now()}
 	b, err := json.Marshal(s)
 	if err != nil {

@@ -85,19 +85,28 @@ type LLMRequest struct {
 // The CLIs also take, without Edit: Web, to search and fetch the web with
 // their own tools (an API provider gets the app's fetch, webtool.go); MCP, servers whose tools it may call (they run outside
 // the sandbox, see session.go); and Session, to carry on a conversation.
+//
+// Installed runs the CLI as the reader has it set up instead (installed.go):
+// their own tools, MCP servers, skills, hooks and permission rules, able
+// to edit Dir and run commands, with Web, MCP and Session as above.
+// Project also loads Dir's own instructions and settings (CLAUDE.md,
+// AGENTS.md), for a checkout the reader trusts. The API providers ignore
+// both.
 type Workspace struct {
-	Dir      string
-	ReadDirs []string
-	Edit     bool
-	Shell    bool
-	NoWrite  []string
-	Web      bool
-	GH       string   // an API provider's gh tool runs here ("": none)
-	Builds   string   // where builds and tests may write (build.go; "": no builds)
-	Scratch  bool     // Dir is a throwaway copy, which codex may write to
-	Images   []string // pictures for this turn: codex attaches them, Claude Code reads them
-	MCP      []MCPServer
-	Session  *Session
+	Dir       string
+	ReadDirs  []string
+	Edit      bool
+	Shell     bool
+	NoWrite   []string
+	Web       bool
+	GH        string   // an API provider's gh tool runs here ("": none)
+	Builds    string   // where builds and tests may write (build.go; "": no builds)
+	Scratch   bool     // Dir is a throwaway copy, which codex may write to
+	Images    []string // pictures for this turn: codex attaches them, Claude Code reads them
+	MCP       []MCPServer
+	Session   *Session
+	Installed bool
+	Project   bool
 }
 
 // SupportsWorkspace reports whether l can use LLMRequest.Workspace: the

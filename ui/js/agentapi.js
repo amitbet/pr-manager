@@ -211,6 +211,15 @@ export const ACTIONS = {
       return fixOutcome(await followJob({ id, status: "running" }, progress, !!S.result.pr.local_path));
     },
   },
+  commit_edits: {
+    risk: "job", label: (a) => `Commit the chat agent's edits${a.title ? `: "${a.title}"` : ""}`, preview: (a) => a.title,
+    run: async (a, progress) => {
+      if (a.unit) unitOf(a.unit);
+      const id = await startFix({ change: { instructions: need(a.title, "title"), from_chat: changeOf(S.result), unit_id: a.unit || "" } });
+      if (!id) throw new Error("the commit did not start (another fix of this checkout is running, or the reader cancelled)");
+      return fixOutcome(await followJob({ id, status: "running" }, progress, !!S.result.pr.local_path));
+    },
+  },
   reanalyze_units: {
     risk: "job", label: (a) => `Review ${(a.units || []).map(tryName).join(", ")} again`,
     run: async (a, progress) => {

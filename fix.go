@@ -72,6 +72,11 @@ type fixChange struct {
 	Instructions string   `json:"instructions"`
 	Files        []string `json:"files"`
 	UnitID       string   `json:"unit_id,omitempty"`
+	// FromChat commits the Installed chat agent's edits in the
+	// conversation about this change (chatedits.go): patch, which the
+	// first round applies instead of asking for one, and its files.
+	FromChat string `json:"from_chat,omitempty"`
+	patch    string
 }
 
 const (
@@ -87,7 +92,9 @@ func (c *fixChange) check() error {
 		return errors.New("a change needs instructions")
 	case len(c.Instructions) > changeMax:
 		return fmt.Errorf("a change's instructions are at most %d characters", changeMax)
-	case len(c.Files) == 0 || len(c.Files) > changeFilesMax:
+	case c.patch != "" && len(c.Files) > editsFilesMax:
+		return fmt.Errorf("the chat agent's edits change %d files, more than the %d a change may", len(c.Files), editsFilesMax)
+	case c.patch == "" && (len(c.Files) == 0 || len(c.Files) > changeFilesMax):
 		return fmt.Errorf("a change names the files it may change: 1 to %d of them", changeFilesMax)
 	}
 	for i, f := range c.Files {
@@ -187,8 +194,15 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if !req.All && req.UnitID == "" && len(req.Targets) == 0 && req.Change == nil {
 		return nil, errors.New("fix needs a unit and issue")
 	}
-	if req.Change != nil {
-		if err := req.Change.check(); err != nil {
+	if c := req.Change; c != nil {
+		if c.FromChat != "" {
+			patch, files, err := t.chatEdits(context.Background(), c.FromChat)
+			if err != nil {
+				return nil, err
+			}
+			c.patch, c.Files = patch, files
+		}
+		if err := c.check(); err != nil {
 			return nil, err
 		}
 	}
@@ -833,6 +847,20 @@ func (t *triager) fixRounds(ctx context.Context, jobID string, old *PRResult, re
 // says it resolves too, by ID.
 func fixRound(ctx context.Context, o options, dir string, r *PRResult, issues []targetedIssue, side []sideIssue, agent bool) ([]triage.FileDiff, map[int]string, error) {
 	targets := fixFiles(issues)
+	// The chat agent's edits are the patch already; the rounds after fix
+	// what the checks find in them.
+	if c := changeOf(issues); c != nil && c.patch != "" {
+		patch := c.patch
+		c.patch = ""
+		ctx, th := activity.Start(ctx, "llm", "apply the chat agent's edits")
+		defer lockTree(ctx)()
+		changed, err := applyFixPatch(ctx, dir, patch, targets)
+		if err != nil {
+			err = fmt.Errorf("the chat agent's edits don't apply to the fix checkout: %w", err)
+		}
+		th.Finish(err)
+		return changed, nil, err
+	}
 	// Several issues go to an agent, when the fixer can be one, and so
 	// does a change, which may span files.
 	if agent && (len(issues) > 1 || changeOf(issues) != nil) {

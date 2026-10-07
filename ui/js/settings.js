@@ -359,6 +359,9 @@ export function initSettings(changed, langChanged) {
   const autorun = $("#chat_autorun");
   autorun.value = ["local", "job"].includes(saved("chat_autorun")) ? saved("chat_autorun") : "view";
   autorun.onchange = () => save("chat_autorun", autorun.value);
+  const agent = $("#chat_agent");
+  agent.value = saved("chat_agent") === "installed" ? "installed" : "";
+  agent.onchange = () => save("chat_agent", agent.value);
   const web = $("#chat_web");
   web.checked = saved("chat_web") !== "0";
   web.onchange = () => save("chat_web", web.checked ? "1" : "0");

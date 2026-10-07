@@ -80,6 +80,17 @@ func chatPlacesText(places []chatPlace, cli bool) string {
 	return b.String()
 }
 
+// installedPlacesText is chatPlacesText for the reader's own agent, which
+// has its own tools and edits only its working directory.
+func installedPlacesText(places []chatPlace) string {
+	var b strings.Builder
+	b.WriteString("You have your own tools and the reader's setup: read, search, edit, run commands, build and test. Prefer looking over guessing: who changed a line and why (git log -L, git blame), what a file looked like before, where else a function is called, what an earlier run or a fix's log said.\n\nWhere things are (only your working directory is yours to change):\n")
+	for _, p := range places {
+		fmt.Fprintf(&b, "- %s: %s\n", p.dir, p.what)
+	}
+	return b.String()
+}
+
 // shellWorkspace gives ws the shell and the places to read.
 func shellWorkspace(ws *llm.Workspace, places []chatPlace, cache string) {
 	ws.Shell = true

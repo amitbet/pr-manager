@@ -45,6 +45,10 @@ type chatRequest struct {
 	Conversation string `json:"conversation,omitempty"`
 	Run          string `json:"run,omitempty"`
 	NoWeb        bool   `json:"no_web,omitempty"` // no web search or fetch
+	// Agent "installed" runs codex or claude-code as the reader has it
+	// set up, able to edit and run commands (chatedits.go); else, and
+	// always on an API provider, the agent only reads.
+	Agent string `json:"agent,omitempty"`
 	jobOptions
 }
 
@@ -127,6 +131,7 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 	defer cancel()
 	cv := t.openChat(req)
 	defer cv.close()
+	cv.installed = req.Agent == "installed" && llm.SupportsWorkspace(l)
 	ctx = usageCtx(cv.ctx(ctx), "chat", r)
 
 	m := t.chatMaterial(ctx, r, req.View)
@@ -137,6 +142,9 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 		switch {
 		case err != nil:
 			m.codeNote = fmt.Sprintf("The code could not be checked out for you (%v); answer from the diff below.", err)
+		case dir != "" && cv.installed:
+			ws = &llm.Workspace{Dir: dir, Installed: true, Project: r.PR.LocalPath != ""}
+			m.codeNote = "Your working directory is " + note
 		case dir != "":
 			ws = &llm.Workspace{Dir: dir}
 			m.codeNote = "You can read the repository in your working directory: " + note + " Read files rather than guess about code outside the diff; change nothing."
@@ -160,12 +168,16 @@ func (t *triager) chat(ctx context.Context, r *PRResult, req chatRequest) (*chat
 			places := t.chatPlaces(r, ws.Dir)
 			shellWorkspace(ws, places, t.opts.cache)
 			cv.reach(ws, l, r, m)
-			m.codeNote = strings.TrimSpace(m.codeNote + "\n\n" + chatPlacesText(places, llm.SupportsWorkspace(l)))
+			text := chatPlacesText(places, llm.SupportsWorkspace(l))
+			if ws.Installed {
+				text = installedPlacesText(places)
+			}
+			m.codeNote = strings.TrimSpace(m.codeNote + "\n\n" + text)
 		}
 	}
 	now := time.Now()
 	lim, budget, maxTokens := windowLimits(llm.ContextTokens(ctx, l))
-	head := chatSystem + "\n\n" + chatActionsDoc() + "\n\n"
+	head := chatSystem + "\n\n" + chatActionsDoc(ws != nil && ws.Installed) + "\n\n"
 	text := chatNow(r, now) + "\n\n" + chatContext(m, lim)
 	if budget > 0 {
 		msgs = fitTurns(msgs, budget/4)
