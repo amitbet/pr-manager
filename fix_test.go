@@ -1066,3 +1066,20 @@ func TestFixChange(t *testing.T) {
 		t.Errorf("commit message = %q", msg)
 	}
 }
+
+// A dirty checkout asks what to do with its changes before a worktree fix,
+// but not before a fix in place, which leaves them where they are.
+func TestCheckUncommittedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &PRResult{PR: &triage.PRInfo{LocalPath: dir}}
+	if err := checkUncommitted(r, fixRequest{Location: "worktree"}); err != errUncommitted {
+		t.Fatalf("worktree fix of a dirty checkout: %v", err)
+	}
+	if err := checkUncommitted(r, fixRequest{Location: "branch"}); err != nil {
+		t.Fatalf("in-place fix of a dirty checkout: %v", err)
+	}
+}

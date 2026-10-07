@@ -27,8 +27,9 @@ import (
 
 type fixRequest struct {
 	Key string `json:"key"`
-	// Location is worktree (default) or clone; the fix command also uses
-	// branch, which fixes a local checkout in place, in its own branch.
+	// Location is worktree (default), clone, or branch, which fixes a
+	// local checkout in place, in its own branch, and leaves the changes
+	// uncommitted there.
 	Location string `json:"location"`
 	// Uncommitted says what to do with a local checkout's uncommitted
 	// changes: commit them first, or fix in the checkout's own branch.
@@ -182,8 +183,8 @@ func (t *triager) startFix(req fixRequest) (*job, error) {
 	if req.Key == "" || req.MaxRounds < 1 || req.MaxRounds > 10 {
 		return nil, errors.New("fix needs a result and max rounds between 1 and 10")
 	}
-	if req.Location != "" && req.Location != "worktree" && req.Location != "clone" {
-		return nil, errors.New("fix location must be worktree or clone")
+	if req.Location != "" && req.Location != "worktree" && req.Location != "clone" && req.Location != "branch" {
+		return nil, errors.New("fix location must be worktree, clone or branch")
 	}
 	if req.Uncommitted != "" && req.Uncommitted != "commit" && req.Uncommitted != "branch" {
 		return nil, errors.New("uncommitted changes must be committed or fixed in the current branch")
@@ -271,8 +272,8 @@ func checkUncommitted(r *PRResult, req fixRequest) error {
 		}
 	}
 	// Fixing the current code happens in the checkout, next to anything
-	// uncommitted there.
-	if r.PR.LocalPath != "" && r.LocalFixDir == "" && req.Uncommitted == "" && !freshRev {
+	// uncommitted there, as it does when fixing in place is asked for.
+	if r.PR.LocalPath != "" && r.LocalFixDir == "" && req.Uncommitted == "" && req.Location != "branch" && !freshRev {
 		dirty, err := hasUncommitted(r.PR.LocalPath)
 		if err != nil {
 			return err
@@ -535,7 +536,8 @@ func (t *triager) runFix(ctx context.Context, jobID string, old *PRResult, req f
 			t.warn(ctx, jobID, warning)
 		}
 		inBranch = req.Location == "branch"
-		if s.info.Uncommitted {
+		// In place, uncommitted changes stay as they are, next to the fix.
+		if s.info.Uncommitted && !inBranch {
 			switch req.Uncommitted {
 			case "commit":
 				progress("commit", 0, 0)

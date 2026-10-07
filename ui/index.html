@@ -163,7 +163,7 @@
       <h4>Fix issues <span class="info" tabindex="0" aria-label="About fix issues">i<span class="tip" role="tooltip">The cached clone option checks out the PR branch in the app&#39;s clone and stops if that clone has local changes. Existing fix results keep their location. The issue and the code each fix touches are reviewed after every round.</span></span></h4>
       <div class="grid fix-opts">
         <label for="fix_location">Apply fixes in</label>
-        <select id="fix_location" aria-label="fix location"><option value="worktree">Separate worktree (default)</option><option value="clone">Cached local clone</option></select>
+        <select id="fix_location" aria-label="fix location"><option value="worktree">Separate worktree (default)</option><option value="clone">Cached local clone</option><option value="branch">In place, left uncommitted (local repos)</option></select>
         <label for="fix_uncommitted">Uncommitted local changes</label>
         <select id="fix_uncommitted" aria-label="uncommitted local changes"><option value="">Ask each time</option><option value="commit">Commit them, then fix in a worktree</option><option value="branch">Fix in the current branch</option></select>
       </div>

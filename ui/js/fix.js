@@ -36,7 +36,10 @@ export async function startFix(target, uncommitted = localStorage.getItem(UNCOMM
   menuOpen = false;
   const local = !!r.pr.local_path;
   const body = { key: r.key, all: false, unit_id: "", issue: 0, ...target, ...fixSettings(), uncommitted, rev };
-  if (local) body.location = "worktree";
+  // A local checkout is fixed in place or in a worktree; a PR, which
+  // isn't checked out here, in a worktree or the cached clone.
+  if (local) body.location = body.location === "branch" ? "branch" : "worktree";
+  else if (body.location === "branch") body.location = "worktree";
   const run = { id: "", key: r.key, local, job: { status: "running", stage: "" } };
   runs.push(run);
   render();
