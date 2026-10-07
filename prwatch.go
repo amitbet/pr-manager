@@ -46,6 +46,7 @@ type prWatch struct {
 	prs     map[string]*watchedPR // by PR identity (prID)
 	touched map[string]time.Time  // repo -> when it was last touched
 	gen     int                   // bumped when a saved state changes
+	asking  string                // prID of the PR gh is being asked about
 }
 
 type watchedPR struct {
@@ -214,6 +215,9 @@ func (w *prWatch) run(ctx context.Context) {
 // state, so a UI that hasn't reloaded its list doesn't bring it back.
 // Only run calls it, so p.state is not written anywhere else meanwhile.
 func (w *prWatch) check(ctx context.Context, p *watchedPR) {
+	w.mu.Lock()
+	w.asking = prID(p.ref)
+	w.mu.Unlock()
 	info, err := w.resolve(ctx, p.ref)
 	if err != nil && ctx.Err() == nil {
 		log.Printf("pr watch %s: %v", prID(p.ref), err)
@@ -222,6 +226,7 @@ func (w *prWatch) check(ctx context.Context, p *watchedPR) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	p.checked, p.once = w.now(), false
+	w.asking = ""
 	if changed {
 		w.gen++
 	}
@@ -269,9 +274,28 @@ func (w *prWatch) generation() int {
 	return w.gen
 }
 
+// asked returns the link of the PR gh is being asked about, if any (the
+// sidebar spins its badge), and whether more on screen are due now (the
+// sidebar asks again soon).
+func (w *prWatch) asked() (asking []string, due bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	asking = []string{}
+	now := w.now()
+	for id, p := range w.prs {
+		if id == w.asking {
+			asking = append(asking, p.ref.URL())
+		} else if p.visible && (isOpen(p.state) || p.once) && !p.next.After(now) {
+			due = true
+		}
+	}
+	return asking, due
+}
+
 func (w *prWatch) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/prwatch", func(rw http.ResponseWriter, r *http.Request) {
-		writeJSON(rw, 200, map[string]int{"gen": w.generation()})
+		asking, due := w.asked()
+		writeJSON(rw, 200, map[string]any{"gen": w.generation(), "asking": asking, "due": due})
 	})
 	mux.HandleFunc("POST /api/prwatch/visible", func(rw http.ResponseWriter, r *http.Request) {
 		var req struct {

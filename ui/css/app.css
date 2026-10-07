@@ -88,11 +88,12 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; co
 .pr-item { position: relative; display: block; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--fg); cursor: pointer; }
 .pr-item:hover { background: var(--bg3); text-decoration: none; }
 .pr-item.active { background: var(--bg3); box-shadow: inset 3px 0 var(--accent); }
-/* A change being triaged again or fixed spins in place of its badge's icon. */
-.pr-item.triaging .kind { position: relative; }
-.pr-item.triaging .kind svg { visibility: hidden; }
-.pr-item.triaging .kind::after { content: ""; position: absolute; width: 10px; height: 10px; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .pr-item.triaging .kind::after { animation: none; } }
+/* A change being triaged again or fixed, or a PR whose state is being
+   asked of GitHub, spins in place of its badge's icon. */
+.pr-item:is(.triaging, .updating) .kind { position: relative; }
+.pr-item:is(.triaging, .updating) .kind svg { visibility: hidden; }
+.pr-item:is(.triaging, .updating) .kind::after { content: ""; position: absolute; width: 10px; height: 10px; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .pr-item:is(.triaging, .updating) .kind::after { animation: none; } }
 .pr-item .t { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-del { position: absolute; top: 6px; right: 6px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 14px; line-height: 18px; cursor: pointer; opacity: 0; }
 .pr-item:hover .pr-del, .pr-del:focus-visible { opacity: 1; }

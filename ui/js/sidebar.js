@@ -144,23 +144,44 @@ function reportShown() {
   const prs = shown.filter((p) => !p.local_path)
     .map((p) => ({ host: p.host, owner: p.owner, repo: p.repo, number: p.number, state: p.state }));
   const body = JSON.stringify(prs);
-  if (body === lastShown) return;
+  // Unchanged, the watch may still have PRs to ask about: opening a result
+  // asks again about its repo's.
+  if (body === lastShown) { watchStates(); return; }
   lastShown = body;
-  postJSON("/api/prwatch/visible", { prs }).catch(() => { lastShown = ""; });
+  postJSON("/api/prwatch/visible", { prs }).then(watchStates, () => { lastShown = ""; });
 }
 
 // watchStates reloads the list when the server's PR watch (prwatch.go)
-// saved a new state, such as a PR merged on GitHub. The watch does the
-// polite polling of GitHub; this only asks the local server.
+// saved a new state, such as a PR merged on GitHub, and spins the badge
+// of the PR it is asking GitHub about. The watch does the polite polling
+// of GitHub; this only asks the local server, often while the watch has
+// PRs to ask about, and at once when the sidebar reports what's on screen.
 const WATCH_EVERY = 30 * 1000;
-function watchStates() {
-  let gen = 0; // the server starts at 0, and its first checks run before the first poll
-  setInterval(async () => {
-    const w = await api("/api/prwatch").catch(() => null);
-    if (!w) return;
+const WATCH_BUSY = 500;
+let gen = 0; // the server starts at 0, and its first checks run before the first poll
+let asking = [], due = false;
+let watchTimer = 0, watching = false, watchAgain = false;
+async function watchStates() {
+  if (watching) { watchAgain = true; return; }
+  watching = true;
+  clearTimeout(watchTimer);
+  const w = await api("/api/prwatch").catch(() => null);
+  if (w) {
     if (w.gen !== gen) loadList();
     gen = w.gen;
-  }, WATCH_EVERY);
+    asking = w.asking || [];
+    due = w.due;
+    markUpdating();
+  }
+  watching = false;
+  watchTimer = setTimeout(watchStates, watchAgain ? 0 : asking.length || due ? WATCH_BUSY : WATCH_EVERY);
+  watchAgain = false;
+}
+
+// markUpdating spins the sidebar's PR the watch is asking GitHub about.
+function markUpdating() {
+  document.querySelectorAll("#list .pr-item").forEach((el) =>
+    el.classList.toggle("updating", asking.includes(el.dataset.src)));
 }
 
 export async function loadList() {
@@ -244,5 +265,6 @@ function renderList(list) {
   }).join("") + (hiddenStale ? `
     <div class="side-stale">${hiddenStale} not touched in ${sideKeepDays()} day${sideKeepDays() === 1 ? "" : "s"} ${showStale ? "shown" : "hidden"} <button class="linkbtn">${showStale ? "hide" : "show"}</button></div>` : "") || `<div class="empty">none yet</div>`;
   markTriaging();
+  markUpdating();
   reportShown();
 }

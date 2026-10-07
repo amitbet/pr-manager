@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -186,5 +187,33 @@ func TestPRWatchTouch(t *testing.T) {
 	w.touch(ref(1), "OPEN")
 	if p.wait != 2*watchFirst {
 		t.Errorf("a second touch within %v restarted the backoff", watchTouch)
+	}
+}
+
+func TestPRWatchAskedListsOnlyThePRBeingAskedAbout(t *testing.T) {
+	w, states, _, _ := watchFixture(t)
+	if asking, due := w.asked(); len(asking) != 0 || due {
+		t.Fatalf("asking %v, due %v before anything was shown", asking, due)
+	}
+	w.show(shown(states, 1, 2, 3))
+	if asking, due := w.asked(); len(asking) != 0 || !due {
+		t.Fatalf("asking %v, due %v: the shown open PRs are due, none asked about yet", asking, due)
+	}
+	var during []string
+	resolve := w.resolve
+	w.resolve = func(ctx context.Context, r triage.PRRef) (*triage.PRInfo, error) {
+		during, _ = w.asked()
+		return resolve(ctx, r)
+	}
+	w.check(context.Background(), w.prs[prID(ref(1))])
+	if !slices.Equal(during, []string{ref(1).URL()}) {
+		t.Fatalf("asking %v while PR 1 was asked about", during)
+	}
+	if asking, due := w.asked(); len(asking) != 0 || !due {
+		t.Fatalf("asking %v, due %v after PR 1: PR 2 is still due", asking, due)
+	}
+	w.check(context.Background(), w.prs[prID(ref(2))])
+	if asking, due := w.asked(); len(asking) != 0 || due {
+		t.Fatalf("asking %v, due %v once both were asked about", asking, due)
 	}
 }
