@@ -30,6 +30,7 @@ desktop:
 	scripts/build-desktop.sh
 
 test:
+	bash scripts/check-ui.sh
 	go vet ./... && go test ./...
 
 # Start the UI server and open it in the browser.

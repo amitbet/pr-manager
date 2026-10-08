@@ -45,6 +45,11 @@ jobs:
           fetch-tags: true
       - name: Test version bump
         run: bash scripts/next-version-test.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check UI JavaScript
+        run: bash scripts/check-ui.sh
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

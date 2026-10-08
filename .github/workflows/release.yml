@@ -79,6 +79,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check UI JavaScript
+        run: bash scripts/check-ui.sh
       - name: Test
         run: |
           go vet ./...

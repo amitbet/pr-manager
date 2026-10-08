@@ -359,9 +359,9 @@ export function initSettings(changed, langChanged) {
   const autorun = $("#chat_autorun");
   autorun.value = ["local", "job"].includes(saved("chat_autorun")) ? saved("chat_autorun") : "view";
   autorun.onchange = () => save("chat_autorun", autorun.value);
-  const agent = $("#chat_agent");
-  agent.value = saved("chat_agent") === "installed" ? "installed" : "";
-  agent.onchange = () => save("chat_agent", agent.value);
+  const chatAgent = $("#chat_agent");
+  chatAgent.value = saved("chat_agent") === "installed" ? "installed" : "";
+  chatAgent.onchange = () => save("chat_agent", chatAgent.value);
   const web = $("#chat_web");
   web.checked = saved("chat_web") !== "0";
   web.onchange = () => save("chat_web", web.checked ? "1" : "0");
@@ -405,9 +405,9 @@ export function initSettings(changed, langChanged) {
   uncommitted.onchange = () => (uncommitted.value ? save("fix_uncommitted", uncommitted.value) : localStorage.removeItem("pr-manager.fix_uncommitted"));
   recursive.checked = saved("recursive_fix") ? saved("recursive_fix") === "1" : S.cfg?.recursive_fix !== false;
   recursive.onchange = () => save("recursive_fix", recursive.checked ? "1" : "0");
-  const agent = $("#fix_agent");
-  agent.checked = saved("fix_agent") ? saved("fix_agent") === "1" : S.cfg?.fix_agent !== false;
-  agent.onchange = () => save("fix_agent", agent.checked ? "1" : "0");
+  const fixAgent = $("#fix_agent");
+  fixAgent.checked = saved("fix_agent") ? saved("fix_agent") === "1" : S.cfg?.fix_agent !== false;
+  fixAgent.onchange = () => save("fix_agent", fixAgent.checked ? "1" : "0");
   const rounds = $("#max_fix_rounds");
   rounds.value = saved("max_fix_rounds") || S.cfg?.max_fix_rounds || 3;
   rounds.onchange = () => {
