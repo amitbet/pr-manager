@@ -538,6 +538,11 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 		j.finish(err)
 		t.mu.Lock()
 		defer t.mu.Unlock()
+		j.Cancelable = false
+		if j.cancelled {
+			j.Status = "cancelled"
+			return
+		}
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
 		} else {

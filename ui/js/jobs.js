@@ -2,7 +2,7 @@
 // the log dialog (a fix job's, over the result it is fixing) and the
 // sidebar's list of running jobs. A job keeps running on the
 // server when its view is left or the page reloads; the list reopens it.
-import { $, esc, api, postJSON, say } from "./util.js";
+import { $, esc, api, postJSON, ask, say } from "./util.js";
 import { mountActivity } from "./activity.js";
 import { S } from "./state.js";
 
@@ -15,6 +15,8 @@ let timer = null;
 const status = new Map(); // job id -> last seen status
 let triaging = []; // running triage jobs
 let busy = []; // running triage and fix jobs
+const stopping = new Set();
+const confirming = new Set();
 const removed = new Set(); // failed jobs taken off the list by hand
 
 // A triage job's url is the PR link or local path it was started with.
@@ -40,17 +42,55 @@ export function initJobs(done, finished) {
   onDone = done;
   onFinished = finished;
   $("#jobs").addEventListener("click", (e) => {
+    if (handleStopClick(e)) return;
     const x = e.target.closest(".job-x");
     if (x) {
       e.preventDefault();
-      if (x.dataset.status === "running") cancelJob(x.dataset.id).catch((err) => say(err.message));
-      else { removed.add(x.dataset.id); refreshJobs(); }
+      removed.add(x.dataset.id);
+      refreshJobs();
       return;
     }
     const item = e.target.closest(".job-item");
     if (item) item.dataset.kind === "fix" ? showLog(item.dataset.id) : watchJob(item.dataset.id);
   });
   refreshJobs();
+}
+
+// Share confirmation and pending state across the sidebar and both log views.
+async function requestStop(id, kind) {
+  if (confirming.has(id) || stopping.has(id)) return;
+  confirming.add(id);
+  try {
+    if (!await ask(`Stop this ${KIND[kind] || "action"}? This interrupts the running action. Unfinished work may be lost; changes or results already saved may remain. You will need to start the action again to finish it.`, "Stop action")) return;
+    stopping.add(id);
+    document.querySelectorAll(".job-stop").forEach((button) => {
+      if (button.dataset.id === id) {
+        button.disabled = true;
+        button.textContent = "Stopping…";
+      }
+    });
+    await cancelJob(id);
+  } catch (err) {
+    await say(err.message);
+  } finally {
+    confirming.delete(id);
+    stopping.delete(id);
+    refreshJobs();
+  }
+}
+
+function handleStopClick(e) {
+  const button = e.target.closest(".job-stop");
+  if (!button) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  requestStop(button.dataset.id, button.dataset.kind);
+  return true;
+}
+
+function stopButton(j) {
+  if (j.status !== "running" || (!j.cancelable && !stopping.has(j.id))) return "";
+  return `<button type="button" class="job-stop" data-id="${esc(j.id)}" data-kind="${esc(j.kind)}" ${stopping.has(j.id) ? "disabled" : ""}>${stopping.has(j.id) ? "Stopping…" : "Stop"}</button>`;
 }
 
 // cancelJob stops a running job and resolves once it has stopped, so what
@@ -113,6 +153,7 @@ const LOST = "connection lost, retrying…";
 export async function watchJob(id, onCached) {
   $("#main").innerHTML = `<div class="job-view"><div class="progress"><div class="progress-what">loading…</div></div><div class="activity"></div></div>`;
   const view = $("#main .job-view");
+  view.addEventListener("click", handleStopClick);
   const refreshLog = mountActivity(view.querySelector(".activity"), id);
   markActive(id);
   try {
@@ -135,7 +176,7 @@ export async function watchJob(id, onCached) {
       if (j.status === "error") { p.outerHTML = `<div class="error">${esc(j.error)}</div>`; break; } // the log stays up to show what failed
       if (j.status === "cancelled") { p.innerHTML = `${esc(j.url)}<br>stopped`; break; }
       const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
-      p.querySelector(".progress-what").innerHTML = `${esc(j.url)}<br>${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
+      p.querySelector(".progress-what").innerHTML = `${stopButton(j)}${esc(j.url)}<br>${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
       await new Promise((res) => setTimeout(res, 700));
     }
   } catch (e) {
@@ -150,6 +191,7 @@ export async function showLog(id) {
   const dlg = $("#job-log");
   const token = (dlg.token = {});
   const body = dlg.querySelector(".job-log-body");
+  body.onclick = handleStopClick;
   body.innerHTML = `<div class="job-log-stage">loading…</div><div class="activity"></div>`;
   const refreshLog = mountActivity(body.querySelector(".activity"), id);
   if (!dlg.open) dlg.showModal();
@@ -167,7 +209,7 @@ export async function showLog(id) {
     if (j.status === "done") { stage.textContent = "finished"; return; }
     if (j.status === "cancelled") { stage.textContent = "stopped"; return; }
     const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
-    stage.innerHTML = `${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
+    stage.innerHTML = `${stopButton(j)}${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
     await new Promise((res) => setTimeout(res, 700));
   }
 }
@@ -178,12 +220,10 @@ function markActive(id) {
   document.querySelectorAll("#jobs .job-item").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
 }
 
-// xButton stops a job that can still be stopped, or takes a failed one off
-// the list.
+// xButton offers Stop for running jobs and removes failed jobs from the list.
 function xButton(j) {
   if (j.status === "error") return `<button class="job-x" data-id="${esc(j.id)}" data-status="error" title="Remove from the list" aria-label="Remove from the list">✕</button>`;
-  if (!j.cancelable) return "";
-  return `<button class="job-x" data-id="${esc(j.id)}" data-status="running" title="Stop this ${esc(KIND[j.kind] || j.kind)}; what it changed so far is undone" aria-label="Stop">✕</button>`;
+  return stopButton(j);
 }
 
 // refreshJobs redraws the running list, and keeps polling while any job

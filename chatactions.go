@@ -270,6 +270,11 @@ func (t *triager) startAux(kind string, r *PRResult, work func(ctx context.Conte
 		j.finish(err)
 		t.mu.Lock()
 		defer t.mu.Unlock()
+		j.Cancelable = false
+		if j.cancelled {
+			j.Status = "cancelled"
+			return
+		}
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
 			log.Printf("%s %s: %v", kind, r.Key, err)

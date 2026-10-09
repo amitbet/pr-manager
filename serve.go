@@ -204,7 +204,7 @@ type job struct {
 	CachedBy string `json:"cached_by,omitempty"`
 	RunsWith string `json:"runs_with,omitempty"`
 	// Cancelable is whether POST /api/jobs/{id}/cancel can still stop the
-	// job: a fix job is until it starts committing what it made.
+	// job. Fix jobs opt in until they start committing what they made.
 	Cancelable bool `json:"cancelable,omitempty"`
 
 	log       *activity.Log
@@ -656,7 +656,7 @@ func (t *triager) List() ([]prSummary, error) {
 func (t *triager) newJob(kind, url string) (*job, context.Context, func(stage string, done, total int)) {
 	var idb [6]byte
 	_, _ = rand.Read(idb[:])
-	j := &job{ID: hex.EncodeToString(idb[:]), Kind: kind, URL: url, Started: time.Now(), Status: "running", log: activity.New()}
+	j := &job{ID: hex.EncodeToString(idb[:]), Kind: kind, URL: url, Started: time.Now(), Status: "running", Cancelable: kind != "fix", log: activity.New()}
 	root, cancel := context.WithCancel(t.root)
 	j.cancel = cancel
 	t.mu.Lock()
@@ -705,8 +705,8 @@ func (j *job) finish(err error) {
 }
 
 // cancelJob stops a job that can still be stopped. Its context is
-// cancelled, which kills the LLM CLI it runs, and the job undoes what it
-// set up as it does on any error.
+// cancelled, which kills the LLM CLI it runs. Fix jobs undo their pending
+// edits; other actions may retain work saved before cancellation.
 func (t *triager) cancelJob(id string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -811,6 +811,11 @@ func (t *triager) startIndex(jo jobOptions) *job {
 		j.finish(err)
 		t.mu.Lock()
 		defer t.mu.Unlock()
+		j.Cancelable = false
+		if j.cancelled {
+			j.Status = "cancelled"
+			return
+		}
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
 			log.Printf("index: %v", err)
@@ -838,6 +843,11 @@ func (t *triager) start(url string, jo jobOptions) (*job, error) {
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
+		j.Cancelable = false
+		if j.cancelled {
+			j.Status = "cancelled"
+			return
+		}
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
 			log.Printf("triage %s: %v", j.URL, err)

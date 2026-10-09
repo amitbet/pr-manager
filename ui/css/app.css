@@ -297,3 +297,9 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .st-tip-foot { margin-top: 4px; color: var(--muted); }
 .st-tip-foot b { color: var(--fg); }
 @media (forced-colors: active) { .stats .sw, .st-stack span, .st-bar { forced-color-adjust: none; } }
+
+/* Keep running actions' Stop control visible, with room for its label. */
+.job-item:has(.job-stop) { padding-right: 88px; }
+.job-stop { color: var(--human); font-size: 12px; }
+.job-item .job-stop { position: absolute; top: 7px; right: 6px; }
+.progress-what .job-stop, .job-log-stage .job-stop { float: right; margin: 0 0 8px 12px; }

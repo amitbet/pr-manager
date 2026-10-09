@@ -1,0 +1,25 @@
+{
+  "key": "ui-smoke-cached",
+  "pr": {
+    "owner": "local", "repo": "sample", "number": 0,
+    "title": "Cached greeting review", "author": "UI Test", "state": "LOCAL",
+    "base_ref": "main", "head_ref": "main", "uncommitted": true,
+    "additions": 1, "deletions": 1
+  },
+  "classifier": "off", "summarizer": "off", "duration_ms": 10,
+  "overview": { "why": "Show a cached review in the UI.", "how": ["Update the greeting."], "issues": [] },
+  "sequence": { "version": 2, "problem": "A single greeting has no call flow.", "participants": [], "steps": [] },
+  "counts": { "human": 1, "skim": 0, "aux": 0, "none": 0 },
+  "files": [{
+    "path": "greet.go", "status": "modified",
+    "units": [{
+      "id": "greet.go:Greeting", "file": "greet.go", "symbol": "Greeting", "status": "modified", "line": 3,
+      "headline": "Update the greeting", "summary": "Return the smoke test greeting.",
+      "decision": { "bucket": "human", "source": "off", "reason": "Review this change." },
+      "hunks": [{
+        "header": "@@ -1,3 +1,3 @@", "old_start": 1, "old_lines": 3, "new_start": 1, "new_lines": 3,
+        "lines": [" package sample", " ", "-func Greeting() string { return \"Hello\" }", "+func Greeting() string { return \"Hello from the smoke test\" }"]
+      }]
+    }]
+  }]
+}

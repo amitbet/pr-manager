@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -159,5 +160,57 @@ func TestDraftSaveLeavesNoTemp(t *testing.T) {
 	}
 	if _, err := os.Stat(rv.draftFile(ref)); err != nil {
 		t.Errorf("draft file: %v", err)
+	}
+}
+
+// Every non-fix action exposes cancellation and propagates it to its worker.
+func TestCancelActionKinds(t *testing.T) {
+	tr, err := newTriager(options{cache: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"triage", "index", "overview", "sequence"} {
+		j, ctx, _ := tr.newJob(kind, "example")
+		if err := tr.cancelJob(j.ID); err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("%s context still running", kind)
+		}
+		j.finish(ctx.Err())
+	}
+}
+
+// Some workers return partial results without an error on cancellation.
+// An accepted stop must still end as cancelled, never done or failed.
+func TestCancelledAuxOutcome(t *testing.T) {
+	for _, workerErr := range []error{nil, context.Canceled} {
+		tr, err := newTriager(options{cache: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		j := tr.startAux("overview", &PRResult{Key: "example", PR: &triage.PRInfo{}}, func(ctx context.Context, _ func(string, int, int)) error {
+			<-ctx.Done()
+			return workerErr
+		})
+		if err := tr.cancelJob(j.ID); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			tr.mu.Lock()
+			status, cancelable := j.Status, j.Cancelable
+			tr.mu.Unlock()
+			if status != "running" {
+				if status != "cancelled" || cancelable {
+					t.Fatalf("status=%s cancelable=%v", status, cancelable)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("cancelled worker did not finish")
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
