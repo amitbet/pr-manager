@@ -47,7 +47,7 @@ func (x *goExtractor) parseModule(m Module) {
 			return nil
 		}
 		file := rel(x.repoRoot, p)
-		x.files[file] = &FileInfo{Path: file, Lang: "go", Lines: fset.File(f.Pos()).LineCount(), Generated: ast.IsGenerated(f)}
+		x.files[file] = &FileInfo{Path: file, Lang: "go", Lines: fset.File(f.FileStart).LineCount(), Generated: ast.IsGenerated(f)}
 		moduleFile, _ := filepath.Rel(root, p)
 		pkg := path.Join(m.Path, filepath.ToSlash(filepath.Dir(moduleFile)))
 		dir := path.Dir(file)

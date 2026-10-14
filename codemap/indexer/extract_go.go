@@ -131,14 +131,20 @@ func isCRDPackage(p *packages.Package) bool {
 func (x *goExtractor) walkPackage(p *packages.Package) {
 	crdPkg := isCRDPackage(p)
 	for _, f := range p.Syntax {
-		abs := p.Fset.File(f.Pos()).Name()
+		// f.Pos() is the package clause, which is NoPos when the file failed
+		// to parse; FileStart is always set.
+		tf := p.Fset.File(f.FileStart)
+		if tf == nil {
+			continue
+		}
+		abs := tf.Name()
 		if strings.HasSuffix(abs, "_test.go") || !strings.HasPrefix(abs, x.repoRoot) {
 			continue // cgo-generated or outside repo
 		}
 		relFile := rel(x.repoRoot, abs)
 		gen := ast.IsGenerated(f)
 		fset := p.Fset
-		x.files[relFile] = &FileInfo{Path: relFile, Lang: "go", Lines: fset.File(f.Pos()).LineCount(), Generated: gen}
+		x.files[relFile] = &FileInfo{Path: relFile, Lang: "go", Lines: tf.LineCount(), Generated: gen}
 		dir := filepath.ToSlash(filepath.Dir(relFile))
 		if dir == "." {
 			dir = ""
