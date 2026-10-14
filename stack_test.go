@@ -458,3 +458,72 @@ func TestStackCacheHit(t *testing.T) {
 		t.Fatalf("missed: %+v, saved %+v", got, saved)
 	}
 }
+
+// A branch reviewed by name is published without being checked out: a
+// local one is pushed, an origin one only while origin still has it at
+// the reviewed commit, and a single commit not at all.
+func TestPublishRev(t *testing.T) {
+	repo, _ := stackRepo(t)
+	githubOrigin(t, repo)
+	gh := fakePublishGH(t)
+	gitTest(t, repo, "switch", "-q", "main")
+	describe := func(*triage.PRInfo) string { return "What it does" }
+	inspect := func(rev string) *triage.PRInfo {
+		t.Helper()
+		s, err := inspectLocal(context.Background(), repo+"#"+rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.info
+	}
+
+	out, err := publishLocal(&PRResult{PR: inspect("first")}, describe)
+	if err != nil || out.URL != "https://github.com/o/r/pull/9" || out.Pushed {
+		t.Fatalf("pushed branch: %+v, %v", out, err)
+	}
+	if calls := gh.read(t, "calls"); !strings.Contains(calls, "pr create --base main --head first --fill") {
+		t.Fatalf("pushed branch calls: %s", calls)
+	}
+
+	gh.reset(t, "")
+	gitTest(t, repo, "branch", "third", "first")
+	gitTest(t, repo, "switch", "-q", "third")
+	if err := os.WriteFile(filepath.Join(repo, "c.txt"), []byte("c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, repo, "add", "c.txt")
+	gitTest(t, repo, "commit", "-q", "-m", "add c.txt")
+	gitTest(t, repo, "switch", "-q", "main")
+	third := inspect("third")
+	if out, err = publishLocal(&PRResult{PR: third}, describe); err != nil || !out.Pushed {
+		t.Fatalf("local branch: %+v, %v", out, err)
+	}
+	if tip := remoteTip(context.Background(), repo, "third"); tip != third.HeadOid {
+		t.Fatalf("third on origin at %q, want %q", tip, third.HeadOid)
+	}
+	if cur := gitTest(t, repo, "symbolic-ref", "--short", "HEAD"); cur != "main" {
+		t.Fatalf("checkout switched to %s", cur)
+	}
+
+	gh.reset(t, "")
+	gitTest(t, repo, "push", "-q", "origin", "third:remote-only")
+	gitTest(t, repo, "fetch", "-q", "origin")
+	gitTest(t, repo, "branch", "-q", "-D", "third")
+	remote := inspect("origin/remote-only")
+	if out, err = publishLocal(&PRResult{PR: remote}, describe); err != nil || out.Pushed {
+		t.Fatalf("origin branch: %+v, %v", out, err)
+	}
+	if calls := gh.read(t, "calls"); !strings.Contains(calls, "pr create --base main --head remote-only --fill") {
+		t.Fatalf("origin branch calls: %s", calls)
+	}
+	// Moved on origin by someone else: the local ref still has the commit.
+	gitTest(t, repo, "push", "-q", "origin", "second:remote-only", "--force")
+	gitTest(t, repo, "update-ref", "refs/remotes/origin/remote-only", remote.HeadOid)
+	if _, err = publishLocal(&PRResult{PR: remote}, describe); err == nil || !strings.Contains(err.Error(), "different commit") {
+		t.Fatalf("moved origin branch: %v", err)
+	}
+
+	if _, err = publishLocal(&PRResult{PR: inspect("first~0^{commit}")}, describe); err == nil || !strings.Contains(err.Error(), "single commit") {
+		t.Fatalf("single commit: %v", err)
+	}
+}

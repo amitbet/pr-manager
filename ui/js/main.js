@@ -194,6 +194,8 @@ function prHeadHTML(r) {
   const tl = titleLink(pr, w);
   const title = (h) => (tl ? `<a class="title" href="${esc(tl.url)}" target="_blank" rel="noopener" title="${esc(tl.what)}">${h}</a>` : h);
   const publishHint = pr.uncommitted ? "Commit changes and triage again" : !pr.ahead ? "No commits ahead of the base branch" : pr.owner === "local" ? "Set a GitHub origin remote" : "";
+  // A checkout's branch, or one reviewed by name, is published the same way.
+  const publish = `${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : createLabel(pr)}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}`;
   return `
     <div class="pr-head">
       <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}" data-state="${esc(prState(pr))}">${KIND_TITLE[kindOf(pr)]}</span></h2>
@@ -203,8 +205,8 @@ function prHeadHTML(r) {
         +${pr.additions}/−${pr.deletions} · ${modelsLine(r)}${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>${commit(pr.head_oid)}, from its parent</div>` : ""}
-      ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}</div>` : ""}
-      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : createLabel(pr)}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}</div>` : ""}
+      ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)} · ${publish}</div>` : ""}
+      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${publish}</div>` : ""}
       ${local && !pr.rev ? stackLine(pr) : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${impactPill(r.impact, "max impact")}${r.impact?.basis ? `<code>${esc(r.impact.basis)}</code>` : ""}

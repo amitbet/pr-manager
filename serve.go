@@ -1203,7 +1203,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 404, err)
 			return
 		}
-		if res.PR.LocalPath == "" || res.PR.Rev != "" {
+		if res.PR.LocalPath == "" || res.PR.SingleCommit {
 			writeErr(w, 400, errors.New("this is not a local branch result"))
 			return
 		}

@@ -476,6 +476,11 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 		if s, looked, err = syncStack(ctx, s); err != nil {
 			return nil, err
 		}
+	} else if head, _ := originBranch(s.info); head != "" {
+		// A branch reviewed by name isn't stacked: it is diffed from the
+		// default branch, and its PR is looked up there.
+		s.info.URL = openPRFor(ctx, s.info, head)
+		looked = s.info.URL != ""
 	}
 	key := localCacheKey(s, o)
 	if !jo.rerun() {
@@ -591,13 +596,13 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	if r.PR.LocalPath == "" {
 		return none, errors.New("this is not a local result")
 	}
-	if r.PR.Rev != "" {
-		return none, errors.New("create PRs from the checked-out branch")
+	if r.PR.SingleCommit {
+		return none, errors.New("create PRs from a branch, not a single commit")
 	}
 	if _, err := triage.Git(r.PR.LocalPath, "fetch", "--quiet", "--no-tags", "origin", fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", r.PR.BaseRef, r.PR.BaseRef)); err != nil {
 		return none, err
 	}
-	s, err := inspectLocal(context.Background(), r.PR.LocalPath)
+	s, err := inspectLocal(context.Background(), localSource(r.PR))
 	if err != nil {
 		return none, err
 	}
@@ -614,20 +619,37 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	if p.Owner == "local" {
 		return none, errors.New("origin must be a GitHub repository to create a PR")
 	}
-	if p.HeadRef == p.BaseRef {
+	head, onOrigin := originBranch(p)
+	if head == "" {
+		return none, fmt.Errorf("%s is not a local or origin branch; check it out to create a PR", p.HeadRef)
+	}
+	// A branch only on origin is published as origin has it: there is no
+	// local branch to push.
+	if onOrigin && remoteTip(context.Background(), p.LocalPath, head) != p.HeadOid {
+		return none, fmt.Errorf("origin has %s at a different commit now; fetch and triage it again", head)
+	}
+	if head == p.BaseRef {
 		name := publishBranch(p)
 		if tip, err := triage.Git(p.LocalPath, "rev-parse", "--verify", "refs/heads/"+name); err == nil {
 			if strings.TrimSpace(tip) != p.HeadOid {
 				return none, errors.New("generated PR branch already exists at a different commit")
 			}
-			if _, err = triage.Git(p.LocalPath, "switch", name); err != nil {
+			if p.Rev == "" {
+				if _, err = triage.Git(p.LocalPath, "switch", name); err != nil {
+					return none, err
+				}
+			}
+		} else if p.Rev != "" {
+			// Not checked out: the branch is made without switching to it.
+			if _, err = triage.Git(p.LocalPath, "branch", name, p.HeadOid); err != nil {
 				return none, err
 			}
 		} else if _, err = triage.Git(p.LocalPath, "switch", "-c", name); err != nil {
 			return none, err
 		}
-		p.HeadRef = name
+		head = name
 	}
+	p.HeadRef = head
 	// Looked up again rather than taken from the result: the PR may have
 	// been opened, or closed, since the triage.
 	existing := openPRFor(context.Background(), p, p.HeadRef)
@@ -672,10 +694,32 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 // publishBranch is the branch a local result's PR is opened from: its own,
 // or a generated one when it is on the base branch.
 func publishBranch(p *triage.PRInfo) string {
-	if p.HeadRef == p.BaseRef {
+	head, _ := originBranch(p)
+	if head == p.BaseRef {
 		return "pr-manager/" + p.HeadOid[:10]
 	}
-	return p.HeadRef
+	return head
+}
+
+// originBranch is the branch on origin a local result's PR is opened from,
+// before a generated one replaces the base branch: the checked-out
+// branch, a local branch reviewed by name, or origin/name's name, with
+// onOrigin. It is empty for a commit or another remote's branch.
+func originBranch(p *triage.PRInfo) (name string, onOrigin bool) {
+	if p.Rev == "" {
+		return p.HeadRef, false
+	}
+	if p.SingleCommit {
+		return "", false
+	}
+	// inspectRev prefers a local branch to a remote one of the same name.
+	if _, err := triage.Git(p.LocalPath, "show-ref", "--verify", "--quiet", "refs/heads/"+p.HeadRef); err == nil {
+		return p.HeadRef, false
+	}
+	if name, ok := strings.CutPrefix(p.HeadRef, "origin/"); ok {
+		return name, true
+	}
+	return "", false
 }
 
 // remoteTip is the commit branch is at on dir's origin; empty when origin
