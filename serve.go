@@ -972,6 +972,7 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	rv.routes(mux, t)
 	t.chatActionRoutes(mux)
 	t.dismissed.routes(mux, t)
+	t.stackRoutes(mux)
 	newUISettings(o.cache).routes(mux)
 	treemapRoute(mux, o)
 	mux.Handle("GET /", http.FileServerFS(static))

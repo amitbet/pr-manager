@@ -164,6 +164,10 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	if err != nil {
 		return nil, err
 	}
+	defaultBranch, stackedOn := baseBranch, ""
+	if s := stackBase(dir, branch, baseBranch); s != "" {
+		baseRef, baseBranch, stackedOn = "origin/"+s, s, s
+	}
 	base, err := triage.Git(dir, "merge-base", baseRef, "HEAD")
 	if err != nil {
 		return nil, err
@@ -226,6 +230,9 @@ func inspectBranch(ctx context.Context, dir, head, branch string) (*localSnapsho
 	}
 	author, _ := triage.Git(dir, "log", "-1", "--format=%an", "HEAD")
 	info := &triage.PRInfo{PRRef: ref, LocalPath: dir, Title: strings.TrimSpace(title), Author: strings.TrimSpace(author), State: "LOCAL", BaseRef: baseBranch, HeadRef: branch, BaseOid: base, HeadOid: head, Ahead: ahead, Behind: behind, Uncommitted: strings.TrimSpace(status) != ""}
+	if stackedOn != "" {
+		info.StackedOn, info.DefaultBase = stackedOn, defaultBranch
+	}
 	info.Commits = triage.CommitMessages(ctx, dir, base, head)
 	return finishSnapshot(info, src, raw), nil
 }
@@ -462,15 +469,26 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 		return nil, err
 	}
 	// The branch's PR, opened from here or anywhere else, so the result
-	// offers to update it rather than to open another.
+	// offers to update it rather than to open another, and what it is
+	// stacked on (stack.go), which can move the diff's base.
+	looked := false
 	if s.info.Rev == "" {
-		s.info.URL = openPRFor(ctx, s.info, s.info.HeadRef)
+		if s, looked, err = syncStack(ctx, s); err != nil {
+			return nil, err
+		}
 	}
 	key := localCacheKey(s, o)
 	if !jo.rerun() {
 		if r, err := t.Load(key); err == nil {
-			if s.info.URL != "" && r.PR.URL != s.info.URL {
-				if u, err := t.updateResult(key, func(r *PRResult) { r.PR.URL = s.info.URL }); err == nil {
+			if s.info.URL == "" && r.PR.URL != "" {
+				// A link once found is kept, as it always was; a branch
+				// with a PR isn't offered a stack.
+				s.info.URL, s.info.StackCandidates = r.PR.URL, nil
+			}
+			if looked && !sameStack(r.PR, s.info) {
+				if u, err := t.updateResult(key, func(r *PRResult) {
+					r.PR.URL, r.PR.StackPR, r.PR.StackCandidates = s.info.URL, s.info.StackPR, s.info.StackCandidates
+				}); err == nil {
 					r = u
 				}
 			}
@@ -584,7 +602,7 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 		return none, err
 	}
 	p := s.info
-	if p.HeadOid != r.PR.HeadOid || p.BaseOid != r.PR.BaseOid || p.SnapshotHash != r.PR.SnapshotHash || p.HeadRef != r.PR.HeadRef {
+	if p.HeadOid != r.PR.HeadOid || p.BaseOid != r.PR.BaseOid || p.SnapshotHash != r.PR.SnapshotHash || p.HeadRef != r.PR.HeadRef || p.BaseRef != r.PR.BaseRef {
 		return none, errors.New("repository changed since triage; triage it again")
 	}
 	if p.Uncommitted {
@@ -616,6 +634,9 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	body := ""
 	if describe != nil {
 		body = describe(p)
+	}
+	if body != "" && p.StackedOn != "" && r.PR.StackPR != "" {
+		body = "Stacked on " + r.PR.StackPR + "\n\n" + body
 	}
 	pushed := remoteTip(context.Background(), p.LocalPath, p.HeadRef) != p.HeadOid
 	if pushed {

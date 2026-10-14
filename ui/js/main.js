@@ -70,7 +70,7 @@ const actions = {
       S.result.pr.url = out.url;
       render();
       triageURL(out.url);
-    } catch (e) { say(e.message); el.disabled = false; el.textContent = "Create PR"; }
+    } catch (e) { say(e.message); el.disabled = false; el.textContent = createLabel(S.result.pr); }
     return false;
   },
   "update-pr": async (el) => {
@@ -92,6 +92,22 @@ const actions = {
     } catch (e) { say(e.message); el.disabled = false; el.textContent = "Update PR"; }
     return false;
   },
+  // stack puts a branch without a PR on the PR it builds on, or with no
+  // base back onto the default branch, and triages it again from there.
+  stack: async (el) => {
+    const pr = S.result.pr;
+    const to = el.dataset.base;
+    const ok = await ask(to
+      ? `Stack this branch on ${to}? It is triaged again with only the commits on top of ${to}, and Create PR opens its PR into ${to}.`
+      : `Stop stacking this branch? It is triaged again with all its commits from ${pr.default_base}, and Create PR opens its PR into ${pr.default_base}.`, to ? "Stack" : "Unstack");
+    if (!ok) return false;
+    el.disabled = true;
+    try {
+      const out = await postJSON(`/api/local/${encodeURIComponent(S.result.key)}/stack`, { base: to });
+      triageURL(out.path);
+    } catch (e) { say(e.message); el.disabled = false; }
+    return false;
+  },
   "restore-description": async (el) => {
     if (!(await ask("Put back the description the PR had before the update? This replaces its current description.", "Restore"))) return false;
     el.disabled = true;
@@ -103,6 +119,25 @@ const actions = {
     return false;
   },
 };
+
+// createLabel names the PR's base on Create PR when the branch could go
+// to another one, stacked or not.
+const createLabel = (pr) => (pr.stacked_on || pr.stack_candidates?.length ? `Create PR into ${pr.base_ref}` : "Create PR");
+
+// stackLine says what a local branch is stacked on, or which unmerged PR
+// it builds on, and, while it has no PR of its own, offers to switch.
+function stackLine(pr) {
+  const link = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : text);
+  const num = (url) => (url ? `#${url.split("/").pop()}` : "");
+  if (pr.stacked_on) {
+    const parent = pr.stack_pr ? `${link(pr.stack_pr, num(pr.stack_pr))} (<code>${esc(pr.stacked_on)}</code>)` : `<code>${esc(pr.stacked_on)}</code>`;
+    const why = pr.url ? "its PR targets that branch" : "diffed from that branch, so only its own commits are reviewed";
+    return `<div class="meta" style="margin-top:6px">Stacked on ${parent}: ${why}.${pr.url ? "" : ` <button data-act="stack" data-base="" title="Review all the branch's commits from ${esc(pr.default_base)} and open its PR into it">Use ${esc(pr.default_base)} instead</button>`}</div>`;
+  }
+  const c = !pr.url && pr.stack_candidates?.[0];
+  if (!c) return "";
+  return `<div class="meta" style="margin-top:6px">Builds on ${link(c.url, `#${c.number}`)} (<code>${esc(c.branch)}</code>), which isn't merged yet. <button data-act="stack" data-base="${esc(c.branch)}" title="${esc(c.title)}">Stack on #${c.number}</button></div>`;
+}
 
 // carriedLine says how much of this run came from the previous push. The
 // numbers are the point of it: a reader should be able to see that the
@@ -169,7 +204,8 @@ function prHeadHTML(r) {
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>${commit(pr.head_oid)}, from its parent</div>` : ""}
       ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(pr.rev)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}</div>` : ""}
-      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : "Create PR"}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}</div>` : ""}
+      ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : createLabel(pr)}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}</div>` : ""}
+      ${local && !pr.rev ? stackLine(pr) : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${impactPill(r.impact, "max impact")}${r.impact?.basis ? `<code>${esc(r.impact.basis)}</code>` : ""}
         ${likelihoodPill(r.likelihood, "max likelihood")}

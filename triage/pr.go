@@ -127,7 +127,17 @@ type PRInfo struct {
 	BaseOid      string `json:"base_oid"` // merge base actually diffed against
 	BaseRef      string `json:"base_ref"`
 	HeadRef      string `json:"head_ref"`
-	Body         string `json:"body,omitempty"`
+	// StackedOn is set, to BaseRef, when a local branch is diffed from
+	// another branch than origin's default one, DefaultBase: the branch
+	// its PR targets, or is to target. StackPR is that branch's open PR.
+	StackedOn   string `json:"stacked_on,omitempty"`
+	DefaultBase string `json:"default_base,omitempty"`
+	StackPR     string `json:"stack_pr,omitempty"`
+	// StackCandidates are open PRs whose branch a local branch without a
+	// PR is built on and which aren't merged, nearest first: what it can
+	// be stacked on instead of being PR'd into the default branch.
+	StackCandidates []StackCandidate `json:"stack_candidates,omitempty"`
+	Body            string           `json:"body,omitempty"`
 	// Commits are the messages of the PR's commits, oldest first.
 	Commits  []string `json:"commits,omitempty"`
 	Adds     int      `json:"additions"`
@@ -390,4 +400,12 @@ func SubmitReview(ref PRRef, r Review) (string, error) {
 		return "", err
 	}
 	return resp.HTMLURL, nil
+}
+
+// StackCandidate is an open PR a local branch can be stacked on.
+type StackCandidate struct {
+	Branch string `json:"branch"`
+	URL    string `json:"url"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
 }

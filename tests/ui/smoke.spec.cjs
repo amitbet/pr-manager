@@ -76,6 +76,22 @@ test('Triage runs a local job and displays the finished review', async ({ page }
   await expect(page.locator('#go')).toBeEnabled();
 });
 
+test('local branch offers to stack on the PR it builds on, and to unstack', async ({ page }) => {
+  const cached = await (await page.request.get('/api/results/ui-smoke-cached')).json();
+  const serve = (pr) => page.route('**/api/results/ui-smoke-cached', route => route.fulfill({ json: { ...cached, pr: { ...cached.pr, owner: 'o', repo: 'r', head_ref: 'second', uncommitted: false, ahead: 1, ...pr } } }));
+  await serve({ stack_candidates: [{ branch: 'first', url: 'https://github.com/o/r/pull/7', number: 7, title: 'First' }] });
+  await page.goto('/?key=ui-smoke-cached');
+  await expect(page.locator('#main')).toContainText("Builds on #7 (first), which isn't merged yet.");
+  await expect(page.getByRole('button', { name: 'Stack on #7', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create PR into main', exact: true })).toBeVisible();
+  await page.unroute('**/api/results/ui-smoke-cached');
+  await serve({ base_ref: 'first', stacked_on: 'first', default_base: 'main', stack_pr: 'https://github.com/o/r/pull/7' });
+  await page.reload();
+  await expect(page.locator('#main')).toContainText('Stacked on #7 (first)');
+  await expect(page.getByRole('button', { name: 'Use main instead', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create PR into first', exact: true })).toBeVisible();
+});
+
 test('Triage displays a failed job instead of silently doing nothing', async ({ page }) => {
   const result = await (await page.request.get('/api/results/ui-smoke-cached')).json();
   await page.goto('/');
