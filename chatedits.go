@@ -114,6 +114,14 @@ func editsPatch(ctx context.Context, code, base string) (string, error) {
 	if err := os.WriteFile(tmp.Name(), b, 0o600); err != nil {
 		return "", err
 	}
+	// The copy keeps the index's time: git re-reads the files changed
+	// since then, and a fresh time would hide a same-size edit made in
+	// the same instant as the checkout.
+	if fi, err := os.Stat(strings.TrimSpace(index)); err == nil {
+		if err := os.Chtimes(tmp.Name(), fi.ModTime(), fi.ModTime()); err != nil {
+			return "", err
+		}
+	}
 	git := func(args ...string) (string, error) {
 		cmd := proc.CommandContext(ctx, "git", triage.GitArgs(args...)...)
 		cmd.Dir = code

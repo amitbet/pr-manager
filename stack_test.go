@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -373,7 +374,9 @@ func TestStackEndpoint(t *testing.T) {
 	refused("switched", r.Key, `{"base":"first"}`, "another branch")
 	gitTest(t, repo, "switch", "-q", "second")
 
-	if code, out := post(r.Key, `{"base":"first"}`); code != 200 || !strings.Contains(out, `"path":"`+r.PR.LocalPath+`"`) {
+	code, out := post(r.Key, `{"base":"first"}`)
+	var res struct{ Path string }
+	if code != 200 || json.Unmarshal([]byte(out), &res) != nil || res.Path != r.PR.LocalPath {
 		t.Fatalf("stack: %d %s", code, out)
 	}
 	if s := stacked(); s != "first" {
