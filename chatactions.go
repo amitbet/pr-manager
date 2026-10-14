@@ -46,6 +46,8 @@ var chatActions = []struct{ name, risk, args, does string }{
 	{"refresh_comments", "job", `{}`, "fetch the PR's review comments from GitHub again and judge the new ones"},
 	{"regenerate", "job", `{"what": "overview"|"sequence"}`, "write the overview or the sequence diagram again"},
 	{"reindex_codemap", "job", `{}`, "rebuild the code map of the reader's repos (impact scores)"},
+	{"link_pr", "local", `{"url": PR link or owner/repo#N, "note": why it is related}`, "connect another PR, in this repository or another, to this change, for the reader to keep and you to read: its description, files, the app's review of it, its full diff and its code come with your next turn; asked to find related PRs, look with gh first (PRs the description or commits name, the same branch in sibling repositories, the author's PRs from the same days) and propose the ones you find, saying why"},
+	{"unlink_pr", "local", `{"url": PR link}`, "disconnect a related PR"},
 	{"reply_thread", "outward", `{"thread": thread id, "body": text}`, "post a reply on a GitHub review thread"},
 	{"resolve_thread", "outward", `{"thread": thread id}`, "resolve a GitHub review thread"},
 	{"submit_review", "outward", `{"event": "COMMENT"|"APPROVE"|"REQUEST_CHANGES", "body": text}`, "submit the pending comments as one GitHub review"},
@@ -198,6 +200,8 @@ type reanalyzeRequest struct {
 	What  string   `json:"what"`
 	Units []string `json:"units"`
 	Fresh bool     `json:"fresh"`
+	// Reviewers are the extra reviewers to run, for what=reviewers.
+	Reviewers []extraReviewer `json:"reviewers,omitempty"`
 	jobOptions
 }
 
@@ -239,6 +243,17 @@ func (t *triager) reanalyze(r *PRResult, req reanalyzeRequest) (*job, error) {
 			t.withThreads(ctx, r, o, progress)
 			return nil
 		}), nil
+	case "reviewers":
+		if r.LocalFixDir != "" {
+			return nil, errors.New("this is the result of a fix: run the reviewers on the PR itself")
+		}
+		if err := checkReviewers(req.Reviewers); err != nil {
+			return nil, err
+		}
+		o := t.options(jo)
+		return t.startAux("reviewers", r, func(ctx context.Context, progress func(string, int, int)) error {
+			return t.runReviewers(ctx, r, req.Reviewers, o, progress)
+		}), nil
 	case "overview":
 		return t.startAux("overview", r, func(ctx context.Context, progress func(string, int, int)) error {
 			progress("overview", 0, 1)
@@ -258,7 +273,7 @@ func (t *triager) reanalyze(r *PRResult, req reanalyzeRequest) (*job, error) {
 			return err
 		}), nil
 	}
-	return nil, fmt.Errorf("can't analyze %q again (units, all, threads, overview or sequence)", req.What)
+	return nil, fmt.Errorf("can't analyze %q again (units, all, threads, reviewers, overview or sequence)", req.What)
 }
 
 // startAux runs work on result r as a job, whose result is r again.
@@ -352,6 +367,7 @@ func (t *triager) threadAction(ctx context.Context, r *PRResult, action, threadI
 
 func (t *triager) chatActionRoutes(mux *http.ServeMux) {
 	t.chatConvRoutes(mux)
+	t.relatedRoutes(mux)
 	t.usageRoutes(mux)
 	mux.HandleFunc("POST /api/results/{key}/reanalyze", func(w http.ResponseWriter, r *http.Request) {
 		var req reanalyzeRequest

@@ -76,6 +76,7 @@ func reviewWorkspace(src *Source, warn func(string)) (*llm.Workspace, func(), er
 			ws.ReadDirs = append(ws.ReadDirs, mc)
 		}
 	}
+	AddRelated(ws, src.Related)
 	return ws, cleanup, nil
 }
 

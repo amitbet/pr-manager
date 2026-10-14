@@ -30,6 +30,7 @@ import { sequenceHTML, loadSequence, actions as seqActions, onKeydown as seqKeyd
 import { initChat } from "./chat.js";
 import { initViewCtx, selection, clearSelection, fields as openFields, fieldText } from "./viewctx.js";
 import { initAgentAPI, changeOf, describe as agentDescribe, run as agentRun } from "./agentapi.js";
+import { relatedHTML, actions as relatedActions, onKeydown as relatedKeydown } from "./related.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -59,7 +60,7 @@ function openClaims() {
 const MODES = [["walk", "Walkthrough"], ["files", "Files"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions, ...relatedActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; syncURL(); },
   "create-pr": async (el) => {
@@ -198,7 +199,7 @@ function prHeadHTML(r) {
   const publish = `${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">Open PR</a> · ` : ""}<button class="primary${pr.url ? " update-pr" : ""}" data-act="${pr.url ? "update-pr" : "create-pr"}" ${publishHint ? `disabled title="${esc(publishHint)}"` : ""}>${pr.url ? "Update PR" : createLabel(pr)}</button>${publishHint ? ` <span>${esc(publishHint)}</span>` : ""}${pr.url && r.prev_description ? ` <button data-act="restore-description" title="Put back the description the PR had before the last update">Restore previous description</button>` : ""}`;
   return `
     <div class="pr-head">
-      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}" data-state="${esc(prState(pr))}">${KIND_TITLE[kindOf(pr)]}</span></h2>
+      <h2>${kindBadge(pr)}${title(local ? `<span class="${pr.title ? "" : "ref"}">${esc(pr.title || pr.head_ref)}</span>` : `${esc(pr.title)}`)}${local ? "" : ` <span style="color:var(--muted);font-weight:400">#${pr.number}</span>`} <span class="kind-label ${kindOf(pr)}" data-state="${esc(prState(pr))}">${KIND_TITLE[kindOf(pr)]}</span> ${relatedHTML(r)}</h2>
       <div class="meta">${local ? `<code>${esc(pr.local_path)}</code>` : esc(repoName(pr))}${openLink(w, "", "repository")} · ${esc(pr.author)} · ${esc(pr.state.toLowerCase())} ·
         <code>${esc(pr.base_ref)}</code>${branch(pr.base_ref)}<code>@${esc(pr.base_oid.slice(0, 8))}</code>${commit(pr.base_oid)} ←
         <code>${esc(pr.head_ref)}</code>${branch(pr.head_ref)}<code>@${esc(pr.head_oid.slice(0, 8))}</code>${commit(pr.head_oid)} ·
@@ -368,6 +369,7 @@ $("#main").addEventListener("click", async (e) => {
 $("#main").addEventListener("keydown", composerKeydown);
 document.addEventListener("keydown", walkKeydown);
 document.addEventListener("keydown", seqKeydown);
+document.addEventListener("keydown", relatedKeydown);
 
 (async () => {
   S.cfg = await api("/api/config").catch(() => null);

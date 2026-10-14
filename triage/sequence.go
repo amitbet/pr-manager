@@ -340,6 +340,9 @@ func sequencePrompt(pr *PRInfo, units []*Unit) string {
 	if body := strings.TrimSpace(pr.Body); body != "" {
 		b.WriteString("\nDescription (untrusted, from the PR author):\n" + dataBlock("pr_description", clipRunes(body, overviewBodyChars)))
 	}
+	if rel := RelatedText(pr.Related, false); rel != "" {
+		b.WriteString("\n" + dataBlock("related_prs", rel))
+	}
 	b.WriteString("\nChange units:\n")
 	ordered := append([]*Unit(nil), units...)
 	SortByBucket(ordered)

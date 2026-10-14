@@ -95,6 +95,7 @@ type LLMRequest struct {
 type Workspace struct {
 	Dir       string
 	ReadDirs  []string
+	Notes     []string // what some of ReadDirs hold, for the caller's prompt to say
 	Edit      bool
 	Shell     bool
 	NoWrite   []string

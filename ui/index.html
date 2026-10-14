@@ -60,6 +60,7 @@
     <nav class="set-tabs" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" data-set-tab="models">Models</button>
       <button type="button" role="tab" data-set-tab="review">Review</button>
+      <button type="button" role="tab" data-set-tab="reviewers">Reviewers</button>
       <button type="button" role="tab" data-set-tab="codemap">Code map</button>
       <button type="button" role="tab" data-set-tab="chat">Chat agent</button>
       <button type="button" role="tab" data-set-tab="fixes">Fixes</button>
@@ -79,6 +80,11 @@
         <select id="chat" aria-label="chat agent provider"><option value="">default</option></select>
         <select id="chat_model" aria-label="chat agent model"><option value="">default model</option></select>
       </div>
+    </section>
+    <section data-tab="reviewers">
+      <h4>Extra reviewers <span class="info" tabindex="0" aria-label="About extra reviewers">i<span class="tip" role="tooltip">Your own review skills or prompts, each on a provider and model of its own, on top of the built-in review. They run only when you click Run reviewers on the Issues tab, side by side, never in a triage. codex and claude-code run as you set them up, with your skills, tools and rules, in a read-only worktree of the reviewed head (a local review of your working tree runs in your checkout); they can't run gh or git push. Other providers take a prompt only and read the code through the app's tools. What they find is pooled with the review's issues: the reviewer model's critic checks each one, repeats are linked, and what stands counts toward the unit's bucket like the review's own. Each issue names the reviewer that found it. Running a reviewer again replaces its findings. A PR's own agent files are not loaded.</span></span></h4>
+      <div id="reviewers-list" class="reviewers-list"></div>
+      <button type="button" id="reviewers-add">Add reviewer</button>
     </section>
     <section data-tab="codemap">
       <h4>Code map <span class="info" tabindex="0" aria-label="About code map">i<span class="tip" role="tooltip">Impact scores come from a map of your repos. Index now links the checkouts in the local directory (as they are on disk, uncommitted changes included), clones the org&#39;s other repos, and re-reads only repos that changed. A PR from a repo outside the map is added when it&#39;s triaged. Cross-repo impact only counts mapped repos, so index the whole org. Server defaults: <code>PR_MANAGER_CODE_ROOT</code>, <code>PR_MANAGER_ORG</code>.</span></span></h4>

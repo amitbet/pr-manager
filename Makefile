@@ -20,7 +20,7 @@ KEYS = if [ -f "$(ENV_FILE)" ]; then \
 	eval "$$(grep -E '^(ANTHROPIC|OPENAI)_API_KEY=.+' "$(ENV_FILE)" | sed -E 's/^([A-Z_]+)=(.*)$$/: "$${\1:=\2}"; export \1/')"; \
 	fi;
 
-.PHONY: build desktop test ui serve stop triage-prs clean-cache codemap codemap-rank codemap-lookup
+.PHONY: build desktop test test-ui ui serve stop triage-prs clean-cache codemap codemap-rank codemap-lookup
 
 build:
 	go build -o $(BIN) .
@@ -32,6 +32,10 @@ desktop:
 test:
 	bash scripts/check-ui.sh
 	go vet ./... && go test ./...
+
+# First run: npm ci --prefix tests/ui && (cd tests/ui && npx playwright install chromium webkit)
+test-ui:
+	npm test --prefix tests/ui
 
 # Start the UI server and open it in the browser.
 ui: build

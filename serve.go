@@ -102,6 +102,9 @@ type PRResult struct {
 	// Resolved is what an earlier review of the PR raised that this one,
 	// of other code, no longer does (see resolved.go).
 	Resolved []resolvedIssue `json:"resolved,omitempty"`
+	// Reviewers is the last run of each extra reviewer on this result
+	// (see reviewers.go); nil when none was run.
+	Reviewers []extraRun `json:"reviewers,omitempty"`
 }
 
 // tierPolicy is the budget table the result was triaged with (the
@@ -426,6 +429,7 @@ func (t *triager) Run(ctx context.Context, ref triage.PRRef, jo jobOptions, prog
 	}
 	carry := t.planCarry(ctx, key, info.BaseOid, o, jo)
 	pipe.CarryFrom = carry.carryFrom()
+	t.withRelated(ctx, info, src)
 	return t.runSource(ctx, key, info, src, pipe, o, carry)
 }
 

@@ -115,6 +115,8 @@ export function stageText(j) {
     comments: j.total ? `checking review comments ${j.done}/${j.total}` : "loading review comments",
     lint: "running static analysis over the changed lines",
     dedupe: "merging findings raised more than once",
+    reviewers: `extra reviewers: ${j.done} of ${j.total} done`,
+    checking: "checking the reviewers' findings",
     list: "listing the org's repos",
     fix: `fix round ${j.done} of up to ${j.total}`,
     check: `checking fix round ${j.done} of up to ${j.total}`,

@@ -50,6 +50,7 @@ func (t *triager) overview(ctx context.Context, key string, jo jobOptions) (*tri
 		}
 		r.PR.Commits = triage.CommitMessages(ctx, dir, r.PR.BaseOid, r.PR.HeadOid)
 	}
+	r.PR.Related = t.relatedCode(ctx, r.PR)
 	ov, err := triage.WriteOverview(ctx, l, r.PR, resultUnits(r))
 	if err != nil {
 		return nil, err
@@ -117,6 +118,7 @@ func (t *triager) writeSequence(ctx context.Context, key string, o options) (*tr
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	r.PR.Related = t.relatedCode(ctx, r.PR)
 	sq, err := triage.WriteSequence(ctx, l, r.PR, resultUnits(r))
 	if err != nil {
 		return nil, err

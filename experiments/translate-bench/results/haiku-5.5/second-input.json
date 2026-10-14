@@ -1,0 +1,183 @@
+{
+  "files": [
+    {
+      "units": [
+        {
+          "id": "appdetect/appdetect.go",
+          "headline": "Nový balíček appdetect rozpoznává runtime a typ aplikace",
+          "summary": "Nový balíček odděluje rozpoznání jazykového runtime od typu aplikace a přidává detekci podle procfs a ELF. Pravidla katalogu zachovávají dosavadní signatury, zpřesňují shodu názvů spustitelných souborů a volající kód dál používá dosavadní metriku. V této jednotce jsem nenašel konkrétní regresi vyžadující podrobnou revizi.",
+          "decision": {
+            "headline": "Add procfs and ELF based process runtime and application detection",
+            "reason": "Detection logic assigns runtime and product types from command lines, procfs mappings, executable names, and ELF metadata."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "appdetect/appdetect_test.go",
+          "headline": "Přidány testy rozpoznávání běhových prostředí a aplikací",
+          "summary": "Nový soubor testuje rozpoznávání běhových prostředí a aplikací, včetně čtení z procfs a ELF. Testy nemění produkční chování; jejich očekávání odpovídají přidané implementaci, takže podrobná revize není potřeba.",
+          "decision": {
+            "headline": "Added app detection and classification tests",
+            "reason": "The added Go test file exercises detection cases and cannot affect production behavior."
+          },
+          "issues": [],
+          "score": {}
+        },
+        {
+          "id": "containers/app.go",
+          "headline": "Původní detekce aplikací v containers byla odstraněna",
+          "summary": "Detekční pravidla se přesunula do balíčku appdetect a volající kód používá jeho klasifikaci. Původní metrika container_application_type zůstává zachována; v této odstraněné části není patrná závada vyžadující podrobnou kontrolu.",
+          "decision": {
+            "headline": "Remove process command-line application detection helpers",
+            "reason": "Deleting these detection rules may change application types assigned to running processes."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/container.go:(*Container).Collect",
+          "headline": "Sběr klasifikuje procesy a přidává metriku hlavní aplikace",
+          "summary": "Sběr nově používá klasifikaci procesů pro `container_application_type` a metriky JVM. Podle namespace PID vybírá hlavní proces a vydává pro něj `container_application_info`, takže volba procesu i aktuálnost klasifikace přímo určují výslednou telemetrii.",
+          "focus": [
+            "Proces, který po prvním sběru spustí jiný program přes exec",
+            "Dostupnost metrik JVM po změně programu při zachování PID",
+            "Výběr hlavního procesu podle namespace PID"
+          ],
+          "decision": {
+            "headline": "Collect adds principal-process application info and revises classification signals",
+            "reason": "It changes classification and emits a new metric based on the selected process, affecting runtime telemetry consumers."
+          },
+          "issues": [
+            {
+              "title": "Klasifikace zastará po exec pod stejným PID",
+              "detail": "`process.classify` uloží výsledek při prvním sběru pro celý život `Process`, ačkoli se program může změnit přes exec bez změny PID. Následující sběry pak používají starou klasifikaci i pro rozhodnutí, zda sbírat metriky JVM.",
+              "failure_scenario": "PID 1 má při prvním sběru příkaz `/bin/sh -c 'sleep 60; exec java -jar app.jar'`; klasifikace je prázdná. Po `exec` běží pod stejným PID Java, ale další sběry nevydají `container_application_info`, neoznačí aplikaci jako Java a nesbírají metriky JVM."
+            }
+          ],
+          "score": {
+            "pin_why": "review found a high issue: Klasifikace zastará po exec pod stejným PID",
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/container.go:containerProcessRank",
+          "headline": "Pořadí procesů určuje PID v jejich jmenném prostoru",
+          "summary": "Nová funkce řadí procesy podle PID v jejich jmenném prostoru a při chybě čtení je zařadí až za procesy se známým PID. `GetNsPid` vrací očekávanou hodnotu a volající má pro neznámé PID platný výchozí postup; tato jednotka proto nevyžaduje podrobnou kontrolu.",
+          "decision": {
+            "headline": "Rank processes by namespace PID, with unreadable PIDs last",
+            "reason": "Process ordering can change which process is selected as the container’s principal process."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/metrics.go:var metrics",
+          "headline": "Přibyla metrika container_application_info s údaji o aplikaci",
+          "summary": "Nová metrika uvádí framework a typ hlavního procesu kontejneru. Volající předává obě očekávané hodnoty a stávající metrika container_application_type zůstává zachována, takže pro tuto jednotku stačí stručná kontrola.",
+          "decision": {
+            "headline": "Adds a framework and app-type metric descriptor",
+            "reason": "The new metric exposes framework and application type labels, changing the metrics output consumers receive."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/process.go:imports",
+          "decision": {
+            "reason": "import list only (the compiler rejects unused imports; uses are in other units)"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "import list only (the compiler rejects unused imports; uses are in other units)"
+          }
+        },
+        {
+          "id": "containers/process.go:type Process",
+          "headline": "Process nyní uchovává klasifikaci aplikace po celou dobu běhu",
+          "summary": "Do `Process` přibyl soukromý stav pro jednorázovou klasifikaci aplikace, který šetří opakované čtení ELF při sběru metrik. Změna nemění veřejný datový formát, ale uložený výsledek může po `exec` zastarat, proto si zaslouží cílenou kontrolu životního cyklu procesu.",
+          "decision": {
+            "headline": "Cache app classification results for each process",
+            "reason": "The added state supports memoization that can change classification and instrumentation behavior across scrapes."
+          },
+          "issues": [
+            {
+              "title": "Cache klasifikace se po exec neobnoví",
+              "detail": "Klasifikace se po prvním výpočtu uloží, ale `exec` může ve stejném PID změnit spustitelný soubor i `cmdline`. Sledování procesů vytváří nový `Process` při vzniku procesu, nikoli při `exec`, takže další sběry používají starý výsledek.",
+              "failure_scenario": "Agent poprvé sbírá údaje o procesu spuštěném jako `sh` před tím, než tento proces provede `exec java`. Uloží prázdnou klasifikaci; po `exec` dál nehlásí `java` v `container_application_info` a nespustí sběr metrik JVM."
+            }
+          ],
+          "score": {
+            "pin_why": "review found a medium issue: Cache klasifikace se po exec neobnoví",
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/process.go:(*Process).classify",
+          "headline": "Klasifikace procesu se nově ukládá při prvním sběru",
+          "summary": "`classify` při prvním volání uloží výsledek `appdetect.Classify` do `Process` a při dalších sběrech jej znovu použije. Tím šetří čtení `/proc` a ELF, ale předpoklad neměnného programu pro dané PID neplatí po `exec`.",
+          "decision": {
+            "headline": "Process classification is now cached on first use",
+            "reason": "It changes when classification runs and stores the resulting app information for subsequent calls."
+          },
+          "issues": [
+            {
+              "title": "Po `exec` zůstává klasifikace původního programu",
+              "detail": "`exec` změní spustitelný soubor i příkazovou řádku při zachování PID. `classify` však dál vrací výsledek z prvního sběru, takže metriky po změně procesu neodpovídají běžící aplikaci.",
+              "failure_scenario": "PID 1 běží jako `sh -c 'sleep 30; exec nginx ...'`. První sběr uloží prázdnou klasifikaci shellu. Po `exec` běží pod stejným PID nginx, ale další sběry stále neodešlou jeho `container_application_info` ani `container_application_type`."
+            }
+          ],
+          "score": {
+            "pin_why": "review found a high issue: Po `exec` zůstává klasifikace původního programu",
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/process.go:(*Process).instrumentPython",
+          "headline": "Detekce Pythonu pro GIL sondy používá appdetect",
+          "summary": "instrumentPython nyní rozpoznává příkaz přes appdetect.IsPythonCommand. Funkce zachovává rozpoznávání běžných názvů Pythonu a záměrně odmítá nesouvisející názvy končící na „python“; ostatní postup připojení sond se nemění, takže stačí zběžná kontrola.",
+          "decision": {
+            "headline": "Python command detection now uses shared app detection",
+            "reason": "The new detector may classify different process command lines, changing whether Python thread-lock probes attach."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        },
+        {
+          "id": "containers/process.go:(*Process).instrumentNodejs",
+          "headline": "Výběr Node.js sond nyní používá detektor appdetect",
+          "summary": "instrumentNodejs nyní rozpoznává název spustitelného souboru přes appdetect.IsNodejsExecutable. Detektor zpřesňuje shodu názvu; další postup připojení sond zůstává stejný, takže tento úsek nevyžaduje podrobnou kontrolu.",
+          "decision": {
+            "headline": "Node.js probe attachment now uses shared executable detection",
+            "reason": "The new detector can change which processes receive Node.js probes, altering runtime instrumentation behavior."
+          },
+          "issues": [],
+          "score": {
+            "floor_why": "a behavior change is never skipped"
+          }
+        }
+      ]
+    }
+  ],
+  "overview": {
+    "why": "The PR aims to put each container’s framework and application type into the model. It also fixes detection gaps that produced missing or incorrect types on real nodes.",
+    "how": [
+      "Move application detection into appdetect and tighten executable-name matching.",
+      "Detect Java, Go, Rust, and .NET from process mappings or binaries, then cache the classification on Process.",
+      "Emit one container_application_info series per container for the selected principal process, with separate framework and app_type labels."
+    ],
+    "issues": [
+      "After a process calls exec under the same PID, cached classification can become stale, causing incorrect application labels and JVM metric collection."
+    ]
+  }
+}

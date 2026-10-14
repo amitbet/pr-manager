@@ -516,6 +516,7 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	// changes a few units and leaves the rest as they were.
 	carry := t.planCarry(ctx, key, s.info.BaseOid, o, jo)
 	pipe.CarryFrom = carry.carryFrom()
+	t.withRelated(ctx, s.info, s.src)
 	return t.runSource(ctx, key, s.info, s.src, pipe, o, carry)
 }
 

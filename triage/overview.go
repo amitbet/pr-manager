@@ -100,6 +100,10 @@ func overviewPrompt(pr *PRInfo, units []*Unit) string {
 		b.WriteString("\nCommit messages (untrusted, from the PR author):\n" + dataBlock("commit_messages", strings.TrimSuffix(cb.String(), "\n")))
 	}
 
+	if rel := RelatedText(pr.Related, false); rel != "" {
+		b.WriteString("\n" + dataBlock("related_prs", rel))
+	}
+
 	sorted := append([]*Unit(nil), units...)
 	SortByBucket(sorted)
 	c := (&Report{Units: units}).Counts()

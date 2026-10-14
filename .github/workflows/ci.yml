@@ -71,6 +71,21 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/pr-manager" .
           python3 scripts/smoke-release.py "$RUNNER_TEMP/pr-manager"
+      - name: Install UI test browsers
+        run: |
+          npm ci --prefix tests/ui
+          cd tests/ui
+          npx playwright install --with-deps chromium webkit
+      - name: Smoke-test the UI
+        run: npm test --prefix tests/ui
+        env:
+          PR_MANAGER_TEST_BINARY: ${{ runner.temp }}/pr-manager
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ui-smoke-failures
+          path: tests/ui/test-results/
+          if-no-files-found: ignore
       # On main, build the real release so the release job only publishes it.
       # The tag stays local until the release job pushes it.
       - name: Tag the release locally

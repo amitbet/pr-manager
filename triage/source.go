@@ -33,6 +33,9 @@ type Source struct {
 	// place of Head, with its agent files kept, as the checkout is the
 	// user's own; Head stays the branch's commit for its history.
 	Snapshot string
+	// Related are the PRs the reader connects to the change, whose code
+	// the reviewer's workspace can read too (related.go).
+	Related []RelatedCode
 }
 
 // FromGit diffs base...head in dir.

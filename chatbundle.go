@@ -67,6 +67,15 @@ func writeChatBundleAt(m *chatMaterial, dir string) (string, error) {
 		os.RemoveAll(dir)
 		return "", err
 	}
+	for _, rm := range m.related {
+		if rm.diff == "" {
+			continue
+		}
+		if err := write(filepath.Join("related", rm.slug()+".diff"), rm.diff); err != nil {
+			os.RemoveAll(dir)
+			return "", err
+		}
+	}
 	var index strings.Builder
 	index.WriteString("# Job logs, newest job first\n\nEach thread is one step of a job: a model call (classify, review, critic, a fix round), a subagent, or the job's own stage lines.\n")
 	for i, s := range m.jobs {

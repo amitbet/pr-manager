@@ -303,3 +303,35 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .job-stop { color: var(--human); font-size: 12px; }
 .job-item .job-stop { position: absolute; top: 7px; right: 6px; }
 .progress-what .job-stop, .job-log-stage .job-stop { float: right; margin: 0 0 8px 12px; }
+
+/* Settings, Reviewers (reviewers.js) */
+.reviewers-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.rev-card { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.rev-card.off { opacity: 0.6; }
+.rev-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rev-row input[data-f="name"] { width: 120px; }
+.rev-row input[data-f="model"] { width: 150px; }
+.rev-card textarea { resize: vertical; font: inherit; font-size: 13px; }
+/* Issues tab: who raised a claim, and the reviewers' last runs */
+.src-chip { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--bg2); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+.rev-runs { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+.rev-runs .err { color: var(--human); }
+
+/* Related PRs (related.js): the header's chip, and its popup on hover or click. */
+.rel-wrap { position: relative; display: inline-block; vertical-align: 4px; }
+.rel-chip { font-size: 12px; font-weight: 500; line-height: 18px; padding: 0 8px; border-radius: 10px; background: var(--bg); color: var(--muted); }
+.rel-chip.has { color: var(--accent); border-color: var(--accent); }
+.rel-pop { display: none; position: absolute; top: calc(100% + 2px); left: 0; z-index: 30; width: 420px; max-width: 80vw; padding: 10px 12px; font-size: 13px; font-weight: 400; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }
+.rel-wrap:hover .rel-pop, .rel-wrap:focus-within .rel-pop, .rel-wrap.pinned .rel-pop { display: block; }
+.rel-wrap.flip .rel-pop { left: auto; right: 0; }
+.rel-pop ul { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rel-pop li { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.rel-pop code { font-family: var(--mono); font-size: 12px; }
+.rel-pop li > a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel-title { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.rel-actions { display: flex; gap: 8px; }
+.rel-actions .linkbtn { font-size: 12px; }
+.rel-why { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+.rel-empty { margin: 0 0 8px; color: var(--muted); }
+.rel-add { display: flex; flex-wrap: wrap; gap: 6px; }
+.rel-add input { flex: 1 1 160px; min-width: 0; font-size: 13px; }

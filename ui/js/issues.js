@@ -19,6 +19,7 @@ import { lintLine, LINT_RANK } from "./lint.js";
 import { trText, trDir, english } from "./entext.js";
 import * as budget from "./budget.js";
 import { jumpToUnit } from "./review.js";
+import { enabledReviewers } from "./reviewers.js";
 
 const KINDS = [["issue", "Review"], ["lint", "Static analysis"], ["comment", "Review comments"]];
 
@@ -67,7 +68,57 @@ function claims() {
 }
 
 const hidden = () => S.issueKinds;
-const visible = (c) => !hidden().has(c.kind === "resolved" ? "issue" : c.kind);
+// hiddenSources are the reviewers whose issues the filter hides; "" is
+// the built-in review.
+const hiddenSources = new Set();
+const visible = (c) => !hidden().has(c.kind === "resolved" ? "issue" : c.kind) &&
+  !(c.kind === "issue" && sourcesOf(c).every((x) => hiddenSources.has(x)));
+
+// pooled is whether extra reviewers ran on this result, so issues say who
+// raised them.
+const pooled = () => !!S.result.reviewers?.length || allUnits().some(({ u }) => (u.issues || []).some((is) => is.source));
+const BUILTIN = "built-in";
+const sourceName = (x) => x || BUILTIN;
+
+// sourcesOf is every reviewer that raised the row's issue: its own and
+// those of the issues linked to it as repeats.
+const sourcesOf = (c) => [...new Set([c.is.source || "", ...(c.repeats || []).map((r) => r.is.source || "")])];
+
+function sourceChips(c) {
+  if (!pooled()) return "";
+  const xs = sourcesOf(c);
+  const title = xs.length > 1 ? `found by ${xs.length} reviewers` : "found by";
+  return xs.map((x) => `<span class="src-chip" title="${esc(title)}">${esc(sourceName(x))}</span>`).join(" ");
+}
+
+// revRun is the Run reviewers job in flight, or how the last one ended.
+let revRun = null;
+
+function reviewersHTML() {
+  const revs = enabledReviewers();
+  const runs = S.result.reviewers || [];
+  if (!revs.length && !runs.length) return "";
+  const ago = (t) => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(t).toLocaleDateString(); };
+  const lines = runs.map((x) => `<span title="${esc(x.model)}">${esc(x.name)}: ${x.error ? `<span class="err" title="${esc(x.error)}">failed ${esc(ago(x.at))}</span>${x.found || x.kept ? `, last run found ${x.found}, ${x.kept} kept` : ""}` : `found ${x.found}${x.unplaced ? ` (${x.unplaced} outside the change)` : ""}, ${x.kept} kept · ${esc(ago(x.at))}`}</span>`);
+  const status = revRun?.busy ? `<span>${esc(revRun.stage || "starting…")}</span>` : revRun?.error ? `<span class="err">${esc(revRun.error)}</span>` : "";
+  return `<div class="rev-runs">${lines.join(" · ")}${status ? `${lines.length ? " · " : ""}${status}` : ""}</div>`;
+}
+
+function runReviewersButton() {
+  const revs = enabledReviewers();
+  if (!revs.length || S.result.local_fix_dir) return "";
+  const busy = revRun?.busy;
+  return `<button class="details-btn" data-act="reviewers-run" ${busy ? "disabled" : ""} title="Run ${esc(revs.map((r) => r.name).join(", "))} on this change (Settings, Reviewers)">${busy ? "Reviewing…" : `Run reviewers (${revs.length})`}</button>`;
+}
+
+// sourceFilters toggle each reviewer's issues, once more than one raised any.
+function sourceFilters(all) {
+  if (!pooled()) return "";
+  const n = new Map();
+  for (const c of all) if (c.kind === "issue" && !c.dismissed) for (const x of sourcesOf(c)) n.set(x, (n.get(x) || 0) + 1);
+  if (n.size < 2) return "";
+  return [...n].map(([x, k]) => `<span class="filter ${hiddenSources.has(x) ? "off" : ""}" data-act="issues-source" data-src="${esc(x)}"><b>${k}</b> ${esc(sourceName(x))}</span>`).join("");
+}
 
 // claimKey identifies a row in the page, so the dismiss form knows which
 // one it is open on.
@@ -112,7 +163,7 @@ function issueRow(c) {
   return `<div class="claim-head">${pickable(c) ? pickBox(u, i) : ""}
       <span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>
       ${is.line ? `<span class="ln">line ${is.line}</span>` : ""}
-      <b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)}
+      <b class="tr" ${trDir(u, `issues.${i}.title`, is.title)}>${trText(u, `issues.${i}.title`, is.title)}</b>${issueCapChip(is)} ${sourceChips(c)}
       <span class="spacer"></span>${act} ${dismissButton(c)}
     </div>
     ${unitLink(c)}
@@ -121,12 +172,14 @@ function issueRow(c) {
     ${repeatsHTML(c)}`;
 }
 
-// repeatsHTML lists the other units the review raised the same issue on.
+// repeatsHTML lists the other units the review raised the same issue on,
+// and with extra reviewers, which one raised each.
 function repeatsHTML(c) {
   if (!c.repeats?.length) return "";
+  const by = pooled();
   const links = c.repeats.map(({ u, is }) => {
     const where = (u.symbol ? `${u.file} · ${u.symbol}` : u.file) + (is.line ? `:${is.line}` : "");
-    return `<button class="linkbtn" data-act="issue-goto" data-unit="${esc(u.id)}" title="${esc(`${is.severity}: ${is.title}`)}">${esc(where)}</button>`;
+    return `<button class="linkbtn" data-act="issue-goto" data-unit="${esc(u.id)}" title="${esc(`${is.severity}: ${is.title}`)}">${esc(where)}</button>${by ? ` <span class="muted">(${esc(sourceName(is.source))})</span>` : ""}`;
   });
   return `<span class="idetail repeats"><span class="muted">Also raised on</span> ${links.join(", ")}</span>`;
 }
@@ -202,12 +255,15 @@ export function issuesHTML() {
   const worst = standing.reduce((m, c) => Math.max(m, weight[c.sev] || 15), 0);
   return `<div class="toolbar">
       ${KINDS.map(([k, label]) => `<span class="filter ${hidden().has(k) ? "off" : ""}" data-act="issues-filter" data-k="${k}"><b>${n[k]}</b> ${label}</span>`).join("")}
+      ${sourceFilters(all)}
       <span class="spacer"></span>
+      ${runReviewersButton()}
       ${standing.length ? `<span class="dz ${attLevel(worst)}" title="the worst claim still standing">${standing.length} open</span>` : ""}
       ${open.length > standing.length ? `<span class="muted" title="fixed by a fix not on the PR yet, or since an earlier review">${open.length - standing.length} fixed</span>` : ""}
       ${fixPickedHTML(open.filter(pickable).map((c) => ({ u: c.u, i: c.i, thread: c.kind === "comment" ? c.t.id : "" })))}
       ${fixAllHTML()}
     </div>
+    ${reviewersHTML()}
     ${pendingFixesHTML()}
     ${open.length
       ? `<ul class="claims">${open.map(claimHTML).join("")}</ul>`
@@ -272,6 +328,21 @@ const url = () => `/api/results/${encodeURIComponent(S.result.key)}/dismissals`;
 
 export const actions = {
   "issues-filter": (el) => { const k = el.dataset.k; hidden().has(k) ? hidden().delete(k) : hidden().add(k); },
+  "issues-source": (el) => { const x = el.dataset.src; hiddenSources.has(x) ? hiddenSources.delete(x) : hiddenSources.add(x); },
+  "reviewers-run": async () => {
+    if (revRun?.busy) return false;
+    revRun = { busy: true };
+    render();
+    const { run } = await import("./agentapi.js");
+    try {
+      await run("run_reviewers", {}, (stage) => { revRun.stage = stage; render(); });
+      revRun = null;
+    } catch (err) {
+      revRun = { error: err.message };
+    }
+    render();
+    return false;
+  },
   "issues-dismissed": () => { S.showDismissed = !S.showDismissed; return false; },
   "issue-goto": (el) => { jumpToUnit(el.dataset.unit); return false; },
   "issue-dismiss": (el) => { S.dismissing = { key: el.dataset.ckey, reason: "" }; },

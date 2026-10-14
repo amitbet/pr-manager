@@ -7,6 +7,7 @@ import * as budget from "./budget.js";
 import { comboFromEvent, hotkeyLabel, hideLabel } from "./chat.js";
 import { refreshJobs, pollJob } from "./jobs.js";
 import { loadList, sideShown, sideKeepDays, confirmRemove } from "./sidebar.js";
+import { initReviewers } from "./reviewers.js";
 
 // Provider and model pickers. The server lists only the providers this
 // machine can run (a logged-in CLI, an API key that is set, a running Ollama
@@ -417,6 +418,7 @@ export function initSettings(changed, langChanged) {
   fillLang();
   fillEffort();
   fillCodeSources();
+  initReviewers();
   $("#providers-refresh").onclick = () => loadProviders(true);
   loadProviders(false);
   showBudget();

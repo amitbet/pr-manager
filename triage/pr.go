@@ -144,6 +144,9 @@ type PRInfo struct {
 	Dels     int      `json:"deletions"`
 	MergedAt string   `json:"merged_at,omitempty"`
 	mergeOid string   // merge commit of a merged PR, for Source
+	// Related are the PRs the reader connects to the change, for the
+	// overview, the sequence and the fixer; set for a run, not saved.
+	Related []RelatedCode `json:"-"`
 }
 
 // PRFetcher keeps blobless clones under Dir and diffs PRs locally, so

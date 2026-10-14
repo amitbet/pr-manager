@@ -16,12 +16,14 @@ import { S, render, syncURL, prBase, allUnits, localSrc } from "./state.js";
 import { jumpToUnit } from "./review.js";
 import { markReviewed } from "./walkthrough.js";
 import { jobSettings } from "./settings.js";
+import { enabledReviewers } from "./reviewers.js";
 import { pollJob, refreshJobs, stageText } from "./jobs.js";
 import { startFix } from "./fix.js";
 import { merge } from "./issues.js";
 import { refreshFixes } from "./fixes.js";
 import { fill } from "./viewctx.js";
 import { snapshot } from "./snapshot.js";
+import { link, unlink, related } from "./related.js";
 
 let H = { showKey: async () => {} };
 
@@ -245,6 +247,17 @@ export const ACTIONS = {
       return `fetched the review comments in ${j.secs}s: ${st.open ?? "?"} open thread(s), ${st.resolved ?? 0} resolved, ${st.outdated ?? 0} outdated`;
     },
   },
+  run_reviewers: {
+    risk: "job", label: () => "Run the extra reviewers",
+    run: async (a, progress) => {
+      const all = enabledReviewers();
+      const revs = a.names?.length ? all.filter((r) => a.names.includes(r.name)) : all;
+      if (!revs.length) throw new Error("no reviewers to run: add them in Settings, Reviewers");
+      const j = await reanalyze({ what: "reviewers", reviewers: revs }, progress);
+      const runs = (S.result.reviewers || []).filter((x) => revs.some((r) => r.name === x.name));
+      return `ran ${revs.length} reviewer(s) in ${j.secs}s: ${runs.map((x) => x.error ? `${x.name} failed (${x.error})` : `${x.name} found ${x.found}, ${x.kept} kept`).join("; ")}`;
+    },
+  },
   regenerate: {
     risk: "job", label: (a) => `Write the ${a.what} again`,
     run: async (a, progress) => {
@@ -260,6 +273,20 @@ export const ACTIONS = {
       S.trees = {};
       const r = j.result || {};
       return `rebuilt the code map in ${j.secs}s: ${r.repos ?? "?"} repos${r.failed?.length ? `, ${r.failed.length} failed` : ""}; impact scores change at the next triage`;
+    },
+  },
+  link_pr: {
+    risk: "local", label: (a) => `Link ${a.url} as a related PR`, preview: (a) => a.note,
+    run: async (a) => {
+      const p = await link(need(a.url, "url"), a.note || "", "agent");
+      return `linked ${p.change}${p.title ? ` ("${p.title}")` : ""} as related, here and on that PR; its description, files, review, diff and code come with your next turn`;
+    },
+  },
+  unlink_pr: {
+    risk: "local", label: (a) => `Unlink the related PR ${a.url}`,
+    run: async (a) => {
+      await unlink(need(a.url, "url"));
+      return `unlinked ${a.url}, here and on that PR; ${related().length} related PR(s) left`;
     },
   },
   reply_thread: {

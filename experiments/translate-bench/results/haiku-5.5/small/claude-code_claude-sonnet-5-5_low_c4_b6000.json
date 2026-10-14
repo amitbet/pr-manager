@@ -1,0 +1,222 @@
+{
+ "overview": {
+  "why": "מוסק מהשינויים: המבקרים צריכים לראות מתי תוצאה שמורה עוברת triage שוב ולעקוב אחרי עבודת ההחלפה במקום לקרוא review ישן.",
+  "how": [
+   "להעביר את ה-PR URL או הנתיב המקומי של כל תוצאה שמורה דרך בחירת סרגל הצד ולשמור אותו על שורת סרגל הצד.",
+   "לעקוב אחרי עבודות triage רצות, לסמן תוצאות תואמות בסרגל הצד עם סימון פועם, ולשחזר סימונים לאחר רענונים.",
+   "לפתוח את יומן העבודה החי כשתוצאה שמורה תואמת ל-triage רץ, ואז לפתוח את התוצאה החדשה כשהעבודה מסתיימת."
+  ],
+  "issues": [
+   "עבודות מקומיות שהתחילו עם נתיבים יחסיים, `~/` או symlink יכולות לפספס תוצאות שמורות, ולהשאיר אותן ללא סימון ולפתוח את ה-review הישן במקום את היומן החי.",
+   "התאמת נתיבים שאינה תלויה ברישיות עלולה לסמן repository אחר ולפתוח את יומן העבודה שלו במערכות קבצים התלויות ברישיות.",
+   "triage של branch אחד ב-repository מקומי מסמן תוצאות שמורות של branches אחרים באותו נתיב.",
+   "ה-polling יכול לנקות את ההדגשה הפעילה בסרגל הצד עבור עבודות fix מקומיות שה-URL של העבודה שלהן ריק."
+  ]
+ },
+ "units": {
+  "ui/css/app.css": {
+   "headline": "תוצאות triage שרצות מקבלות מחוון פועם בסרגל הצדי",
+   "summary": "נקודה פועמת מופיעה כעת לפני הכותרת של תוצאות בסרגל הצדי המסומנות כ-triaging. היא עוזרת לסוקרים לראות אילו תוצאות קיימות מתרעננות.",
+   "focus": [
+    "המחוון מופיע ליד הכותרת של triage שרץ",
+    "המחוון נעלם כשה-job מסתיים",
+    "כותרות PR ארוכות עדיין נחתכות בצורה נקייה"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:markTriaging": {
+   "headline": "סימון תוצאות בסרגל הצד עם עבודות triage רצות",
+   "summary": "סרגל הצד מסמן כעת תוצאות שמורות שהמקור שלהן תואם לעבודת triage רצה. הסימון עוזר למבקרים לזהות תוצאות שמתרעננות, אבל תוצאות מקומיות מ-branches שונים יכולות לשתף את אותו נתיב מקור.",
+   "focus": [
+    "תוצאות מ-branches שונים שחולקות נתיב מקומי",
+    "סימון ה-triaging לאחר סיום עבודה"
+   ],
+   "issues": [
+    {
+     "title": "triage מקומי מסמן branches אחרים כרצים",
+     "detail": "תוצאות מקומיות מוצגות בנפרד לפי נתיב ו-branch, אבל הפונקציה הזו מתאימה ביניהן לפי נתיב בלבד. triage של branch אחד מסמן כרצה כל תוצאה שמורה של branch מאותו נתיב.",
+     "failure_scenario": "שומרים תוצאות עבור branches A ו-B מאותו checkout מקומי, ואז מתחילים triage של branch B. שתי השורות בסרגל הצד מציגות את סימון ה-triage הפועם, אף על פי שרק B עובר triage."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:refreshJobs": {
+   "headline": "רענון עבודות מסמן תוצאות בסרגל הצד עם עבודות triage רצות",
+   "summary": "הרענון אוסף כעת עבודות triage רצות ומסמן תוצאות תואמות בסרגל הצד. כך המבקרים רואים מתי תוצאה שמורה מוחלפת, אבל ההתאמה נכשלת עבור עבודות מקומיות שהתחילו עם נתיב יחסי או symlink.",
+   "focus": [
+    "נתיבים מקומיים יחסיים או symlink במהלך retriage",
+    "סימון בסרגל הצד לאחר שעבודת triage מסתיימת"
+   ],
+   "issues": [
+    {
+     "title": "נתיבים מקומיים יחסיים מסתירים retriage פעיל",
+     "detail": "עבודות מקומיות שומרות את הנתיב שהוזן בטופס, בעוד תוצאות שמורות משתמשות בנתיב מוחלט שנפתר. עדכון הסימון החדש לא יכול להתאים בין הערכים האלה עבור נתיבים יחסיים או symlink, ולכן סרגל הצד לא מראה שתוצאה קיימת עוברת retriage.",
+     "failure_scenario": "לתוצאה קיימת יש local_path `/work/repo`; המשתמש מתחיל triage נוסף עם `./repo`. ה-URL של העבודה הרצה הוא `./repo`, ולכן פריט סרגל הצד הקיים אף פעם לא מקבל את סימון ה-triaging, ובחירה בו פותחת את התוצאה הישנה במקום את העבודה הרצה."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:same": {
+   "headline": "התאמת jobs מסירה כעת סלאשים ומתעלמת מאותיות גדולות/קטנות",
+   "summary": "ההשוואה החדשה מתאימה jobs שרצים לתוצאות בסרגל הצדי ומדגישה אותם, תוך התעלמות מסלאשים בסוף ומהבדלי אותיות גדולות/קטנות. אופן הטיפול שלה בנתיבים מקומיים משפיע על כך אם הסוקר רואה לוג triage שרץ או תוצאה קיימת.",
+   "focus": [
+    "נתיבים מקומיים יחסיים או נתיבי symlink מול הנתיב המוחלט השמור בתוצאות",
+    "מאגרים מקומיים נפרדים שהנתיבים שלהם נבדלים רק באותיות גדולות/קטנות"
+   ],
+   "issues": [
+    {
+     "title": "נתיבים יחסיים אינם מתאימים ל-jobs מקומיים שרצים",
+     "detail": "השרת שומר את הנתיב שהמשתמש הזין בתור ה-URL של ה-job, ואילו תוצאות מקומיות שומרות נתיב מוחלט מפוענח. ההשוואה הזו אינה מיישרת בין הצורות, ולכן פתיחת תוצאה קיימת בזמן retriage מציגה את התוצאה הישנה במקום את ה-job שרץ.",
+     "failure_scenario": "תוצאה שומרת /work/repo. המשתמש מפעיל retriage עם ./repo מתוך /work; ה-URL של ה-job הוא ./repo. לחיצה על התוצאה אינה מוצאת את ה-job הזה ופותחת את התוצאה הישנה."
+    },
+    {
+     "title": "המרת אותיות לקטנות מבלבלת בין מאגרים מקומיים נפרדים",
+     "detail": "המרת נתיבים מקומיים לאותיות קטנות מתייחסת למאגרים נפרדים כאל אותו מאגר במערכת קבצים שרגישה לאותיות גדולות/קטנות. הסרגל הצדי עלול לסמן תוצאה שגויה כ-triaging ולפתוח את לוג ה-job של מאגר אחר.",
+     "failure_scenario": "במערכת קבצים שרגישה לאותיות גדולות/קטנות, /work/Repo ו-/work/repo הם מאגרים נפרדים. כשרץ job עבור /work/Repo, לחיצה על התוצאה הקיימת של /work/repo פותחת את לוג ה-job הזה."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:triageJobFor": {
+   "headline": "חיפוש jobs של triage שרצים לפני פתיחת תוצאות שמורות",
+   "summary": "triageJobFor מרענן את רשימת ה-jobs ומוצא triage שרץ עבור ה-PR או הנתיב המקומי שנבחרו. זרימת פתיחת התוצאה משתמשת בהתאמה הזו כדי להציג את לוג ה-job הנוכחי בזמן שרץ triage חדש.",
+   "focus": [
+    "התאמת jobs שרצים ל-URL של ה-PR או לנתיב המקומי בסרגל הצדי",
+    "פתיחת יומן העבודה הרצה במקום התוצאה השמורה",
+    "התנהגות כשבקשת ה-jobs נכשלת"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:triaging": {
+   "headline": "הוספת state עבור jobs של triage שרצים",
+   "summary": "מודול ה-jobs מתחיל כעת עם רשימה ריקה של jobs של triage שרצים. שינויים אחרים ב-PR ממלאים אותה מתוך רענוני jobs, כדי שהסרגל הצדי יוכל לסמן תוצאות שעוברות triage מחדש.",
+   "focus": [
+    "סימוני הסרגל הצדי לפני רענון ה-jobs הראשון",
+    "jobs של triage שרצים מוסרים מהרשימה כשהם מסתיימים"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/jobs.js:watchJob": {
+   "headline": "polling של עבודות מדגיש תוצאות תואמות בסרגל הצד",
+   "summary": "watcher העבודות מעדכן כעת את התוצאה הפעילה בסרגל הצד בכל poll על ידי השוואת המקור שלה ל-URL של העבודה. כך תוצאה תואמת נשארת מודגשת בזמן שהעבודה שלה רצה, אבל ההשוואה מאבדת את ההדגשה הזו בחלק מהעבודות המקומיות.",
+   "focus": [
+    "בחירה בסרגל הצד במהלך triage מקומי שהתחיל עם נתיב יחסי או `~/`",
+    "בחירה בסרגל הצד בזמן תיקון תוצאה מקומית",
+    "בחירה לאחר שעבודה מסתיימת או נכשלת"
+   ],
+   "issues": [
+    {
+     "title": "עבודות מקומיות מנקות את ההדגשה הפעילה של התוצאה שלהן",
+     "detail": "ההתאמה משתמשת ב-URL הגולמי של העבודה, אבל עבודות triage מקומיות יכולות לשמור נתיב יחסי או `~/` בעוד תוצאות בסרגל הצד משתמשות בנתיב מוחלט. בנוסף, לעבודות fix מקומיות יש URL ריק כשלתוצאה אין קישור PR. בשני המקרים ה-polling מסיר את ההדגשה הפעילה מהתוצאה המשויכת.",
+     "failure_scenario": "לתוצאה מקומית שמורה יש `data-src=\"/home/user/repo\"`. התחלת triage עם `~/repo`, או התחלת fix לתוצאה הזו כשאין לה PR URL, גורמת ל-`same(...)` להיות false ומנקה את השורה הפעילה בסרגל הצד בזמן שהעבודה רצה."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/main.js": {
+   "headline": "קישורי תוצאות פותחים כעת עבודות triage רצות",
+   "summary": "בחירות בסרגל הצד ו-URL של תוצאות בודקים כעת אם יש עבודת triage רצה לפני טעינת תוצאה שמורה. כשיש התאמה, הדף מציג את יומן העבודה החי שלה ופותח את התוצאה החדשה כשהעבודה מסתיימת.",
+   "focus": [
+    "פתיחת תוצאה בסרגל הצד בזמן שעבודת ה-triage שלה רצה",
+    "טעינה מחדש של URL של תוצאה בזמן ש-triage רץ",
+    "התאמת עבודות רצות שהתחילו עם נתיבים מקומיים יחסיים או symlink"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/main.js:openResult": {
+   "headline": "פתיחת לוגים של triage שרץ בעת בחירת תוצאות שמורות",
+   "summary": "בחירת תוצאה שמורה מחפשת כעת triage שרץ עבור אותו מקור ופותחת את לוג ה-job שלו אם נמצא. כך הסוקרים יכולים לעקוב אחר תוצאה מחליפה, אבל החיפוש מחמיץ jobs מקומיים שהופעלו עם כינוי נתיב.",
+   "focus": [
+    "triage מקומי שהופעל עם נתיב יחסי, נתיב `~/`, symlink או תת-ספרייה",
+    "פתיחת תוצאה שמורה בזמן שה-triage המחליף שלה רץ"
+   ],
+   "issues": [
+    {
+     "title": "כינויי נתיב מקומיים מחמיצים jobs של triage שרצים",
+     "detail": "jobs מקומיים שומרים את הנתיב שהמשתמש הזין, ואילו תוצאות שמורות משתמשות בנתיב המאגר המפוענח. הם שונים עבור קלטים כמו `~/repo`, ולכן החיפוש מחמיץ retriage שרץ ופותח את התוצאה הישנה.",
+     "failure_scenario": "משתמש מפעיל retriage עם `~/repo` ובוחר את התוצאה השמורה שלו בסרגל הצדי. ה-URL של ה-job הוא `~/repo`, אבל מקור הסרגל הצדי הוא הנתיב המוחלט המפוענח; `openResult` מציג את התוצאה הישנה במקום את לוג ה-job שרץ."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/main.js:showKey": {
+   "headline": "תיעוד התנהגות openResult במהלך triage חוזר",
+   "summary": "הערה מסבירה ש-openResult מציג את היומן של עבודת triage רצה במקום התוצאה הקודמת. יחידה זו לא משנה התנהגות בזמן ריצה.",
+   "focus": [
+    "האם openResult מציג את יומן ה-triage הרץ כשקיימת עבודה תואמת"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/sidebar.js": {
+   "headline": "הסרגל הצדי מייבא סימון סטטוס של jobs",
+   "summary": "הסרגל הצדי מייבא כעת את markTriaging ממודול ה-jobs. לאחר שרשימת התוצאות מצוירת מחדש, loadList משתמש בו כדי לשחזר מחוונים על PRs עם jobs של triage שרצים.",
+   "focus": [
+    "שורות בסרגל הצדי מקבלות בחזרה את מחוון ה-triaging אחרי ש-loadList מצייר מחדש את הרשימה",
+    "למודול ה-jobs המיובא אין תלות באתחול של הסרגל הצדי"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/sidebar.js:initSidebar": {
+   "headline": "בחירות בסרגל הצדי מעבירות כעת את מקור התוצאה",
+   "summary": "לחיצה על תוצאה בסרגל הצדי מעבירה כעת את קישור ה-PR או הנתיב המקומי שלה לצד המפתח. הקורא משתמש במקור הזה כדי להציג job של triage מחליף שרץ כשיש התאמה; אחרת הוא פותח את התוצאה השמורה.",
+   "focus": [
+    "בחירות בסרגל הצדי מעבירות ל-openResult גם את מפתח התוצאה וגם את המקור",
+    "חיפוש triage שרץ עבור נתיבים מקומיים יחסיים ונתיבים עם אותיות גדולות/קטנות שונות"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/sidebar.js:loadList": {
+   "headline": "תוצאות בסרגל הצדי עוקבות אחר triage שרץ לפי URL או נתיב המקור",
+   "summary": "הסרגל הצדי מצרף כעת את ה-URL של ה-PR או את הנתיב המקומי של כל תוצאה לפריט ברשימה, ומסמן תוצאות שיש להן job של triage שרץ. המקור הזה גם מאפשר ללחיצה לפתוח את ה-job שרץ במקום סקירה ישנה יותר.",
+   "focus": [
+    "נתיבים יחסיים או נתיבי symlink ששימשו ל-retriage של תוצאה מקומית",
+    "URLs של מקורות PR על hosts של GitHub Enterprise"
+   ],
+   "issues": [
+    {
+     "title": "כינויי נתיב מקומיים אינם מתאימים ל-jobs שרצים",
+     "detail": "תוצאות מקומיות שומרות נתיב מוחלט קנוני, ואילו job שרץ שומר את הנתיב שהמשתמש הזין. retriage דרך נתיב יחסי או נתיב symlink משאיר את התוצאה הקיימת ללא סימון, ובחירתה פותחת את התוצאה הישנה במקום את ה-job שרץ.",
+     "failure_scenario": "לתוצאה קיימת יש `local_path` בערך `/work/repo`. מתוך `/work`, המשתמש מפעיל triage עם `./repo`; ה-URL של ה-job הוא `./repo`. הסרגל הצדי לא מציג מחוון triage, ולחיצה על התוצאה מציגה את הסקירה הקודמת שלה במקום את ה-job שרץ."
+    }
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  },
+  "ui/js/sidebar.js:onPick": {
+   "headline": "תיעוד ארגומנטים של callback הבחירה בסרגל הצדי",
+   "summary": "ההערה מתעדת כעת שבחירת תוצאה בסרגל הצדי מספקת גם את המפתח שלה וגם את קישור ה-PR המקורי או הנתיב המקומי. יחידה זו אינה משנה התנהגות בזמן ריצה; המקור מאפשר לקורא לפתוח job של triage שרץ עבור אותה תוצאה.",
+   "focus": [
+    "`initSidebar` מעביר ל-callback שלו את מפתח התוצאה ואת המקור",
+    "המקור הוא קישור ה-PR או הנתיב המקומי ששימשו להפעלת ה-triage"
+   ],
+   "reason": "no classifier configured",
+   "pin_why": "no classifier configured",
+   "floor_why": "the classifier asked for human review"
+  }
+ }
+}

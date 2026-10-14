@@ -357,6 +357,9 @@ func dedupePrompt(groups [][]claim) (map[string]claim, string) {
 				where += fmt.Sprintf(" line %d", is.Line)
 			}
 			from := "review"
+			if is.Source != "" {
+				from = "review by " + is.Source
+			}
 			if c.thread != nil {
 				from = "comment by @" + c.thread.Author
 			}

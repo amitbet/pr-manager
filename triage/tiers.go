@@ -17,6 +17,9 @@ type Issue struct {
 	// input or state that goes wrong.
 	Evidence string `json:"evidence,omitempty"`
 	Scenario string `json:"failure_scenario,omitempty"`
+	// Source is the extra reviewer that raised it (see extra.go); empty
+	// for the built-in review.
+	Source string `json:"source,omitempty"`
 	// PreExisting: the reviewer says the behavior was there before the PR.
 	PreExisting bool `json:"pre_existing,omitempty"`
 	// Capped is why the severity was lowered from Claimed, the reviewer's own.

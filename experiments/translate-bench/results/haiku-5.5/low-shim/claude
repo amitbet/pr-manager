@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+import sys,os,json,subprocess,pathlib
+args=sys.argv[1:]
+if '--model' not in args:
+ os.execv('/Users/amit.bezalel/.local/bin/claude',['claude']+args)
+if args[args.index('--model')+1]!='claude-haiku-5-5':raise SystemExit('unexpected model')
+settings=pathlib.Path(args[args.index('--settings')+1])
+data=json.loads(settings.read_text());data['fastMode']=False;data['effortLevel']='low';settings.write_text(json.dumps(data))
+args+=['--effort','low']
+log=pathlib.Path('/tmp/haiku-low-shim')/('call-'+str(os.getpid())+'.jsonl')
+p=subprocess.Popen(['/Users/amit.bezalel/.local/bin/claude']+args,stdout=subprocess.PIPE)
+with log.open('wb') as f:
+ for line in p.stdout:
+  f.write(line);sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
+raise SystemExit(p.wait())

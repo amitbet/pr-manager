@@ -1,0 +1,18 @@
+[
+  {
+    "task": "small",
+    "original_file": "local__d534c9cf88__04b00d619b59__c06d6480.json",
+    "original_sha256": "557e0f7a4320662cc5e938d11c1656aa2c23083abbe572d713cc7697ba17543f",
+    "units": 14,
+    "source_language": "English",
+    "target_language": "Hebrew"
+  },
+  {
+    "task": "second",
+    "original_file": "perfectscale__psc-coroot-node-agent__39__f27a0c9331__a129ee2f.json",
+    "original_sha256": "cf57ab6622b352daa61af24e1b4056bc2dc1cfab0c13867aac510e1ebdddc87d",
+    "units": 11,
+    "source_language": "Czech",
+    "target_language": "Hebrew"
+  }
+]

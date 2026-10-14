@@ -1,0 +1,422 @@
+{
+  "date": "2026-10-08",
+  "historical_source": {
+    "session": "cd53a922-01c0-40e0-8fd8-e118706f8389",
+    "date": "2026-09-29",
+    "path": "/Users/amit.bezalel/.claude/projects/-Users-amit-bezalel-workspace-pr-triage/cd53a922-01c0-40e0-8fd8-e118706f8389.jsonl",
+    "discovery": "T3 thread search/list then local Claude history; original session absent from T3 listing"
+  },
+  "settings": {
+    "target": "Hebrew",
+    "batch_chars": 6000,
+    "concurrency": 4,
+    "provider": "subscription CLI",
+    "haiku_effort": "default; existing CLI adapter suppresses explicit effort for all Haiku models"
+  },
+  "new_runs": [
+    {
+      "task": "small",
+      "model": "claude-haiku-5-5",
+      "effort": "default",
+      "seconds": 36.9
+    },
+    {
+      "task": "second",
+      "model": "claude-haiku-5-5",
+      "effort": "default",
+      "seconds": 36.6
+    },
+    {
+      "task": "small",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "seconds": 27.6
+    },
+    {
+      "task": "small",
+      "model": "claude-haiku-5-5",
+      "effort": "low (explicit --effort low via shim)",
+      "seconds": 33.1
+    },
+    {
+      "task": "second",
+      "model": "claude-haiku-5-5",
+      "effort": "low (explicit --effort low via shim)",
+      "seconds": 28.4
+    }
+  ],
+  "historical_small_runs": [
+    {
+      "model": "claude-haiku-4-5",
+      "provider": "claude-code",
+      "effort": "default",
+      "seconds": [
+        238.3,
+        161.8
+      ]
+    },
+    {
+      "model": "claude-sonnet-5",
+      "provider": "claude-code",
+      "effort": "low",
+      "seconds": [
+        56.7,
+        60.5
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "provider": "claude-code",
+      "effort": "low",
+      "seconds": [
+        27.0
+      ]
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "provider": "codex",
+      "effort": "minimal",
+      "seconds": [
+        48.2
+      ]
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "provider": "codex",
+      "effort": "low",
+      "seconds": [
+        50.5
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "provider": "codex",
+      "effort": "minimal",
+      "seconds": [
+        52.6
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "provider": "codex",
+      "effort": "low",
+      "seconds": [
+        64.7
+      ]
+    }
+  ],
+  "historical_second_runs": [
+    {
+      "model": "claude-sonnet-5",
+      "effort": "low",
+      "seconds": 39.4
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "effort": "minimal",
+      "seconds": 45.3
+    }
+  ],
+  "validation": [
+    {
+      "task": "small",
+      "output": "small/claude-code_claude-sonnet-5-5_low_c4_b6000.json",
+      "source_text_fields": 130,
+      "missing_text_fields": [],
+      "missing_backtick_contents": [],
+      "unchanged_text_fields": 42,
+      "unchanged_values": {
+        "no classifier configured": 28,
+        "the classifier asked for human review": 14
+      },
+      "all_unit_ids_present": true
+    },
+    {
+      "task": "small",
+      "output": "small/claude-code_claude-haiku-5-5_default_c4_b6000.json",
+      "source_text_fields": 130,
+      "missing_text_fields": [],
+      "missing_backtick_contents": [],
+      "unchanged_text_fields": 21,
+      "unchanged_values": {
+        "no classifier configured": 14,
+        "the classifier asked for human review": 7
+      },
+      "all_unit_ids_present": true
+    },
+    {
+      "task": "second",
+      "output": "second/claude-code_claude-haiku-5-5_default_c4_b6000.json",
+      "source_text_fields": 61,
+      "missing_text_fields": [],
+      "missing_backtick_contents": [],
+      "unchanged_text_fields": 0,
+      "unchanged_values": {},
+      "all_unit_ids_present": true
+    }
+  ],
+  "manual_quality_notes": [
+    "Haiku produces understandable Hebrew review prose and preserves the concrete failure scenarios inspected.",
+    "Haiku translates polling as review in watchJob, blurring a technical distinction; Sonnet keeps polling/poll explicitly.",
+    "Haiku sometimes uses the Hebrew word for critics/visitors for reviewers, while Sonnet uses the more appropriate review term.",
+    "Mixed Czech/English output includes Hebrew gender/agreement errors in the Process.classify summary and issue title.",
+    "Both leave repeated classifier explanations in English: Haiku 21 of 130 text fields; Sonnet 42 of 130. These are not protected code strings.",
+    "No unchanged source fields on the mixed Czech/English task; all 61 fields present."
+  ],
+  "recommendation": "Keep Sonnet 5.5 at low for Claude translation. Haiku 5.5 is much faster than historical Haiku 4.5, but did not beat Sonnet on speed or terminology precision in this spot check.",
+  "limitations": [
+    "One new run per model/input; historical timings span different dates and load conditions.",
+    "Haiku small and second runs overlapped; Sonnet began after the small Haiku run.",
+    "Go map iteration means batch membership/order can differ between runs.",
+    "Current translation implementation may differ from September 29; no historical checkout was run.",
+    "No API benchmark, cost measurement, or formal native-speaker scoring.",
+    "Second input has 11 units and mixed Czech/English text, despite the old thread calling it a large PR."
+  ],
+  "reproduction": [
+    "go build -o /tmp/pr-translation-bench ./experiments/translate-bench",
+    "/tmp/pr-translation-bench -file experiments/translate-bench/results/haiku-5.5/small-input.json -runs \"claude-code/claude-haiku-5-5@;claude-code/claude-sonnet-5-5@low\" -out /tmp/translation-small",
+    "/tmp/pr-translation-bench -file experiments/translate-bench/results/haiku-5.5/second-input.json -runs \"claude-code/claude-haiku-5-5@\" -out /tmp/translation-second"
+  ],
+  "fast_mode": {
+    "haiku": "unsupported",
+    "sonnet": "unsupported",
+    "documentation": "https://code.claude.com/docs/en/fast-mode"
+  },
+  "low_rerun": {
+    "adapter_workaround": "Scoped CLI shim adds --effort low and overrides per-call settings with effortLevel=low, fastMode=false. App adapter unchanged.",
+    "small_unchanged_fields": 18,
+    "small_missing_fields": 0,
+    "small_missing_backtick_contents": 0,
+    "small_quality": "Polling term preserved in this run, unlike default-effort run. Repeated classifier explanations still partly English.",
+    "reproduction": "PATH=\"$PWD/experiments/translate-bench/results/haiku-5.5/low-shim:$PATH\" /tmp/pr-translation-bench -file experiments/translate-bench/results/haiku-5.5/small-input.json -runs \"claude-code/claude-haiku-5-5@low\" -out /tmp/haiku-low-output",
+    "second_validation": {
+      "source_fields": 61,
+      "unchanged_fields": 0,
+      "missing_fields": 0,
+      "missing_backtick_contents": 0
+    },
+    "timing_caveat": "Low runs were sequential; earlier default Haiku inputs ran concurrently. Single runs cannot isolate effort from timing variation.",
+    "cli_results": [
+      {
+        "log": "call-60015.jsonl",
+        "status": "success",
+        "model_usage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 1859,
+            "outputTokens": 2263,
+            "cacheReadInputTokens": 675,
+            "cacheCreationInputTokens": 1306,
+            "webSearchRequests": 0,
+            "costUSD": 0.0015853500000000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 1218,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 1306,
+          "cache_read_input_tokens": 675,
+          "output_tokens": 2245,
+          "output_tokens_details": {
+            "thinking_tokens": 1218
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 1306,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 2245,
+              "cache_read_input_tokens": 675,
+              "cache_creation_input_tokens": 1306,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 1306
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "duration_ms": 10645
+      },
+      {
+        "log": "call-60014.jsonl",
+        "status": "success",
+        "model_usage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 3933,
+            "outputTokens": 7424,
+            "cacheReadInputTokens": 675,
+            "cacheCreationInputTokens": 3380,
+            "webSearchRequests": 0,
+            "costUSD": 0.00478805,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 3713,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 3380,
+          "cache_read_input_tokens": 675,
+          "output_tokens": 7128,
+          "output_tokens_details": {
+            "thinking_tokens": 3440
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3380,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 7128,
+              "cache_read_input_tokens": 675,
+              "cache_creation_input_tokens": 3380,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 3380
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "duration_ms": 27255
+      },
+      {
+        "log": "call-59413.jsonl",
+        "status": "success",
+        "model_usage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 3824,
+            "outputTokens": 8703,
+            "cacheReadInputTokens": 675,
+            "cacheCreationInputTokens": 3271,
+            "webSearchRequests": 0,
+            "costUSD": 0.00539485,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 4199,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 3271,
+          "cache_read_input_tokens": 675,
+          "output_tokens": 8493,
+          "output_tokens_details": {
+            "thinking_tokens": 4008
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3271,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 8493,
+              "cache_read_input_tokens": 675,
+              "cache_creation_input_tokens": 3271,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 3271
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "duration_ms": 31508
+      },
+      {
+        "log": "call-59414.jsonl",
+        "status": "success",
+        "model_usage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 3249,
+            "outputTokens": 6703,
+            "cacheReadInputTokens": 675,
+            "cacheCreationInputTokens": 2696,
+            "webSearchRequests": 0,
+            "costUSD": 0.00422235,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 3267,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 2696,
+          "cache_read_input_tokens": 675,
+          "output_tokens": 6680,
+          "output_tokens_details": {
+            "thinking_tokens": 3267
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2696,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 6680,
+              "cache_read_input_tokens": 675,
+              "cache_creation_input_tokens": 2696,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 2696
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "duration_ms": 26038
+      }
+    ]
+  }
+}

@@ -1,0 +1,304 @@
+{
+  "files": [
+    {
+      "units": [
+        {
+          "id": "ui/css/app.css",
+          "headline": "Running triage results gain a pulsing sidebar indicator",
+          "summary": "A pulsing dot now appears before the title of sidebar results marked as triaging. It helps reviewers see which existing results are being refreshed.",
+          "focus": [
+            "Indicator appears beside the title of a running triage",
+            "Indicator disappears when the job finishes",
+            "Long PR titles still truncate cleanly"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:triaging",
+          "headline": "Add state for running triage jobs",
+          "summary": "The jobs module now starts with an empty list of running triage jobs. Other changes in the PR populate it from job refreshes so the sidebar can mark results being triaged again.",
+          "focus": [
+            "Sidebar markers before the first jobs refresh",
+            "Running triage jobs removed from the list when they finish"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:same",
+          "headline": "Job matching now trims slashes and ignores case",
+          "summary": "The new comparison matches running jobs to sidebar results and highlights them, ignoring trailing slashes and letter case. Its treatment of local paths affects whether a reviewer sees a running triage log or an existing result.",
+          "focus": [
+            "Relative or symlinked local paths against the absolute path stored in results",
+            "Distinct local repositories whose paths differ only by case"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Relative paths fail to match running local jobs",
+              "detail": "The server keeps the path entered by the user as the job URL, while local results store a resolved absolute path. This comparison does not reconcile those forms, so opening an existing result during retriage shows the old result instead of the running job.",
+              "failure_scenario": "A result stores /work/repo. The user starts retriage with ./repo from /work; the job URL is ./repo. Clicking the result does not find that job and opens the old result."
+            },
+            {
+              "title": "Case folding conflates distinct local repositories",
+              "detail": "Lowercasing local paths treats distinct repositories as the same on a case-sensitive filesystem. The sidebar can mark the wrong result as triaging and open another repository's job log.",
+              "failure_scenario": "On a case-sensitive filesystem, /work/Repo and /work/repo are separate repositories. With a job running for /work/Repo, clicking the existing result for /work/repo opens that job log."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:triageJobFor",
+          "headline": "Look up running triage jobs before opening saved results",
+          "summary": "triageJobFor refreshes the job list and finds a running triage for the selected PR or local path. The result-opening flow uses that match to show the current job log while a new triage is running.",
+          "focus": [
+            "Matching running jobs to the sidebar’s PR URL or local path",
+            "Opening the running job log instead of the saved result",
+            "Behavior when the jobs request fails"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:markTriaging",
+          "headline": "Mark sidebar results with running triage jobs",
+          "summary": "The sidebar now marks saved results whose source matches a running triage job. The indicator helps reviewers spot results being refreshed, but local results from different branches can share the same source path.",
+          "focus": [
+            "Results from different branches that share a local path",
+            "Triaging indicator after a job finishes"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Local triage marks other branches as running",
+              "detail": "Local results are listed separately by path and branch, but this function matches them by path alone. A triage of one branch marks every saved branch result from that path as running.",
+              "failure_scenario": "Save results for branches A and B from the same local checkout, then start triaging branch B. Both sidebar rows show the pulsing triage indicator, although only B is being triaged."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:watchJob",
+          "headline": "Job polling highlights matching results in the sidebar",
+          "summary": "The job watcher now updates the sidebar's active result on each poll by comparing its source with the job URL. This keeps a matching result highlighted while its job runs, but the comparison loses that highlight for some local jobs.",
+          "focus": [
+            "Sidebar selection during local triage started with a relative or `~/` path",
+            "Sidebar selection while fixing a local result",
+            "Selection after a job finishes or fails"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Local jobs clear their result's active highlight",
+              "detail": "The match uses the job's raw URL, but local triage jobs can retain a relative or `~/` path while sidebar results use an absolute path. Local fix jobs also have an empty URL when the result has no PR link. In both cases, polling removes the active highlight from the associated result.",
+              "failure_scenario": "A saved local result has `data-src=\"/home/user/repo\"`. Starting triage with `~/repo`, or starting a fix for that result when it has no PR URL, makes `same(...)` false and clears its active sidebar row while the job runs."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/jobs.js:refreshJobs",
+          "headline": "Job refresh marks sidebar results with running triage jobs",
+          "summary": "Refresh now collects running triage jobs and marks matching results in the sidebar. This lets reviewers see when a saved result is being replaced, but the match fails for local jobs started with a relative or symlinked path.",
+          "focus": [
+            "Relative or symlinked local paths during retriage",
+            "Sidebar marker after a triage job finishes"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Relative local paths hide active retriage",
+              "detail": "Local jobs retain the path entered in the form, while saved results use a resolved absolute path. The new marker update cannot match those values for relative or symlinked paths, so the sidebar does not show that an existing result is being retriaged.",
+              "failure_scenario": "An existing result has local_path `/work/repo`; the user starts another triage with `./repo`. The running job's URL is `./repo`, so the existing sidebar item never gets the triaging marker, and selecting it opens the old result instead of the running job."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/main.js",
+          "headline": "Result links now open running triage jobs",
+          "summary": "Sidebar selections and result URLs now check for a running triage job before loading a saved result. When one matches, the page shows its live job log and opens the new result when the job finishes.",
+          "focus": [
+            "Opening a sidebar result while its triage job runs",
+            "Reloading a result URL while triage runs",
+            "Matching running jobs started with relative or symlinked local paths"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/main.js:showKey",
+          "headline": "Document openResult behavior during repeat triage",
+          "summary": "A comment explains that openResult shows a running triage job’s log in place of the previous result. This unit changes no runtime behavior.",
+          "focus": [
+            "Whether openResult shows the running triage log when a matching job exists"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/main.js:openResult",
+          "headline": "Open running triage logs when selecting saved results",
+          "summary": "Selecting a saved result now looks for a running triage of the same source and opens its job log when found. This lets reviewers follow a replacement result, but the lookup misses local jobs started with a path alias.",
+          "focus": [
+            "Local triage started with a relative path, `~/` path, symlink, or subdirectory",
+            "Opening a saved result while its replacement triage is running"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Local path aliases miss running triage jobs",
+              "detail": "Local jobs retain the path entered by the user, while saved results use the resolved repository path. These differ for inputs such as `~/repo`, so the lookup misses a running retriage and opens the old result.",
+              "failure_scenario": "A user starts retriage with `~/repo` and selects its saved result in the sidebar. The job URL is `~/repo`, but the sidebar source is the resolved absolute path; `openResult` shows the stale result instead of the running job log."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/sidebar.js",
+          "headline": "Sidebar imports job status marking",
+          "summary": "The sidebar now imports markTriaging from the jobs module. After the results list is redrawn, loadList uses it to restore indicators on PRs with running triage jobs.",
+          "focus": [
+            "Sidebar rows regain their triaging indicator after loadList redraws the list",
+            "The imported jobs module has no initialization dependency on the sidebar"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/sidebar.js:onPick",
+          "headline": "Document sidebar selection callback arguments",
+          "summary": "The comment now documents that selecting a sidebar result supplies both its key and its original PR link or local path. This unit changes no runtime behavior; the source lets the caller open a running triage job for that result.",
+          "focus": [
+            "`initSidebar` passes the result key and source to its callback",
+            "The source is the PR link or local path used to start triage"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/sidebar.js:initSidebar",
+          "headline": "Sidebar selections now pass the result source",
+          "summary": "Clicking a sidebar result now passes its PR link or local path alongside its key. The caller uses that source to show a running replacement triage job when one matches; otherwise it opens the saved result.",
+          "focus": [
+            "Sidebar selections pass both the result key and source to openResult",
+            "Running triage lookup for relative local paths and paths with different casing"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        },
+        {
+          "id": "ui/js/sidebar.js:loadList",
+          "headline": "Sidebar results track running triage by source URL or path",
+          "summary": "The sidebar now attaches each result’s PR URL or local path to its list item and marks results with a running triage job. That source also lets a click open the running job instead of an older review.",
+          "focus": [
+            "Relative or symlinked paths used to retriage a local result",
+            "PR source URLs on GitHub Enterprise hosts"
+          ],
+          "decision": {
+            "reason": "no classifier configured"
+          },
+          "issues": [
+            {
+              "title": "Local path aliases fail to match running jobs",
+              "detail": "Local results store a canonical absolute path, while a running job keeps the path entered by the user. Retriaging through a relative or symlinked path leaves the existing result unmarked, and selecting it opens the old result instead of the running job.",
+              "failure_scenario": "An existing result has `local_path` `/work/repo`. From `/work`, the user starts triage with `./repo`; the job URL is `./repo`. The sidebar shows no triage indicator, and clicking the result displays its previous review instead of the running job."
+            }
+          ],
+          "score": {
+            "pin_why": "no classifier configured",
+            "floor_why": "the classifier asked for human review"
+          }
+        }
+      ]
+    }
+  ],
+  "overview": {
+    "why": "Inferred from the changes: reviewers need to see when a saved result is being triaged again and follow the replacement job instead of reading an older review.",
+    "how": [
+      "Pass each saved result’s PR URL or local path through sidebar selection and store it on the sidebar row.",
+      "Track running triage jobs, mark matching sidebar results with a pulsing indicator, and restore markers after refreshes.",
+      "Open the live job log when a saved result matches a running triage, then open the new result when the job finishes."
+    ],
+    "issues": [
+      "Local jobs started with relative, `~/`, or symlinked paths can miss saved results, leaving them unmarked and opening the old review instead of the live log.",
+      "Case insensitive path matching can mark a different repository and open its job log on case sensitive filesystems.",
+      "Triaging one branch of a local repository marks saved results for other branches at the same path.",
+      "Polling can clear the active sidebar highlight for local fix jobs whose job URL is empty."
+    ]
+  }
+}

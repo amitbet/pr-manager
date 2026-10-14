@@ -718,6 +718,7 @@ type fixRun struct {
 func (t *triager) fixRounds(ctx context.Context, jobID string, old *PRResult, req fixRequest, o options, fr fixRun, issues []targetedIssue, progress func(string, int, int)) (*PRResult, int, error) {
 	ref := old.PR.PRRef
 	fixDir, fixBranch, fixLocation, base, fixed, where, warning := fr.dir, fr.branch, fr.location, fr.base, fr.fixed, fr.where, fr.warning
+	related := t.relatedCode(ctx, old.PR) // the fixer reads them too
 	skip := untargeted(old, issues)
 	selected := map[string]bool{}
 	threads := map[string]bool{} // targeted review threads not yet addressed
@@ -757,6 +758,9 @@ func (t *triager) fixRounds(ctx context.Context, jobID string, old *PRResult, re
 			}
 		}
 		progress("fix", round, rounds)
+		if current.PR != nil {
+			current.PR.Related = related
+		}
 		changed, resolved, err := fixRound(ctx, o, fixDir, current, issues, side, req.agent())
 		if err != nil {
 			if applied == 0 || ctx.Err() != nil {
@@ -1445,6 +1449,7 @@ func makeFixPatch(ctx context.Context, o options, dir string, r *PRResult, issue
 		return "", nil, err
 	}
 	ws := &llm.Workspace{Dir: dir}
+	triage.AddRelated(ws, prRelated(r))
 	if !llm.SupportsWorkspace(l) {
 		ws = nil
 	}
@@ -1481,7 +1486,9 @@ func agentFixPatch(ctx context.Context, o options, dir string, r *PRResult, issu
 		return "", nil, fmt.Errorf("make the fix's scratch copy: %w", err)
 	}
 	defer cleanup()
-	args, _, err := llm.CallToolIn(ctx, l, &llm.Workspace{Dir: scratch, Edit: true}, []llm.ChatMessage{{Role: "system", Content: fixAgentSystem}, {Role: "user", Content: prompt}}, fixAgentTool, 16384)
+	ws := &llm.Workspace{Dir: scratch, Edit: true}
+	triage.AddRelated(ws, prRelated(r))
+	args, _, err := llm.CallToolIn(ctx, l, ws, []llm.ChatMessage{{Role: "system", Content: fixAgentSystem}, {Role: "user", Content: prompt}}, fixAgentTool, 16384)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1610,6 +1617,9 @@ func fixPrompt(dir string, r *PRResult, issues []targetedIssue, side []sideIssue
 		data, _ := json.MarshalIndent(side, "", "  ")
 		fmt.Fprintf(&prompt, "\nThe PR's other open issues, which are not yours to fix: don't change code for them. If your patch resolves one of them anyway, put its id in also_resolves with why; leave out one it only touches or might help.\n%s\n", block(" what=\"other issues\"", string(data)))
 	}
+	if rel := triage.RelatedText(prRelated(r), true); rel != "" {
+		fmt.Fprintf(&prompt, "\n%s\n", block(" what=\"related PRs\"", rel))
+	}
 	if r.FixFromRev != "" {
 		fmt.Fprintf(&prompt, "\nThese issues were found reviewing %s, and the checkout is at other code. The reported units below show the code as it was reviewed: find that code in the checkout as it is now, and leave out an issue that no longer applies to it.\n", r.FixFromRev)
 	}
@@ -1666,6 +1676,14 @@ func fixPrompt(dir string, r *PRResult, issues []targetedIssue, side []sideIssue
 		}
 	}
 	return prompt.String(), nil
+}
+
+// prRelated is the related PRs set on r's PR for this run (chatrelated.go).
+func prRelated(r *PRResult) []triage.RelatedCode {
+	if r == nil || r.PR == nil {
+		return nil
+	}
+	return r.PR.Related
 }
 
 // alsoResolves reads the fixer's also_resolves: reasons by ID, 1 to n.
@@ -2292,6 +2310,7 @@ func (t *triager) checkFix(ctx context.Context, original, previous *PRResult, di
 	if err != nil {
 		return nil, nil, err
 	}
+	src.Related = t.relatedCode(ctx, original.PR)
 	prior := unitsByID(previous)
 	pipe.Classifier, pipe.Decisions = keptDecisions(prior), nil
 	pipe.Lint, pipe.CodeMap = nil, nil
@@ -2350,6 +2369,7 @@ func (t *triager) retriageFix(ctx context.Context, original, last *PRResult, dir
 	if err != nil {
 		return nil, err
 	}
+	src.Related = t.relatedCode(ctx, original.PR)
 	if m := loadCodeMap(o.codemapDir); m != nil {
 		pipe.CodeMap = &triage.CodeMap{Map: m, Repo: codeMapRepo(m, original.PR.PRRef)}
 	}

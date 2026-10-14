@@ -135,10 +135,14 @@ func (s *Summarizer) system(base string) string {
 		return base
 	}
 	extra := ""
-	if len(ws.ReadDirs) > 0 {
-		extra = "Library sources (Go module cache) are under " + strings.Join(ws.ReadDirs, ", ") + "; check go.mod for the versions."
+	if mc := goModCache(); mc != "" && slices.Contains(ws.ReadDirs, mc) {
+		extra = "Library sources (Go module cache) are under " + mc + "; check go.mod for the versions."
 	}
-	return base + fmt.Sprintf(toolsInstructions, extra)
+	out := base + fmt.Sprintf(toolsInstructions, extra)
+	for _, n := range ws.Notes {
+		out += "\n\n" + n
+	}
+	return out
 }
 
 func (s *Summarizer) source() string { return s.LLM.Name() + "/" + s.LLM.ModelID() }

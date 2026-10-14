@@ -460,6 +460,7 @@ func (t *triager) pruneChats() {
 	}
 	chatPruned.at = time.Now()
 	chatPruned.Unlock()
+	t.pruneRelatedCode()
 	es, err := os.ReadDir(t.chatsDir())
 	if err != nil {
 		return
