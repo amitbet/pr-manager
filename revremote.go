@@ -70,6 +70,7 @@ type ghCommit struct {
 
 const githubRevsQuery = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
+    parent { url defaultBranchRef { name } }
     defaultBranchRef { name target { ... on Commit { history(first: 100) { nodes {
       oid committedDate messageHeadline additions deletions changedFilesIfAvailable parents { totalCount } author { name } } } } } }
     refs(refPrefix: "refs/heads/", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) { nodes {
@@ -114,6 +115,12 @@ func ghGraphQL(ctx context.Context, host string, query string, vars map[string]s
 func githubRevs(ctx context.Context, r revRepo) (*revList, error) {
 	var data struct {
 		Repository *struct {
+			Parent *struct {
+				URL              string `json:"url"`
+				DefaultBranchRef *struct {
+					Name string `json:"name"`
+				} `json:"defaultBranchRef"`
+			} `json:"parent"`
 			DefaultBranchRef *struct {
 				Name   string `json:"name"`
 				Target struct {
@@ -146,6 +153,9 @@ func githubRevs(ctx context.Context, r revRepo) (*revList, error) {
 		return nil, fmt.Errorf("%s not found, or gh's login can't see it", r.Name())
 	}
 	out := &revList{Branches: []revBranch{}, Commits: []revCommit{}}
+	if p := data.Repository.Parent; p != nil && p.DefaultBranchRef != nil {
+		out.Parent = newParent(p.URL, p.DefaultBranchRef.Name)
+	}
 	if d := data.Repository.DefaultBranchRef; d != nil {
 		out.BaseRef, out.Base = d.Name, d.Name
 		for _, c := range d.Target.History.Nodes {
@@ -248,6 +258,14 @@ func firstEnv(names ...string) string {
 	return ""
 }
 
+type glProject struct {
+	DefaultBranch string `json:"default_branch"`
+	ForkedFrom    *struct {
+		WebURL        string `json:"web_url"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"forked_from_project"`
+}
+
 type glCommit struct {
 	ID      string   `json:"id"`
 	Date    string   `json:"committed_date"`
@@ -261,9 +279,7 @@ type glCommit struct {
 }
 
 func gitlabRevs(ctx context.Context, r revRepo) (*revList, error) {
-	var project struct {
-		DefaultBranch string `json:"default_branch"`
-	}
+	var project glProject
 	if err := gitlabGet(ctx, r, "", &project); err != nil {
 		return nil, err
 	}
@@ -279,6 +295,9 @@ func gitlabRevs(ctx context.Context, r revRepo) (*revList, error) {
 		return nil, err
 	}
 	out := &revList{BaseRef: project.DefaultBranch, Base: project.DefaultBranch, Branches: []revBranch{}, Commits: []revCommit{}}
+	if f := project.ForkedFrom; f != nil {
+		out.Parent = newParent(f.WebURL, f.DefaultBranch)
+	}
 	for _, b := range branches {
 		out.Branches = append(out.Branches, revBranch{Name: b.Name, Oid: b.Commit.ID, Date: utc(b.Commit.Date), Author: b.Commit.Author, Title: b.Commit.Title,
 			Ahead: -1, Unpushed: -1, Unpulled: -1})
@@ -396,14 +415,21 @@ func fetchRemoteRev(ctx context.Context, root string, r revRepo, rev string, pro
 		return "", "", err
 	}
 	def = strings.TrimPrefix(strings.TrimSpace(def), "origin/")
+	// Branches come from origin, upstream/ ones from the fork's parent,
+	// and commits from origin or else the parent.
 	specs := []string{"+refs/heads/" + def + ":refs/remotes/origin/" + def}
+	var upSpecs, commits []string
 	name := func(part string) (string, error) {
 		switch {
 		case fullSHA.MatchString(part):
-			specs = append(specs, part)
+			commits = append(commits, part)
 			return part, nil
-		case part == "" || strings.HasPrefix(part, "-") || strings.ContainsAny(part, " :~^?*[\\"):
+		case !goodBranch(part):
 			return "", fmt.Errorf("bad revision %q", rev)
+		}
+		if b, ok := strings.CutPrefix(part, "upstream/"); ok {
+			upSpecs = append(upSpecs, "+refs/heads/"+b+":refs/remotes/upstream/"+b)
+			return part, nil
 		}
 		specs = append(specs, "+refs/heads/"+part+":refs/remotes/origin/"+part)
 		return "origin/" + part, nil
@@ -425,9 +451,193 @@ func fetchRemoteRev(ctx context.Context, root string, r revRepo, rev string, pro
 	if _, err := git(append([]string{"fetch", "--quiet", "--no-tags", "origin"}, specs...)...); err != nil {
 		return "", "", err
 	}
+	var parent string // the parent's clone URL, looked up when needed
+	parentURL := func() (string, error) {
+		if parent != "" {
+			return parent, nil
+		}
+		p, err := forgeParent(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		if p == nil {
+			return "", fmt.Errorf("%s is not a fork, so it has no upstream", r.Name())
+		}
+		pr, ok := p.repo()
+		if !ok {
+			return "", fmt.Errorf("can't read the upstream %s", p.Web)
+		}
+		parent = pr.CloneURL()
+		return parent, nil
+	}
+	for _, c := range commits {
+		if _, err := git("fetch", "--quiet", "--no-tags", "origin", c); err == nil {
+			continue
+		}
+		u, err := parentURL()
+		if err != nil {
+			return "", "", fmt.Errorf("commit %.10s is not on %s: %w", c, r.Name(), err)
+		}
+		if _, err := git("fetch", "--quiet", "--no-tags", u, c); err != nil {
+			return "", "", fmt.Errorf("commit %.10s is not on %s or its upstream: %w", c, r.Name(), err)
+		}
+	}
+	if len(upSpecs) > 0 {
+		u, err := parentURL()
+		if err != nil {
+			return "", "", err
+		}
+		if _, err := git(append([]string{"fetch", "--quiet", "--no-tags", u}, upSpecs...)...); err != nil {
+			return "", "", err
+		}
+	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", "", err
 	}
 	return real, local, nil
+}
+
+// goodBranch says whether name can be a branch passed to git as one: not
+// an option, nor a refspec or revision expression.
+func goodBranch(name string) bool {
+	return name != "" && !strings.HasPrefix(name, "-") && !strings.ContainsAny(name, " :~^?*[\\") && !strings.Contains(name, "..")
+}
+
+// revParent is the repository a fork was forked from: its upstream.
+type revParent struct {
+	Repo    string `json:"repo"` // github.com/acme/api
+	Web     string `json:"web"`  // its page, which its list is read from
+	Default string `json:"default"`
+	// Remote is the checkout's remote for it, when it has one.
+	Remote string `json:"remote,omitempty"`
+}
+
+func newParent(web, def string) *revParent {
+	p := &revParent{Web: strings.TrimSuffix(web, ".git"), Default: def}
+	if r, ok := p.repo(); ok {
+		p.Repo, p.Web = r.Name(), r.Web()
+	}
+	return p
+}
+
+func (p *revParent) repo() (revRepo, bool) { return parseRevRepo(p.Web) }
+
+// forgeParent asks r's forge what r was forked from; nil when it is no
+// fork.
+func forgeParent(ctx context.Context, r revRepo) (*revParent, error) {
+	ctx, cancel := context.WithTimeout(ctx, revRemoteTimeout)
+	defer cancel()
+	if r.URL != "" {
+		var project glProject
+		if err := gitlabGet(ctx, r, "", &project); err != nil {
+			return nil, err
+		}
+		if f := project.ForkedFrom; f != nil {
+			return newParent(f.WebURL, f.DefaultBranch), nil
+		}
+		return nil, nil
+	}
+	var data struct {
+		Repository *struct {
+			Parent *struct {
+				URL              string `json:"url"`
+				DefaultBranchRef *struct {
+					Name string `json:"name"`
+				} `json:"defaultBranchRef"`
+			} `json:"parent"`
+		} `json:"repository"`
+	}
+	q := `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { parent { url defaultBranchRef { name } } } }`
+	if err := ghGraphQL(ctx, r.Ref.HostName(), q, map[string]string{"owner": r.Ref.Owner, "name": r.Ref.Repo}, &data); err != nil {
+		return nil, err
+	}
+	if data.Repository == nil || data.Repository.Parent == nil || data.Repository.Parent.DefaultBranchRef == nil {
+		return nil, nil
+	}
+	p := data.Repository.Parent
+	return newParent(p.URL, p.DefaultBranchRef.Name), nil
+}
+
+// localParent finds the upstream of the checkout at dir: its upstream
+// remote, else what its origin was forked from on the forge; nil for
+// neither.
+func localParent(ctx context.Context, dir string) (*revParent, error) {
+	if u, err := triage.Git(dir, "remote", "get-url", "upstream"); err == nil {
+		u = strings.TrimSpace(u)
+		p := &revParent{Repo: u, Remote: "upstream"}
+		if r, ok := parseRevRepo(u); ok {
+			p.Repo, p.Web = r.Name(), r.Web()
+		}
+		if h, err := triage.Git(dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/upstream/HEAD"); err == nil {
+			p.Default = strings.TrimPrefix(strings.TrimSpace(h), "upstream/")
+		} else {
+			ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			cmd := proc.CommandContext(ctx, "git", triage.GitArgs("ls-remote", "--symref", "upstream", "HEAD")...)
+			cmd.Dir, cmd.Env = dir, noPromptEnv()
+			out, err := cmd.Output()
+			if err != nil {
+				return nil, fmt.Errorf("git ls-remote upstream: %v", err)
+			}
+			for _, line := range strings.Split(string(out), "\n") {
+				if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+					p.Default, _, _ = strings.Cut(ref, "\t")
+				}
+			}
+		}
+		return p, nil
+	}
+	ref := localRepoRef(dir)
+	if ref.Owner == "local" && ref.Host == "" {
+		return nil, nil
+	}
+	r := revRepo{Ref: ref}
+	if !githubHost(ref.Host) {
+		r.URL = "https://" + ref.HostName() + "/" + ref.Owner + "/" + ref.Repo
+	}
+	return forgeParent(ctx, r)
+}
+
+// fetchUpstream fetches ref, a branch or a full commit SHA, from the
+// checkout's upstream (p), and returns what reviews name it by there:
+// upstream/main, a branch kept with the upstream remote's other branches
+// (whether or not the checkout has that remote), or the commit, kept
+// under refs/pr-manager/upstream so it outlives a gc.
+func fetchUpstream(ctx context.Context, dir string, p *revParent, ref string) (string, error) {
+	remote := p.Remote
+	if remote == "" {
+		r, ok := p.repo()
+		if !ok {
+			return "", fmt.Errorf("can't read the upstream %s", p.Web)
+		}
+		remote = r.CloneURL()
+	}
+	ctx, cancel := context.WithTimeout(ctx, revFetchTimeout)
+	defer cancel()
+	git := func(args ...string) error {
+		cmd := proc.CommandContext(ctx, "git", triage.GitArgs(args...)...)
+		cmd.Dir, cmd.Env = dir, noPromptEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := tail(out)
+			if msg == "" {
+				msg = err.Error()
+			}
+			return fmt.Errorf("git %s from %s: %s", args[0], p.Repo, msg)
+		}
+		return nil
+	}
+	if fullSHA.MatchString(ref) {
+		if err := git("fetch", "--quiet", "--no-tags", remote, ref); err != nil {
+			return "", err
+		}
+		return ref, git("update-ref", "refs/pr-manager/upstream/"+ref, ref)
+	}
+	if !goodBranch(ref) {
+		return "", fmt.Errorf("bad branch %q", ref)
+	}
+	if err := git("fetch", "--quiet", "--no-tags", remote, "+refs/heads/"+ref+":refs/remotes/upstream/"+ref); err != nil {
+		return "", err
+	}
+	return "upstream/" + ref, nil
 }

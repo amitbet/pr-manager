@@ -1225,7 +1225,8 @@ func checkoutRev(pr *triage.PRInfo) (string, error) {
 func switchRev(pr *triage.PRInfo) (string, bool, error) {
 	dir := pr.LocalPath
 	name, remote := pr.HeadRef, ""
-	if pr.SingleCommit {
+	// A commit, on its own or as the head of base...commit, gets a branch.
+	if pr.SingleCommit || (len(pr.HeadOid) >= 10 && pr.HeadRef == pr.HeadOid[:10]) {
 		name = "pr-manager/" + pr.HeadOid[:10]
 	} else if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", "refs/remotes/"+pr.HeadRef); err == nil {
 		remote = pr.HeadRef

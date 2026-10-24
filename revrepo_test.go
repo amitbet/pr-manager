@@ -291,3 +291,117 @@ func TestFetchRemoteRev(t *testing.T) {
 		}
 	}
 }
+
+// A commit compared with another is the changes since their merge base,
+// whichever side is a commit.
+func TestInspectRevCommitVersusCommit(t *testing.T) {
+	_, clone := revFixture(t)
+	ctx := context.Background()
+	first := gitTest(t, clone, "rev-parse", "main")
+	pushed := gitTest(t, clone, "rev-parse", "feature~1")
+	s, err := inspectLocal(ctx, clone+"#"+first+"..."+pushed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.raw, "pushed.txt") || strings.Contains(s.raw, "local.txt") || s.info.SingleCommit {
+		t.Fatalf("commit vs commit:\n%s", s.raw)
+	}
+	if s.info.HeadRef != pushed[:10] || s.info.BaseRef != first[:10] || s.info.Ahead != 1 || s.info.BaseOid != first {
+		t.Fatalf("info: %+v", s.info)
+	}
+	// A branch as the base of a commit.
+	if s, err = inspectLocal(ctx, clone+"#main..."+pushed); err != nil || s.info.BaseRef != "main" || s.info.HeadRef != pushed[:10] {
+		t.Fatalf("branch base: %v %+v", err, s)
+	}
+	if _, err := publishLocal(&PRResult{PR: s.info}, nil); err == nil {
+		t.Fatal("published a commit")
+	}
+}
+
+// A fork's branches are compared with its upstream: the upstream's
+// default branch is fetched into the fork, and each branch's fork point
+// is where it left it, whatever the upstream did since.
+func TestForkComparesWithUpstream(t *testing.T) {
+	root := t.TempDir()
+	up := filepath.Join(root, "up.git")
+	gitTest(t, root, "init", "-q", "--bare", "-b", "main", up)
+	seed := filepath.Join(root, "seed")
+	gitTest(t, root, "init", "-q", "-b", "main", seed)
+	commit := func(dir, file string) string {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(file+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitTest(t, dir, "add", "-A")
+		gitTest(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", file)
+		return gitTest(t, dir, "rev-parse", "HEAD")
+	}
+	forked := commit(seed, "a.txt")
+	gitTest(t, seed, "push", "-q", up, "main")
+
+	fork := filepath.Join(root, "fork")
+	gitTest(t, root, "clone", "-q", up, fork)
+	gitTest(t, fork, "switch", "-q", "-c", "feature")
+	commit(fork, "mine.txt")
+	// The upstream moves on after the fork.
+	upstreamNow := commit(seed, "theirs.txt")
+	gitTest(t, seed, "push", "-q", up, "main")
+	gitTest(t, fork, "remote", "add", "upstream", up)
+
+	ctx := context.Background()
+	p, err := localParent(ctx, fork)
+	if err != nil || p == nil || p.Remote != "upstream" || p.Default != "main" {
+		t.Fatalf("parent: %+v %v", p, err)
+	}
+	tok, err := fetchUpstream(ctx, fork, p, "main")
+	if err != nil || tok != "upstream/main" {
+		t.Fatalf("fetch: %q %v", tok, err)
+	}
+	revs, err := listRevs(fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revs.countFrom(tok); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range revs.Branches {
+		if b.Name == "feature" && (b.Fork != forked || b.Ahead != 1) {
+			t.Fatalf("feature from upstream: %+v", b)
+		}
+	}
+	if revs.Compared != "upstream/main" {
+		t.Fatalf("compared: %q", revs.Compared)
+	}
+	if err := revs.countFrom("nope"); err == nil {
+		t.Fatal("counted from a missing base")
+	}
+
+	s, err := inspectLocal(ctx, fork+"#upstream/main...feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.info.BaseOid != forked || s.info.Behind != 1 || !strings.Contains(s.raw, "mine.txt") || strings.Contains(s.raw, "theirs.txt") {
+		t.Fatalf("fork review: %+v\n%s", s.info, s.raw)
+	}
+	if _, err := publishLocal(&PRResult{PR: s.info}, nil); err == nil || !strings.Contains(err.Error(), "upstream") {
+		t.Fatalf("publish into upstream: %v", err)
+	}
+
+	// An upstream commit is fetched by SHA and kept.
+	sha, err := fetchUpstream(ctx, fork, p, upstreamNow)
+	if err != nil || sha != upstreamNow {
+		t.Fatalf("fetch commit: %q %v", sha, err)
+	}
+	if got := gitTest(t, fork, "rev-parse", "refs/pr-manager/upstream/"+upstreamNow); got != upstreamNow {
+		t.Fatalf("kept ref: %s", got)
+	}
+	if _, err := fetchUpstream(ctx, fork, p, "-x"); err == nil {
+		t.Fatal("fetched a bad branch")
+	}
+
+	// Without an upstream remote and with no forge to ask, it's no fork.
+	lone := filepath.Join(root, "lone")
+	gitTest(t, root, "init", "-q", lone)
+	if p, err := localParent(ctx, lone); err != nil || p != nil {
+		t.Fatalf("lone: %+v %v", p, err)
+	}
+}

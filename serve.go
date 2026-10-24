@@ -1155,8 +1155,20 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, errors.New("enter a repository path or URL"))
 			return
 		}
-		dir, repo, err := resolveRevPath(t.options(jo), q.Get("path"))
-		if err != nil {
+		// remote=1 lists a repository from its forge even when it has a
+		// checkout here: a fork's upstream, whose picks are fetched into
+		// the fork's checkout.
+		var dir string
+		var repo *revRepo
+		var err error
+		if q.Get("remote") == "1" {
+			rr, ok := parseRevRepo(q.Get("path"))
+			if !ok {
+				writeErr(w, 400, errors.New("remote=1 takes a repository URL"))
+				return
+			}
+			repo = &rr
+		} else if dir, repo, err = resolveRevPath(t.options(jo), q.Get("path")); err != nil {
 			writeErr(w, 400, err)
 			return
 		}
@@ -1190,7 +1202,65 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		if repo != nil {
 			revs.Repo = repo.Name()
 		}
+		// base counts the branches from a base the picker picked, not the
+		// default branch.
+		if base := q.Get("base"); base != "" {
+			if err := revs.countFrom(base); err != nil {
+				writeErr(w, 400, err)
+				return
+			}
+		}
 		writeJSON(w, 200, revs)
+	})
+	// The checkout's upstream, when it is a fork: its upstream remote, or
+	// what the forge says it was forked from. null for none.
+	mux.HandleFunc("GET /api/revs/parent", func(w http.ResponseWriter, r *http.Request) {
+		dir, err := checkoutRoot(r.URL.Query().Get("path"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		p, err := localParent(r.Context(), dir)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"parent": p})
+	})
+	// Fetches a branch or commit of the checkout's upstream into it, so it
+	// can be compared with; base is what reviews name it by.
+	mux.HandleFunc("POST /api/revs/upstream", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Path string `json:"path"`
+			Ref  string `json:"ref"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		dir, err := checkoutRoot(req.Path)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		p, err := localParent(r.Context(), dir)
+		if err == nil && p == nil {
+			err = errors.New("the checkout is not a fork: it has no upstream remote, and its forge names no parent")
+		}
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		ref := req.Ref
+		if ref == "" {
+			ref = p.Default
+		}
+		base, err := fetchUpstream(r.Context(), dir, p, ref)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"base": base})
 	})
 	mux.HandleFunc("POST /api/local/{key}/publish", func(w http.ResponseWriter, r *http.Request) {
 		res, err := t.Load(r.PathValue("key"))

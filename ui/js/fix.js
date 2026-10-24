@@ -126,11 +126,13 @@ document.addEventListener("keydown", (e) => {
 function askRev(pr) {
   const dlg = $("#fix-rev");
   const rev = revParts(pr.rev).head;
-  const what = pr.single_commit ? `commit <code>${esc(rev)}</code>` : `branch <code>${esc(rev)}</code>`;
-  const branch = pr.single_commit ? `a new branch <code>pr-manager/${esc(pr.head_oid.slice(0, 10))}</code> at the commit` : rev.startsWith("origin/") ? `a local <code>${esc(rev.slice(7))}</code> branch tracking it` : `<code>${esc(rev)}</code>`;
+  // A commit, alone or as the head of base...commit, gets a branch.
+  const commit = pr.single_commit || pr.head_ref === pr.head_oid.slice(0, 10);
+  const what = commit ? `commit <code>${esc(rev.slice(0, 12))}</code>` : `branch <code>${esc(rev)}</code>`;
+  const branch = commit ? `a new branch <code>pr-manager/${esc(pr.head_oid.slice(0, 10))}</code> at the commit` : rev.startsWith("origin/") ? `a local <code>${esc(rev.slice(7))}</code> branch tracking it` : `<code>${esc(rev)}</code>`;
   dlg.querySelector(".fix-rev-what").innerHTML = `This is a review of ${what}, which isn't checked out in <code>${esc(pr.local_path)}</code>.`;
   dlg.querySelector(".fix-rev-checkout").innerHTML = `<b>Check out and fix</b> switches the checkout to ${branch} and fixes it there. The working tree has to be clean.`;
-  dlg.querySelector("button[value=checkout]").textContent = `Check out ${pr.single_commit ? rev : rev.replace(/^origin\//, "")} and fix`;
+  dlg.querySelector("button[value=checkout]").textContent = `Check out ${commit ? rev.slice(0, 12) : rev.replace(/^origin\//, "")} and fix`;
   dlg.returnValue = "";
   dlg.showModal();
   return new Promise((res) => dlg.addEventListener("close", () => {

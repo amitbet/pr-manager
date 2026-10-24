@@ -185,6 +185,16 @@ function titleLink(pr, w) {
   return { url: w.repo + refPath(w, pr.head_ref), what: `Open branch ${pr.head_ref} on ${w.forge}` };
 }
 
+// revLine says what a local review of a branch or base...head compared:
+// the head (a branch, or a commit) and its base, shortened when a SHA.
+function revLine(pr) {
+  const sha = (s) => (/^[0-9a-f]{40}$/.test(s) ? s.slice(0, 10) : s);
+  const { base, head } = revParts(pr.rev);
+  const what = pr.head_ref === pr.head_oid?.slice(0, 10) ? `commit <code>${esc(sha(head))}</code>` : `branch <code>${esc(head)}</code>`;
+  const n = (k, w) => `${k || 0} commit${k === 1 ? "" : "s"} ${w}`;
+  return `${what} as committed: ${n(pr.ahead, "ahead")}, ${pr.behind || 0} behind ${esc(sha(base) || `origin/${pr.base_ref}`)}`;
+}
+
 function prHeadHTML(r) {
   const pr = r.pr;
   const local = !!pr.local_path;
@@ -206,7 +216,7 @@ function prHeadHTML(r) {
         +${pr.additions}/−${pr.deletions} · ${modelsLine(r)}${r.summary_lang ? ` in ${esc(r.summary_lang)}` : ""} ·
         ${(r.duration_ms / 1000).toFixed(1)}s</div>
       ${local && pr.single_commit ? `<div class="meta" style="margin-top:6px">single commit <code>${esc(pr.rev)}</code>${commit(pr.head_oid)}, from its parent</div>` : ""}
-      ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">branch <code>${esc(revParts(pr.rev).head)}</code> as committed: ${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind ${esc(revParts(pr.rev).base || `origin/${pr.base_ref}`)} · ${publish}</div>` : ""}
+      ${local && pr.rev && !pr.single_commit ? `<div class="meta" style="margin-top:6px">${revLine(pr)} · ${publish}</div>` : ""}
       ${local && !pr.rev ? `<div class="meta" style="margin-top:6px">${pr.ahead || 0} commit${pr.ahead === 1 ? "" : "s"} ahead, ${pr.behind || 0} behind origin/${esc(pr.base_ref)}${pr.uncommitted ? " · includes working tree changes" : ""} · ${publish}</div>` : ""}
       ${local && !pr.rev ? stackLine(pr) : ""}
       ${r.impact || r.likelihood || r.attention ? `<div class="meta" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">

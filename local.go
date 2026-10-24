@@ -331,9 +331,11 @@ func revRange(rev string) (base, head string, ok bool) {
 
 // inspectRev reads rev in the checkout at dir, as committed: a local or
 // origin branch from its merge base with origin's default branch, or any
-// other commit from its first parent. base...branch is the branch from
-// its merge base with base, any branch or commit: origin/feature for the
-// commits not pushed yet. The working tree is not read.
+// other commit from its first parent. base...head is head, a branch or a
+// commit, from its merge base with base, a branch or a commit:
+// origin/feature for the commits not pushed yet, upstream/main for a
+// fork's changes since it left its upstream, or one commit for the
+// changes since it. The working tree is not read.
 func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 	headRev := rev
 	baseRev, h, ranged := revRange(rev)
@@ -345,9 +347,6 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 	}
 	branch, ref := branchRef(dir, headRev)
 	if ref == "" {
-		if ranged {
-			return nil, fmt.Errorf("%s is not a branch in %s; compare a branch with %s", headRev, dir, baseRev)
-		}
 		ref = headRev
 	}
 	head, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
@@ -357,7 +356,7 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 	head = strings.TrimSpace(head)
 	info := &triage.PRInfo{PRRef: localRepoRef(dir), LocalPath: dir, State: "LOCAL", Rev: rev, HeadOid: head}
 	var base, empty string
-	if branch != "" {
+	if branch != "" || ranged {
 		var baseRef, baseBranch string
 		if ranged {
 			b, r := branchRef(dir, baseRev)
@@ -388,6 +387,9 @@ func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
 			}
 		}
 		info.BaseRef, info.HeadRef = baseBranch, branch
+		if branch == "" {
+			info.HeadRef = head[:10]
+		}
 	} else {
 		info.SingleCommit = true
 		if p, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", head+"^"); err == nil {
@@ -671,7 +673,11 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	// A branch compared with base...branch opens its PR into base, so base
 	// has to be a branch origin has, or a local one of origin's name.
 	if base, _, ok := revRange(r.PR.Rev); ok {
-		if _, ref := branchRef(r.PR.LocalPath, base); !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/remotes/origin/") {
+		_, ref := branchRef(r.PR.LocalPath, base)
+		switch {
+		case strings.HasPrefix(ref, "refs/remotes/upstream/"):
+			return none, fmt.Errorf("a PR into the upstream repository's %s isn't opened from here; open it on the forge", strings.TrimPrefix(base, "upstream/"))
+		case !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/remotes/origin/"):
 			return none, fmt.Errorf("%s is not a branch; compare with a branch to create a PR", base)
 		}
 	}

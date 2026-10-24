@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,6 +37,12 @@ type revList struct {
 	Repo   string `json:"repo,omitempty"`
 	Remote bool   `json:"remote,omitempty"`
 	Web    string `json:"web,omitempty"`
+	// Parent is the repository a fork was forked from, when the forge's
+	// list says (a checkout asks for it on its own: localParent).
+	Parent *revParent `json:"parent,omitempty"`
+	// Compared is the base the branches' Ahead and Fork are counted
+	// from, when the picker picked one (countFrom).
+	Compared string `json:"compared,omitempty"`
 }
 
 type revBranch struct {
@@ -54,6 +61,8 @@ type revBranch struct {
 	Upstream string `json:"upstream,omitempty"`
 	Unpushed int    `json:"unpushed"`
 	Unpulled int    `json:"unpulled"`
+	// Fork is where it left Compared: their merge base.
+	Fork string `json:"fork,omitempty"`
 	// PR is the branch's open PR, in a list from GitHub.
 	PR       string `json:"pr,omitempty"`
 	PRNumber int    `json:"pr_number,omitempty"`
@@ -178,6 +187,38 @@ func listRevs(path string) (*revList, error) {
 // revFetchTimeout caps the picker's fetch: a remote that doesn't answer
 // leaves the list as it was rather than holding the dialog.
 const revFetchTimeout = 90 * time.Second
+
+// countFrom counts the newest branches' commits ahead of base, a branch
+// or commit, and finds where each left it, in place of the default
+// branch's counts: upstream/main tells a fork's branches from where
+// they left the upstream.
+func (l *revList) countFrom(base string) error {
+	_, ref := branchRef(l.Dir, base)
+	if ref == "" {
+		ref = base
+	}
+	if strings.HasPrefix(base, "-") {
+		return fmt.Errorf("bad revision %q", base)
+	}
+	if _, err := triage.Git(l.Dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}"); err != nil {
+		return fmt.Errorf("%s is not a commit or branch in %s", base, l.Dir)
+	}
+	l.Compared = base
+	for i := range l.Branches {
+		b := &l.Branches[i]
+		b.Ahead, b.Fork = -1, ""
+		if i >= revAheadLimit {
+			continue
+		}
+		if n, err := triage.Git(l.Dir, "rev-list", "--count", ref+".."+b.Oid); err == nil {
+			b.Ahead, _ = strconv.Atoi(strings.TrimSpace(n))
+		}
+		if mb, err := triage.Git(l.Dir, "merge-base", ref, b.Oid); err == nil {
+			b.Fork = strings.TrimSpace(mb)
+		}
+	}
+	return nil
+}
 
 // fetchRevs fetches every branch of dir's origin, so the picker lists
 // its new branches and commits, and drops branches deleted there. The
