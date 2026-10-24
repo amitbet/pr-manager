@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func TestWriteRelated(t *testing.T) {
 	s := b.String()
 	for _, want := range []string{
 		"## github.com/acme/api#41: Rename user.name", "Linked by you, at the reader's request", "Why: the server half",
-		"main@b0b0b0b0 ← rename@h1h1h1h1", "Its code at its head: /c/related/acme__api__41", "Its full diff: /m/related/acme__api__41.diff",
+		"main@b0b0b0b0 ← rename@h1h1h1h1", "Its code at its head: /c/related/acme__api__41", "Its full diff: " + filepath.Join("/m", "related", "acme__api__41.diff"),
 		"at an older head, h0h0h0h0", "Its open review issues (2):\n- high api/user.go:12: breaks old clients\n- low",
 		"<related_pr_description pr=\"github.com/acme/api#41\">\nRenames the field.", "- api/user.go (modified, +3/−1)",
 	} {

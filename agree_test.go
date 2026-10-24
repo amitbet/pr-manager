@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/amitbet/pr-manager/llm"
@@ -13,11 +14,14 @@ func TestSecondOpinions(t *testing.T) {
 	oldL, oldS := newAuditLLM, hasSubscription
 	defer func() { newAuditLLM, hasSubscription = oldL, oldS }()
 	hasSubscription = func(p string) bool { return p == "codex" }
+	var mu sync.Mutex // the units are asked about concurrently
 	asked := map[string]bool{}
 	newAuditLLM = func(provider, model string) (llm.LLMTool, error) {
 		return &reviewerFake{model: model, fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
 			p := req.Messages[len(req.Messages)-1].Content
 			needs := strings.Contains(p, "Unit b.go:B")
+			mu.Lock()
+			defer mu.Unlock()
 			for _, id := range []string{"a.go:A", "b.go:B", "c.go:C"} {
 				if strings.Contains(p, "Unit "+id) {
 					asked[id] = true

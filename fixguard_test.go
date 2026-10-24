@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,8 @@ func TestSaveFilesRestore(t *testing.T) {
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "a.go"))
 	st, _ := os.Stat(filepath.Join(dir, "a.go"))
-	if string(b) != "old" || st.Mode().Perm() != 0o600 {
+	// Windows keeps no Unix permissions: only read-only, which 0o600 isn't.
+	if string(b) != "old" || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("a.go: %q %v", b, st.Mode())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "new", "b.go")); !os.IsNotExist(err) {

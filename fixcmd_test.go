@@ -161,6 +161,9 @@ func fixOptions(t *testing.T, dir string) options {
 		classifier: "openai-api", classifyModel: "gpt-4.1", summarizer: "openai-api", summaryModel: "gpt-4.1",
 		fallback: "off", translator: "auto", lint: "off", lintSet: true, concurrency: 2, reviewConcurrency: 2,
 		fixRounds: 3, fixIn: "place", failOn: "medium", out: "json", outFile: filepath.Join(t.TempDir(), "fix.json"),
+		// auto would pick a logged-in subscription CLI, a real model, as the
+		// auditor; fixloop_test.go tests the audit.
+		fixAuditor: "off",
 	}
 }
 

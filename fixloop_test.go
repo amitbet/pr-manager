@@ -118,7 +118,8 @@ func TestFixLoopTestsAuditAndTrim(t *testing.T) {
 	}
 
 	src, _ := os.ReadFile(filepath.Join(dir, "p.go"))
-	if want := "package p\n\nfunc Div(a, b int) int {\n\tif b == 0 {\n\t\treturn 0\n\t}\n\treturn a / b\n}\n"; string(src) != want {
+	// Git on Windows may check the file out with CRLF line ends.
+	if want := "package p\n\nfunc Div(a, b int) int {\n\tif b == 0 {\n\t\treturn 0\n\t}\n\treturn a / b\n}\n"; strings.ReplaceAll(string(src), "\r\n", "\n") != want {
 		t.Fatalf("final code:\n%s", src)
 	}
 	if applied != 2 {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -249,7 +250,8 @@ func TestTesterCoverageIsEvidence(t *testing.T) {
 }
 
 func TestTesterCommandRegression(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
+	// The command is sh's; on Windows a test command runs through cmd.
+	if _, err := exec.LookPath("sh"); err != nil || runtime.GOOS == "windows" {
 		t.Skip("no sh")
 	}
 	dir := t.TempDir()
