@@ -1137,10 +1137,24 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		writeJSON(w, 202, t.snapshot(j))
 	})
 	mux.HandleFunc("GET /api/revs", func(w http.ResponseWriter, r *http.Request) {
-		revs, err := listRevs(r.URL.Query().Get("path"))
+		path := r.URL.Query().Get("path")
+		// fetch=1 is the picker's refresh: fetch origin first. A failed
+		// fetch still lists the local history, with the reason.
+		var fetchErr error
+		fetch := r.URL.Query().Get("fetch") == "1"
+		if fetch {
+			fetchErr = fetchRevs(r.Context(), path)
+		}
+		revs, err := listRevs(path)
 		if err != nil {
 			writeErr(w, 400, err)
 			return
+		}
+		if fetch {
+			revs.Fetched = fetchErr == nil
+			if fetchErr != nil {
+				revs.FetchError = fetchErr.Error()
+			}
 		}
 		writeJSON(w, 200, revs)
 	})

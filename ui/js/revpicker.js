@@ -43,6 +43,13 @@ function renderList() {
   dlg.querySelector(".rev-list").innerHTML = rows.join("") || `<p class="hint">Nothing matches.</p>`;
 }
 
+// status shows a line over the list, or hides it for "".
+function status(text) {
+  const el = $("#rev-picker .rev-status");
+  el.textContent = text;
+  el.hidden = !text;
+}
+
 async function open() {
   const dlg = $("#rev-picker");
   const body = dlg.querySelector(".rev-list");
@@ -50,6 +57,7 @@ async function open() {
   dlg.querySelector(".rev-filter").value = "";
   if (!dlg.open) dlg.showModal();
   list = null;
+  status("");
   if (!path || !isLocalPath(path)) {
     body.innerHTML = `<p class="hint">Enter a local repository path first, then pick a commit or branch in it.</p>`;
     return;
@@ -65,10 +73,35 @@ async function open() {
   }
 }
 
+// refresh fetches origin and lists the checkout again. The filter and
+// tab stay; a failed fetch still shows the local history, with why.
+async function refresh() {
+  const dlg = $("#rev-picker");
+  const btn = dlg.querySelector(".rev-refresh");
+  const path = list?.dir || $("#url").value.trim();
+  if (!path || !isLocalPath(path) || btn.disabled) return;
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  status("Fetching origin…");
+  try {
+    const next = await api(`/api/revs?${new URLSearchParams({ path, fetch: "1" })}`);
+    list = next;
+    dlg.querySelector(".rev-dir").textContent = list.dir;
+    renderList();
+    status(list.fetch_error ? `Showing local history: ${list.fetch_error}` : "");
+  } catch (e) {
+    status(`Refresh failed: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+  }
+}
+
 // initRevPicker wires the header button and the dialog.
 export function initRevPicker() {
   const dlg = $("#rev-picker");
   $("#rev-btn").onclick = open;
+  dlg.querySelector(".rev-refresh").onclick = refresh;
   dlg.querySelector(".rev-filter").addEventListener("input", () => list && renderList());
   dlg.querySelector(".rev-filter").addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;

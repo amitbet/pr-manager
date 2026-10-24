@@ -211,7 +211,9 @@
     <div class="rev-bar">
       <span class="seg rev-tabs"><button type="button" data-tab="commits">Commits</button><button type="button" data-tab="branches">Branches</button></span>
       <input class="rev-filter" type="search" placeholder="Filter by message, SHA, author or name" spellcheck="false">
+      <button type="button" class="rev-refresh" title="Fetch origin, then list its branches and commits again">↻ Refresh</button>
     </div>
+    <div class="hint rev-status" hidden></div>
     <div class="rev-list"></div>
   </form>
 </dialog>

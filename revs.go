@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/triage"
 )
 
@@ -19,6 +22,11 @@ type revList struct {
 	BaseRef  string      `json:"base_ref,omitempty"`
 	Branches []revBranch `json:"branches"`
 	Commits  []revCommit `json:"commits"`
+	// Fetched says the list follows a fetch from origin; FetchError is
+	// why one asked for didn't happen. The list is the local history
+	// either way.
+	Fetched    bool   `json:"fetched,omitempty"`
+	FetchError string `json:"fetch_error,omitempty"`
 }
 
 type revBranch struct {
@@ -122,6 +130,41 @@ func listRevs(path string) (*revList, error) {
 		out.Commits = append(out.Commits, c)
 	}
 	return out, nil
+}
+
+// revFetchTimeout caps the picker's fetch: a remote that doesn't answer
+// leaves the list as it was rather than holding the dialog.
+const revFetchTimeout = 90 * time.Second
+
+// fetchRevs fetches path's origin, so the picker lists its new branches
+// and commits, and drops branches deleted there. It never prompts: a
+// remote that needs a password fails and says so.
+func fetchRevs(ctx context.Context, path string) error {
+	path, _ = splitRev(path)
+	dir, err := checkoutRoot(path)
+	if err != nil {
+		return err
+	}
+	if _, err := triage.Git(dir, "remote", "get-url", "origin"); err != nil {
+		return errors.New("the checkout has no origin remote to fetch from")
+	}
+	ctx, cancel := context.WithTimeout(ctx, revFetchTimeout)
+	defer cancel()
+	cmd := proc.CommandContext(ctx, "git", triage.GitArgs("fetch", "--prune", "--quiet", "origin")...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		return errors.New("git fetch origin timed out")
+	case err != nil:
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return errors.New("git fetch origin: " + msg)
+	}
+	return nil
 }
 
 // shallowCommits returns the boundary commits of a shallow clone at dir,

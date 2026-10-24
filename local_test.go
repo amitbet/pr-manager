@@ -503,3 +503,66 @@ func TestRemoteTip(t *testing.T) {
 		t.Fatalf("tip after a local commit = %q, want the pushed %q", tip, head)
 	}
 }
+
+func TestFetchRevsListsWhatOriginGot(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitTest(t, root, "init", "--bare", "-b", "main", remote)
+	other := filepath.Join(root, "other")
+	gitTest(t, root, "init", "-b", "main", other)
+	gitTest(t, other, "config", "user.name", "Test")
+	gitTest(t, other, "config", "user.email", "test@example.com")
+	gitTest(t, other, "remote", "add", "origin", remote)
+	commit := func(msg string) {
+		if err := os.WriteFile(filepath.Join(other, "f.txt"), []byte(msg+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitTest(t, other, "add", "-A")
+		gitTest(t, other, "commit", "-m", msg)
+		gitTest(t, other, "push", "-q", "origin", "HEAD:main")
+	}
+	commit("first")
+	clone := filepath.Join(root, "clone")
+	gitTest(t, root, "clone", "-q", remote, clone)
+	commit("second")
+	gitTest(t, other, "push", "-q", "origin", "HEAD:refs/heads/feature")
+
+	titles := func() map[string]bool {
+		revs, err := listRevs(clone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, c := range revs.Commits {
+			out[c.Title] = true
+		}
+		for _, b := range revs.Branches {
+			out["branch:"+b.Name] = true
+		}
+		return out
+	}
+	if got := titles(); got["second"] || got["branch:origin/feature"] {
+		t.Fatalf("listed before fetching: %v", got)
+	}
+	if err := fetchRevs(context.Background(), clone); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(); !got["second"] || !got["branch:origin/feature"] {
+		t.Fatalf("not listed after fetching: %v", got)
+	}
+
+	// A branch deleted on origin goes from the list.
+	gitTest(t, other, "push", "-q", "origin", "--delete", "feature")
+	if err := fetchRevs(context.Background(), clone); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(); got["branch:origin/feature"] {
+		t.Fatalf("pruned branch still listed: %v", got)
+	}
+
+	lone := filepath.Join(root, "lone")
+	gitTest(t, root, "init", "-b", "main", lone)
+	if err := fetchRevs(context.Background(), lone); err == nil || !strings.Contains(err.Error(), "no origin") {
+		t.Fatalf("no origin: %v", err)
+	}
+}
