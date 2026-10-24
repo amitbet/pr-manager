@@ -3,10 +3,10 @@
 // in its repository's checkout, each one ending in the Issues tab's list
 // of the PR's fixes; a local review's run one at a time, and a completed
 // one opens its reviewed result and worktree path.
-import { $, esc, postJSON, say, revParts } from "./util.js";
+import { $, esc, postJSON, say, ask, revParts } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
-import { refreshJobs, showLog, stageText, pollJob, cancelJob } from "./jobs.js";
+import { refreshJobs, watchJob, stageText, pollJob, cancelJob } from "./jobs.js";
 import { refreshFixes } from "./fixes.js";
 
 let onDone = async () => {};
@@ -57,6 +57,13 @@ export async function startFix(target, uncommitted = localStorage.getItem(UNCOMM
       const choice = await askRev(r.pr);
       return choice ? startFix(target, uncommitted, choice, r) : null;
     }
+    // A PR whose fixes ran many rounds already: fixing again is asked for.
+    if (e.code === "rounds" && !target.more_rounds) {
+      drop(run);
+      render();
+      const go = await ask(`${e.message}: fixes of fixes can keep each other busy without converging. Fix again anyway?`, "Fix again");
+      return go ? startFix({ ...target, more_rounds: true }, uncommitted, rev, r) : null;
+    }
     if (e.code !== "uncommitted" || uncommitted) {
       run.job = { status: "error", error: e.message };
       paint();
@@ -87,7 +94,9 @@ function startSoon(target, what) {
 function startPending() {
   const p = pending;
   clearPending();
-  startFix(p.target, undefined, "", p.r).catch(() => {});
+  // The page shows the fix's log while it starts; back to the review is a
+  // click away, and the banner follows the fix there.
+  startFix(p.target, undefined, "", p.r).then((id) => { if (id && S.result === p.r) watchJob(id); }).catch(() => {});
 }
 
 function clearPending() {
@@ -286,9 +295,14 @@ export function fixPickedHTML(rows) {
     (set.size ? `<button class="details-btn primary" data-act="fix-picked" ${dis}>Fix ${set.size} selected</button>` : "");
 }
 
-// The Fix all dropdown: whether confirmed review comments go along.
+// The Fix all dropdown: whether confirmed review comments and low issues
+// go along. Without the low ones a fix has them only when nothing worse
+// is left, as the server picks them (fixTargets).
 const INCLUDE = "pr-manager.fix_comments";
+const INCLUDE_LOW = "pr-manager.fix_low";
 const includeComments = () => localStorage.getItem(INCLUDE) !== "0";
+const includeLow = () => localStorage.getItem(INCLUDE_LOW) === "1";
+const SERIOUS = new Set(["critical", "high", "medium"]);
 let menuOpen = false;
 
 // fixableComments are the confirmed threads Fix all can include: not
@@ -296,20 +310,29 @@ let menuOpen = false;
 const fixableComments = () => allUnits().flatMap(({ u }) => (u.threads || []).filter((t) => t.status === "valid" && t.trusted && !t.fixed && t.duplicate_of == null));
 
 // fixAllHTML is the Fix all button, split with a menu to include the
-// confirmed review comments when there are any.
+// confirmed review comments and the low issues when there are any.
 export function fixAllHTML() {
-  const issues = allUnits().reduce((n, { u }) => n + (u.issues || []).filter((i) => !i.dismissed && !i.same_as).length, 0);
+  const live = allUnits().flatMap(({ u }) => (u.issues || []).filter((i) => !i.dismissed && !i.same_as));
+  const serious = live.filter((i) => SERIOUS.has(i.severity)).length;
+  const lows = live.length - serious;
   const comments = fixableComments().length;
-  if (!issues && !comments) return "";
+  if (!live.length && !comments) return "";
   const dis = fixDisabled();
   const s = comments === 1 ? "" : "s";
-  if (!comments) return `<button class="details-btn" data-act="fix-all" ${dis}>Fix all issues</button>`;
-  if (!issues) return `<button class="details-btn" data-act="fix-all" data-only-comments="1" ${dis}>Fix ${comments} review comment${s}</button>`;
-  const inc = includeComments();
+  if (!live.length) return `<button class="details-btn" data-act="fix-all" data-only-comments="1" ${dis}>Fix ${comments} review comment${s}</button>`;
+  const lowOpt = serious > 0 && lows > 0;
+  if (!comments && !lowOpt) return `<button class="details-btn" data-act="fix-all" ${dis}>Fix all issues</button>`;
+  const inc = comments > 0 && includeComments();
+  const low = !lowOpt || includeLow();
+  let label = low ? "Fix all issues" : `Fix ${serious} medium+ issue${serious === 1 ? "" : "s"}`;
+  if (inc) label += ` + ${comments} comment${s}`;
+  const opts = [];
+  if (comments) opts.push(`<label><input type="checkbox" data-act="fix-all-comments" ${inc ? "checked" : ""}> Include existing review comments <span class="muted">(${comments} confirmed)</span></label>`);
+  if (lowOpt) opts.push(`<label><input type="checkbox" data-act="fix-all-low" ${low ? "checked" : ""}> Include low issues <span class="muted">(${lows})</span></label>`);
   return `<span class="split-btn">` +
-    `<button class="details-btn" data-act="fix-all" ${dis}>${inc ? `Fix all issues + ${comments} comment${s}` : "Fix all issues"}</button>` +
+    `<button class="details-btn" data-act="fix-all" ${dis}>${label}</button>` +
     `<button class="details-btn caret ${menuOpen ? "on" : ""}" data-act="fix-all-menu" aria-haspopup="true" aria-expanded="${menuOpen}" title="Fix all options" ${dis}>▾</button>` +
-    (menuOpen ? `<div class="split-menu" role="menu"><label><input type="checkbox" data-act="fix-all-comments" ${inc ? "checked" : ""}> Include existing review comments <span class="muted">(${comments} confirmed)</span></label></div>` : "") +
+    (menuOpen ? `<div class="split-menu" role="menu">${opts.join("")}</div>` : "") +
     `</span>`;
 }
 
@@ -321,8 +344,11 @@ export const actions = {
   // A fix that fails to start shows in the banner; startFix also throws
   // it for the agent API.
   "fix-issue": (el) => startSoon({ unit_id: el.dataset.unit, issue: Number(el.dataset.issue) }, "Fixing the issue"),
+  "fix-suggested": (el) => startSoon(el.dataset.thread
+    ? { unit_id: el.dataset.unit, thread: el.dataset.thread, suggested: true }
+    : { unit_id: el.dataset.unit, issue: Number(el.dataset.issue), suggested: true }, "Applying the suggested fix"),
   "fix-thread": (el) => startSoon({ unit_id: el.dataset.unit, thread: el.dataset.thread }, "Fixing the comment"),
-  "fix-all": (el) => startSoon({ all: true, comments: !!el.dataset.onlyComments || includeComments() }, el.textContent.trim().replace(/^Fix/, "Fixing")),
+  "fix-all": (el) => startSoon({ all: true, low: includeLow(), comments: !!el.dataset.onlyComments || includeComments() }, el.textContent.trim().replace(/^Fix/, "Fixing")),
   "fix-all-menu": () => { menuOpen = !menuOpen; },
   "fix-pick": (el) => {
     const set = picks();
@@ -345,7 +371,8 @@ export const actions = {
     startSoon({ targets }, `Fixing ${targets.length} selected`);
   },
   "fix-all-comments": (el) => { localStorage.setItem(INCLUDE, el.checked ? "1" : "0"); },
-  "fix-log": (el) => { showLog(el.dataset.id); return false; },
+  "fix-all-low": (el) => { localStorage.setItem(INCLUDE_LOW, el.checked ? "1" : "0"); },
+  "fix-log": (el) => { watchJob(el.dataset.id); return false; },
   // Stops a running fix, from its banner or the Issues tab's list of
   // running fixes.
   "fix-cancel": async (el) => {

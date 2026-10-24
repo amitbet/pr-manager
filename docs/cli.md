@@ -31,6 +31,9 @@ ANTHROPIC_API_KEY=... ./pr-manager -classifier anthropic -summarizer anthropic
 ./pr-manager fix
 ./pr-manager fix -commit -fail-on high
 
+# run the repository's tests too (on by default in the desktop app), and audit fixes with codex
+./pr-manager fix -tests on -fix-auditor codex
+
 # write the PR description / gate a script
 ./pr-manager -o triage.md && gh pr create --body-file triage.md
 ./pr-manager -fail-on-human      # exit 2 if anything needs a human

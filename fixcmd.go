@@ -94,7 +94,7 @@ func runFixCmd(ctx context.Context, o options) error {
 	if err := fixable(r, location); err != nil {
 		return err
 	}
-	req := fixRequest{Key: r.Key, Location: location, All: true, Comments: o.fixComments, Recursive: o.fixRounds > 1, MaxRounds: o.fixRounds}
+	req := fixRequest{Key: r.Key, Location: location, All: true, Low: o.fixLow, Comments: o.fixComments, Recursive: o.fixRounds > 1, MaxRounds: o.fixRounds}
 	if r.PR.LocalPath != "" {
 		dirty, err := hasUncommitted(r.PR.LocalPath)
 		if err != nil {
@@ -113,9 +113,20 @@ func runFixCmd(ctx context.Context, o options) error {
 
 	sum := &fixSummary{Source: src, IssuesBefore: liveIssueCount(r, "")}
 	final := r
-	if len(fixTargets(r, req)) == 0 {
+	// A branch that already ends in this tool's own fixes is only reviewed:
+	// fixing again would review and fix its own output, round after round,
+	// whatever pushed it (a CI token that starts another run, a loop).
+	own := 0
+	if r.PR.LocalPath != "" {
+		own = ownFixCommits(r.PR.LocalPath, fixCIRepeat)
+	}
+	switch {
+	case own >= fixCIRepeat:
+		sum.Warning = fmt.Sprintf("the branch ends in %d fix commits made by pr-manager (%s), so it was only reviewed; push a commit of your own to fix it again", own, fixTrailer)
+		fmt.Fprintln(os.Stderr, "fix:", sum.Warning)
+	case len(fixTargets(r, req)) == 0:
 		fmt.Fprintln(os.Stderr, "fix: the review found nothing to fix")
-	} else {
+	default:
 		var id [6]byte
 		_, _ = rand.Read(id[:])
 		res, err := t.runFix(ctx, hex.EncodeToString(id[:]), r, req, progress)
@@ -159,7 +170,7 @@ func stageLogger(w io.Writer) func(string, int, int) {
 	last := ""
 	return func(stage string, done, total int) {
 		line := stage
-		if (stage == "fix" || stage == "check") && total > 0 {
+		if (stage == "fix" || stage == "check" || stage == "tests" || stage == "audit" || stage == "trim") && total > 0 {
 			line = fmt.Sprintf("%s round %d/%d", stage, done, total)
 		}
 		if line != last {
@@ -176,7 +187,7 @@ func liveIssueCount(r *PRResult, min string) int {
 	for _, f := range r.Files {
 		for _, u := range f.Units {
 			for _, is := range u.Issues {
-				if is.Live() && (min == "" || triage.SeverityAtLeast(is.Severity, min)) {
+				if is.Counts() && (min == "" || triage.SeverityAtLeast(is.Severity, min)) {
 					n++
 				}
 			}
@@ -192,7 +203,7 @@ func commitFixes(ctx context.Context, o options, dir string) (string, error) {
 	if err != nil || !dirty {
 		return "", err
 	}
-	if err := commitLocal(ctx, o, dir); err != nil {
+	if err := commitLocalAs(ctx, o, dir, true); err != nil {
 		return "", err
 	}
 	head, err := triage.Git(dir, "rev-parse", "HEAD")

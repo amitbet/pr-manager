@@ -20,6 +20,7 @@ import { trText, trDir, english } from "./entext.js";
 import * as budget from "./budget.js";
 import { jumpToUnit } from "./review.js";
 import { enabledReviewers } from "./reviewers.js";
+import { suggestButton, suggestHTML, actions as suggestActions } from "./suggest.js";
 
 const KINDS = [["issue", "Review"], ["lint", "Static analysis"], ["comment", "Review comments"]];
 
@@ -78,7 +79,10 @@ const visible = (c) => !hidden().has(c.kind === "resolved" ? "issue" : c.kind) &
 // raised them.
 const pooled = () => !!S.result.reviewers?.length || allUnits().some(({ u }) => (u.issues || []).some((is) => is.source));
 const BUILTIN = "built-in";
-const sourceName = (x) => x || BUILTIN;
+// What Go raises (a failing test) and a fix audit's scope notes have
+// sources of their own (triage/tests.go, fixaudit.go).
+const SOURCE_NAMES = { tests: "tests", "fix-audit": "fix audit" };
+const sourceName = (x) => SOURCE_NAMES[x] || x || BUILTIN;
 
 // sourcesOf is every reviewer that raised the row's issue: its own and
 // those of the issues linked to it as repeats.
@@ -159,7 +163,8 @@ const restoreButton = (c) => c.dkey
 function issueRow(c) {
   const { u, f, is, i } = c;
   const dup = raisedBy(u, i);
-  const act = c.dismissed ? "" : `${dup ? raisedChip(dup) : issueDraftButton(f, u, i)} ${issueFixMark(u, i) || issueFixButton(u, i)}`;
+  const fixMark = issueFixMark(u, i);
+  const act = c.dismissed ? "" : `${dup ? raisedChip(dup) : issueDraftButton(f, u, i)} ${fixMark || `${suggestButton(u, i)} ${issueFixButton(u, i)}`}`;
   return `<div class="claim-head">${pickable(c) ? pickBox(u, i) : ""}
       <span class="dz ${SEV_CLASS[is.severity] || "high"}">${esc(is.severity)}</span>
       ${is.line ? `<span class="ln">line ${is.line}</span>` : ""}
@@ -169,7 +174,8 @@ function issueRow(c) {
     ${unitLink(c)}
     ${is.detail ? `<span class="idetail tr" ${trDir(u, `issues.${i}.detail`, is.detail)}>${trText(u, `issues.${i}.detail`, is.detail)}</span>` : ""}
     ${issueScenarioHTML(is, "idetail", u, i)}
-    ${repeatsHTML(c)}`;
+    ${repeatsHTML(c)}
+    ${c.dismissed || fixMark ? "" : suggestHTML(u, i)}`;
 }
 
 // repeatsHTML lists the other units the review raised the same issue on,
@@ -197,10 +203,11 @@ function commentRow(c) {
   return `<div class="claim-head">${pickable(c) ? pickBox(c.u, null, t.id) : ""}${state}${t.line ? `<span class="ln">line ${t.line}</span>` : ""}
       <b>${esc(title)}</b>
       <a class="tauthor" href="${esc(t.url)}" target="_blank" rel="noopener">@${esc(t.author)}</a>
-      <span class="spacer"></span>${issueFixMark(c.u, null, t.id) || threadFixButton(c.u, t)}
+      <span class="spacer"></span>${issueFixMark(c.u, null, t.id) || (t.fixed ? "" : `${suggestButton(c.u, null, t)} ${threadFixButton(c.u, t)}`)}
     </div>
     ${unitLink(c)}
-    ${is?.detail ? `<span class="idetail">${esc(is.detail)}</span>` : ""}`;
+    ${is?.detail ? `<span class="idetail">${esc(is.detail)}</span>` : ""}
+    ${issueFixMark(c.u, null, t.id) || t.fixed ? "" : suggestHTML(c.u, null, t)}`;
 }
 
 // resolvedRow is an issue an earlier review raised that this one, of
@@ -327,6 +334,7 @@ export function syncDismiss() {
 const url = () => `/api/results/${encodeURIComponent(S.result.key)}/dismissals`;
 
 export const actions = {
+  ...suggestActions,
   "issues-filter": (el) => { const k = el.dataset.k; hidden().has(k) ? hidden().delete(k) : hidden().add(k); },
   "issues-source": (el) => { const x = el.dataset.src; hiddenSources.has(x) ? hiddenSources.delete(x) : hiddenSources.add(x); },
   "reviewers-run": async () => {

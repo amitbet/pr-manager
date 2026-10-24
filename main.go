@@ -67,6 +67,8 @@ type options struct {
 	failOnHuman                    bool
 	fixtures                       string
 	judge                          bool
+	// historyN: eval -history, see historyeval.go.
+	historyN int
 	// serve / prs
 	addr, cache         string
 	repo, author, state string
@@ -77,7 +79,17 @@ type options struct {
 	fixRounds              int
 	fixIn, failOn          string
 	fixCommit, fixComments bool
+	fixLow                 bool
 	baseSet, fixInSet      bool
+	// fixAuditor, fixAuditModel and fixAuditEffort: see fixaudit.go.
+	fixAuditor, fixAuditModel, fixAuditEffort string
+	// secondOpinion has the auditor's model look again at borderline units
+	// (agree.go).
+	secondOpinion bool
+	// tests: see tests.go.
+	tests, testCmd, trustedAuthors string
+	testTimeout                    int
+	testNetwork                    bool
 }
 
 var subcommands = map[string]bool{"eval": true, "serve": true, "prs": true, "index": true, "fix": true}
@@ -161,6 +173,7 @@ func main() {
 	fs.IntVar(&o.reviewConcurrency, "review-j", 16, "parallel analyze calls (0 = same as -j)")
 	fs.BoolVar(&o.failOnHuman, "fail-on-human", false, "exit 2 if any unit needs human review")
 	fs.StringVar(&o.fixtures, "fixtures", "testdata/eval", "eval: directory of NAME.json cases")
+	fs.IntVar(&o.historyN, "history", 0, "eval: instead of the fixtures, review up to N commits of -C's last year that a later fix or revert changed, and N that none did, each as a single commit, and report per review budget how many of the fixed lines would have been skipped and how much clean code went to human review (each commit is a full review)")
 	fs.BoolVar(&o.judge, "judge", false, "eval: score summary faithfulness with OpenJev")
 	fs.StringVar(&o.addr, "addr", defaultAddr, "serve: listen address; the default port falls back to an available one when taken (port 0 always picks one)")
 	fs.StringVar(&o.cache, "cache", cacheRoot, "serve/prs/-pr: repo clones and cached results")
@@ -174,6 +187,16 @@ func main() {
 	fs.StringVar(&o.fixIn, "in", "place", "fix: where fixes go for a local checkout: place (its current branch, left uncommitted unless -commit) or worktree (a new branch in a worktree under -cache); a -pr is always fixed in a worktree")
 	fs.BoolVar(&o.fixCommit, "commit", false, "fix: commit uncommitted changes before fixing and the fixes after, with written messages")
 	fs.BoolVar(&o.fixComments, "comments", true, "fix -pr: also fix the PR's review comments the review confirmed")
+	fs.BoolVar(&o.fixLow, "low", false, "fix: also fix low-severity issues (without it they are fixed only when nothing worse is left)")
+	fs.StringVar(&o.fixAuditor, "fix-auditor", "auto", "fix: the model that audits each fix round, whether it fixed its issues and what it added beyond them: auto (the other subscription CLI than the fixer's, else the other family's API, else the fixer's own provider), off, or a provider")
+	fs.StringVar(&o.fixAuditModel, "fix-audit-model", "", "fix: the audit's model (default: the provider's review model)")
+	fs.StringVar(&o.fixAuditEffort, "fix-audit-effort", defaultAuditEffort, "fix: reasoning effort for the audit")
+	fs.BoolVar(&o.secondOpinion, "second-opinion", true, "ask the -fix-auditor model, when it is another family's than the reviewer's, about the units a clean review only just moved out of human review or skim; when it agrees they are clean they can go down a bucket (-second-opinion=false to turn off)")
+	fs.StringVar(&o.tests, "tests", defaultTestsMode(), "run the repository's tests on the packages a change touches, while it is reviewed, and after each fix round: "+strings.Join(testsModes, "|")+" (on: local checkouts, and PRs whose branch is in the repository or whose author is in -trusted-authors; all: forks too). It runs the change's code on this machine, with a timeout and no network beyond localhost where the OS allows (default on in the desktop app, off otherwise)")
+	fs.StringVar(&o.testCmd, "test-cmd", "", "test command, run through the shell in the repository root (default: go test on the changed Go packages, else npm test, cargo test or pytest when the repository is set up for one)")
+	fs.IntVar(&o.testTimeout, "test-timeout", triage.DefaultTestTimeoutSec, "seconds a test run may take")
+	fs.BoolVar(&o.testNetwork, "test-network", false, "let tests reach the network (off: localhost only, on macOS)")
+	fs.StringVar(&o.trustedAuthors, "trusted-authors", "", "comma-separated GitHub logins whose PRs from forks are tested with -tests on")
 	fs.StringVar(&o.failOn, "fail-on", "medium", "fix: exit 3 when issues at this severity or worse remain after fixing: low|medium|high|critical|off")
 
 	// The subcommand may come before or after the flags.
@@ -202,6 +225,10 @@ func main() {
 		}
 	})
 
+	if err := checkTestsMode(o.tests); err != nil {
+		fmt.Fprintln(os.Stderr, "pr-manager:", err)
+		os.Exit(1)
+	}
 	if sub == "" && len(os.Args) == 1 && desktopBuild {
 		sub = "desktop"
 	}
@@ -316,7 +343,11 @@ func runTriage(ctx context.Context, o options) error {
 		if m := loadCodeMap(o.codemapDir); m != nil {
 			pipe.CodeMap = &triage.CodeMap{Map: m, Repo: localRepoName(o, m)}
 		}
+		pipe.Tests, _ = testerFor(o, nil)
 		report = &triage.Report{Base: o.base, Head: o.head, Units: pipe.Run(ctx, src)}
+		if pipe.Tests != nil {
+			fmt.Fprintln(os.Stderr, "pr-manager:", pipe.Tests.Result.Summary())
+		}
 		if !triage.IsEnglish(o.summaryLang) {
 			tr, err := translateUnits(ctx, o, report.Units)
 			applyTranslation(o, report.Units, tr, err)
@@ -347,6 +378,9 @@ func runTriage(ctx context.Context, o options) error {
 
 func runEval(ctx context.Context, o options) error {
 	o = resolveProviders(o)
+	if o.historyN > 0 {
+		return runHistoryEval(ctx, o, os.Stdout)
+	}
 	policy, gitattrs, err := dirConfig(o)
 	if err != nil {
 		return err
@@ -389,7 +423,7 @@ var (
 		llm.AzureOpenAI: {orDefault(os.Getenv("AZURE_OPENAI_CLASSIFY_DEPLOYMENT"), llm.OpenAIGPT54Mini)},
 	}
 	summaryDefaults = map[string][]string{
-		"codex": {llm.CodexLarge, llm.OpenAIGPT56Sol}, "claude-code": {llm.ClaudeCodeLarge},
+		"codex": {llm.CodexLarge, llm.OpenAIGPT6Sol, llm.OpenAIGPT56Sol}, "claude-code": {llm.ClaudeCodeLarge},
 		llm.ClaudeAPI: {llm.AnthropicClaudeSonnet5}, llm.OpenAIAPI: {llm.OpenAIGPT6Sol, llm.OpenAIGPT56Sol, llm.OpenAIGPT54}, "ollama": {llm.OllamaQwen35_9B},
 		llm.Bedrock: {llm.BedrockSonnet5}, llm.Vertex: {llm.VertexSonnet5}, llm.Foundry: {llm.FoundrySonnet5},
 		llm.AzureOpenAI: {orDefault(os.Getenv("AZURE_OPENAI_REVIEW_DEPLOYMENT"), llm.OpenAIGPT6Sol)},
@@ -554,6 +588,9 @@ func sourceConfig(src *triage.Source, trustHead bool) (triage.Policy, []string, 
 	return policy, gitattrs, nil
 }
 
+// newReviewLLM is the reviewer's and critic's model; tests replace it.
+var newReviewLLM = llm.New
+
 // buildPipeline expects resolved providers (see resolveProviders).
 func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.Pipeline, error) {
 	if o.reviewBudget != "" {
@@ -620,12 +657,12 @@ func buildPipeline(o options, policy triage.Policy, gitattrs []string) (*triage.
 		pipe.ClassifyKey = fmt.Sprint(classifyKey, " ", policy.Thresholds, " ", policy.MaxUnitChars)
 	}
 	if o.summarizer != "off" {
-		l, err := llm.New(o.summarizer, o.summaryModel)
+		l, err := newReviewLLM(o.summarizer, o.summaryModel)
 		if err != nil {
 			return nil, err
 		}
 		llm.SetEffort(l, o.reviewEffort)
-		critic, err := llm.New(o.summarizer, o.summaryModel)
+		critic, err := newReviewLLM(o.summarizer, o.summaryModel)
 		if err != nil {
 			return nil, err
 		}

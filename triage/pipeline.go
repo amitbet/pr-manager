@@ -27,7 +27,11 @@ type Pipeline struct {
 	CodeMap     *CodeMap    // nil: no impact scores, no file history and no tier moves
 	// Lint runs the repository's static analysis over the lines the PR
 	// adds, before anything is scored (nil or disabled: no findings).
-	Lint        *Linter
+	Lint *Linter
+	// Tests runs the repository's tests over the changed packages, in the
+	// workspace (or Tests.Dir), while the review runs; nil or disabled: no
+	// test run. Failures become issues and coverage evidence afterwards.
+	Tests       *Tester
 	Concurrency int
 	// ReviewConcurrency limits the analyze stage; 0 uses Concurrency.
 	// Review calls are slower (bigger model, repo tools), so they get
@@ -147,13 +151,36 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 	// it too. It is removed when the run ends.
 	wantTools := sum != nil && sum.Tools && llm.SupportsWorkspace(sum.LLM)
 	var ws *llm.Workspace
-	if p.Lint.on() || wantTools {
+	testsInWS := p.Tests.on() && p.Tests.Dir == ""
+	if p.Lint.on() || wantTools || testsInWS {
 		w, cleanup, err := reviewWorkspace(src, p.Warn)
 		defer cleanup()
 		if err != nil && p.Warn != nil {
 			p.Warn("repository at the PR head unavailable: " + err.Error())
 		}
 		ws = w
+	}
+	// The tests run beside everything else; their findings are added once
+	// the review has written the units' issues (see applyTests).
+	var tested chan *TestRun
+	if p.Tests.on() {
+		dir := p.Tests.Dir
+		if dir == "" && ws != nil {
+			dir = ws.Dir
+		}
+		if p.Tests.Warn == nil {
+			p.Tests.Warn = p.Warn
+		}
+		tested = make(chan *TestRun, 1)
+		go func() {
+			defer close(tested)
+			tested <- p.Tests.Run(ctx, dir, src.Base, src)
+		}()
+		defer func() {
+			if tested != nil {
+				<-tested // never leave the run behind the workspace's cleanup
+			}
+		}()
 	}
 	if p.Lint.on() {
 		if p.Lint.Warn == nil {
@@ -241,6 +268,15 @@ func (p *Pipeline) Run(ctx context.Context, src *Source) []*Unit {
 			}
 			tiers.afterReview(u, prev[u])
 		}
+	}
+
+	if tested != nil {
+		if p.Progress != nil {
+			p.Progress("tests", 0, 0)
+		}
+		<-tested
+		tested = nil
+		p.Tests.Apply(units, tiers)
 	}
 
 	SortByBucket(units)

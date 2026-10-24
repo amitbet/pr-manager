@@ -161,7 +161,8 @@ func TestCommitEdits(t *testing.T) {
 	// The fix checkout, at the same commit.
 	fixDir := filepath.Join(t.TempDir(), "fix")
 	git("worktree", "add", "-q", "--detach", fixDir, head)
-	changed, _, err := fixRound(ctx, options{}, fixDir, nil, []targetedIssue{changeTarget(c)}, nil, true)
+	out, err := fixRound(ctx, options{}, fixDir, nil, []targetedIssue{changeTarget(c)}, nil, true, fixCall{})
+	changed := out.changed
 	if err != nil {
 		t.Fatal(err)
 	}

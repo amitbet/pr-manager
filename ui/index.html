@@ -177,6 +177,28 @@
       <label class="check"><input type="checkbox" id="recursive_fix"> keep fixing issues found by follow-up reviews</label>
       <label class="check" for="max_fix_rounds">Maximum fix and review rounds <input type="number" id="max_fix_rounds" min="1" max="10" value="3" style="width:64px"></label>
     </section>
+    <section data-tab="fixes">
+      <h4>Audit fixes with <span class="info" tabindex="0" aria-label="About the fix audit">i<span class="tip" role="tooltip">After each fix round, a second model checks the round&#39;s patch: did it fix each issue (or only hide the symptom), and what did it add that the issues didn&#39;t need (a helper, an option, a check for a case that can&#39;t happen, a tidy-up). An issue it and a second call both say isn&#39;t fixed goes back into the rounds; what it flags is trimmed in one extra round, which is undone if it breaks a test or brings an issue back. What the trim keeps shows on the Issues tab as a low note that doesn&#39;t change buckets. Default: the other subscription CLI than the reviewer&#39;s (claude-code fixes, codex audits, and the other way round); with only one, the reviewer&#39;s own provider, which the fix banner says isn&#39;t independent. A failed audit is a warning, never a failed fix.</span></span></h4>
+      <div class="grid fix-opts">
+        <label for="fix_auditor">Auditor</label>
+        <span><select id="fix_auditor" aria-label="fix auditor provider"><option value="">default</option></select> <select id="fix_audit_model" aria-label="fix auditor model"><option value="">default model</option></select></span>
+        <label for="fix_audit_effort">Effort</label>
+        <select id="fix_audit_effort" aria-label="fix audit effort"><option value="">default</option></select>
+      </div>
+      <label class="check"><input type="checkbox" id="second_opinion"> also ask it about units a clean review only just moved out of human review or skim <span class="info" tabindex="0" aria-label="About second opinions">i<span class="tip" role="tooltip">Only when the auditor is another model family than the reviewer. Up to 8 units a triage, the ones whose score is within 10 of a cut-off. When it agrees a unit is clean, that counts as evidence, like passing tests, and the unit can go down a bucket; when it doesn&#39;t, its reason is added to what to check.</span></span></label>
+    </section>
+    <section data-tab="review">
+      <h4>Tests <span class="info" tabindex="0" aria-label="About running tests">i<span class="tip" role="tooltip">Runs the repository&#39;s tests on the packages a change touches, while it is reviewed, and after every fix round. A test the change breaks pins its unit to human review; a test that fails at the merge base too is shown as low. Passing tests that run a unit&#39;s new code count as evidence for a clean review. A fix round that breaks a test is undone, and the next round is told what broke. Go: go test on the changed packages, with coverage. Otherwise npm test, cargo test or pytest when the repository is set up for one, or the command below. This runs the change&#39;s code on this machine, with a timeout and, on macOS, no network beyond localhost and no access to your SSH, cloud or gh credentials. Trusted PRs: your local checkouts, and PRs whose branch is in the repository itself (pushing there needs write access) or whose author is listed below.</span></span></h4>
+      <div class="grid fix-opts">
+        <label for="tests">Run tests for</label>
+        <select id="tests" aria-label="run tests"><option value="on">local changes and trusted PRs</option><option value="all">every PR, forks too</option><option value="off">nothing</option></select>
+        <label for="test_cmd">Command</label>
+        <input id="test_cmd" spellcheck="false" placeholder="detected (go test, npm test, cargo test, pytest)" aria-label="test command">
+        <label for="trusted_authors">Trusted authors</label>
+        <input id="trusted_authors" spellcheck="false" placeholder="GitHub logins, comma-separated" aria-label="trusted authors">
+      </div>
+      <label class="check"><input type="checkbox" id="test_network"> let tests reach the network</label>
+    </section>
     <section data-tab="stats" id="stats-pane" class="stats" aria-live="polite"></section>
     </div>
     </div>
@@ -219,12 +241,6 @@
     </div>
     <div class="hint rev-status" hidden></div>
     <div class="rev-list"></div>
-  </form>
-</dialog>
-<dialog id="job-log" class="settings-dlg log-dlg" aria-labelledby="job-log-title">
-  <form method="dialog">
-    <div class="dlg-head"><h3 id="job-log-title">Log</h3><button class="icon" value="close" aria-label="Close">✕</button></div>
-    <div class="job-log-body"></div>
   </form>
 </dialog>
 <script type="module" src="js/main.js"></script>

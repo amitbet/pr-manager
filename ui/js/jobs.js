@@ -1,13 +1,14 @@
-// Jobs: the job view (a triage job's progress and activity log in #main),
-// the log dialog (a fix job's, over the result it is fixing) and the
-// sidebar's list of running jobs. A job keeps running on the
-// server when its view is left or the page reloads; the list reopens it.
+// Jobs: the job view (a job's progress and activity log in #main) and the
+// sidebar's list of running jobs. A job keeps running on the server when
+// its view is left or the page reloads; the list reopens it. A job started
+// from a result (a fix, a suggestion) has a way back to that result while
+// it runs.
 import { $, esc, api, postJSON, ask, say } from "./util.js";
 import { mountActivity } from "./activity.js";
-import { S } from "./state.js";
+import { S, render } from "./state.js";
 
 const FAILED_FOR = 60 * 60 * 1000; // failed jobs stay listed this long
-const KIND = { triage: "triage", fix: "fix", index: "index" };
+const KIND = { triage: "triage", fix: "fix", index: "index", suggest: "suggest fix" };
 
 let onDone = async () => {};
 let onFinished = () => {};
@@ -51,7 +52,7 @@ export function initJobs(done, finished) {
       return;
     }
     const item = e.target.closest(".job-item");
-    if (item) item.dataset.kind === "fix" ? showLog(item.dataset.id) : watchJob(item.dataset.id);
+    if (item) watchJob(item.dataset.id);
   });
   refreshJobs();
 }
@@ -122,6 +123,12 @@ export function stageText(j) {
     list: "listing the org's repos",
     fix: `fix round ${j.done} of up to ${j.total}`,
     check: `checking fix round ${j.done} of up to ${j.total}`,
+    tests: j.kind === "fix" ? `running the tests for fix round ${j.done}` : "running the change's tests",
+    audit: `auditing fix round ${j.done} with a second model`,
+    trim: "trimming what the fix added beyond its issues",
+    checkout: j.kind === "suggest" ? "getting a scratch copy of the code" : "checking out the reviewed commit",
+    suggest: "asking the fixer for a patch",
+    "second opinion": "asking a second model about borderline units",
     triage: j.kind === "fix" ? "re-triaging the fixed code" : undefined,
     clone: j.kind === "index" ? `cloning ${j.done + 1}/${j.total}` : `${repo} is not in the code map: cloning it into the workspace…`,
     codemap: j.kind === "index" ? "building the code map" : `${repo} is not in the code map: building it before triage (a few minutes the first time)…`,
@@ -155,9 +162,19 @@ const LOST = "connection lost, retrying…";
 // a job that reused a cached result first and opens it only if it returns
 // true.
 export async function watchJob(id, onCached) {
-  $("#main").innerHTML = `<div class="job-view"><div class="progress"><div class="progress-what">loading…</div></div><div class="activity"></div></div>`;
+  // The result on screen, to go back to: the job keeps running, and its
+  // banner or row shows it there.
+  const from = S.result;
+  const back = from ? `<button type="button" class="linkbtn job-back">← back to ${esc(from.pr?.title || from.pr?.head_ref || "the review")}</button>` : "";
+  $("#main").innerHTML = `<div class="job-view">${back}<div class="progress"><div class="progress-what">loading…</div></div><div class="activity"></div></div>`;
   const view = $("#main .job-view");
+  S.jobView = id;
   view.addEventListener("click", handleStopClick);
+  view.querySelector(".job-back")?.addEventListener("click", () => {
+    markActive(null);
+    S.jobView = null;
+    if (S.result === from) render();
+  });
   const refreshLog = mountActivity(view.querySelector(".activity"), id);
   markActive(id);
   try {
@@ -187,35 +204,6 @@ export async function watchJob(id, onCached) {
     if (view.isConnected) view.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   }
   refreshJobs();
-}
-
-// showLog opens a job's progress and activity log in the log dialog, over
-// whatever #main shows, and follows the job while the dialog is open.
-export async function showLog(id) {
-  const dlg = $("#job-log");
-  const token = (dlg.token = {});
-  const body = dlg.querySelector(".job-log-body");
-  body.onclick = handleStopClick;
-  body.innerHTML = `<div class="job-log-stage">loading…</div><div class="activity"></div>`;
-  const refreshLog = mountActivity(body.querySelector(".activity"), id);
-  if (!dlg.open) dlg.showModal();
-  const live = () => dlg.open && dlg.token === token;
-  while (live()) {
-    const j = await pollJob(id, () => {
-      const s = live() && body.querySelector(".job-log-stage");
-      if (s) s.textContent = LOST;
-    }).catch((e) => ({ status: "error", error: `connection lost: ${e.message}` }));
-    await refreshLog().catch(() => {});
-    if (!live()) return;
-    if (j.kind) dlg.querySelector("h3").textContent = `${KIND[j.kind] || j.kind} log`;
-    const stage = body.querySelector(".job-log-stage");
-    if (j.status === "error") { stage.innerHTML = `<div class="error">${esc(j.error)}</div>`; return; }
-    if (j.status === "done") { stage.textContent = "finished"; return; }
-    if (j.status === "cancelled") { stage.textContent = "stopped"; return; }
-    const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
-    stage.innerHTML = `${stopButton(j)}${esc(stageText(j))}<div class="bar"><div style="width:${pct}%"></div></div>`;
-    await new Promise((res) => setTimeout(res, 700));
-  }
 }
 
 const watched = () => !!$("#main .job-view");

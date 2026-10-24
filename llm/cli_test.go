@@ -623,3 +623,20 @@ func TestClaudeStreamSubagentsAndProgress(t *testing.T) {
 		}
 	}
 }
+
+// A claude call's usage is the session's, its subagents and earlier turns
+// included: the result event's usage is only the main agent's last turn.
+func TestClaudeCodeUsageCountsSubagents(t *testing.T) {
+	tool := ToolDefinition{Name: "submit", Description: "Submit.", InputSchema: map[string]any{"type": "object"}}
+	bin, _ := fakeCLI(t, `{"type":"result","is_error":false,"result":"","usage":{"input_tokens":4,"cache_creation_input_tokens":24568,"cache_read_input_tokens":20960,"output_tokens":230},"modelUsage":{"m":{"inputTokens":1216,"outputTokens":253,"cacheReadInputTokens":20960,"cacheCreationInputTokens":39037}}}
+{"type":"result","is_error":false,"result":"","structured_output":{"a":1},"usage":{"input_tokens":2,"cache_creation_input_tokens":2604,"cache_read_input_tokens":24568,"output_tokens":13},"modelUsage":{"m":{"inputTokens":1218,"outputTokens":266,"cacheReadInputTokens":45528,"cacheCreationInputTokens":41641},"small":{"inputTokens":100,"outputTokens":10}}}`)
+	resp, err := (&ClaudeCodeCLI{Binary: bin}).Call(context.Background(), LLMRequest{
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}}, Tools: []ToolDefinition{tool}, ToolChoice: ToolChoiceRequired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Usage{InputTokens: 1218 + 45528 + 41641 + 100, OutputTokens: 266 + 10}); resp.Usage != want {
+		t.Fatalf("usage = %+v, want %+v", resp.Usage, want)
+	}
+}

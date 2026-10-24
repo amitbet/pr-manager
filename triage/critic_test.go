@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -151,5 +152,23 @@ func TestCriticKeepsIssueOnMalformedVerdict(t *testing.T) {
 	got := s.criticize(context.Background(), &Unit{File: "a.go"}, []Issue{{Title: "bug", Severity: "medium"}}, "")
 	if len(got) != 1 || got[0].Severity != "medium" {
 		t.Errorf("issues = %+v", got)
+	}
+}
+
+// Keep drops issues before the critic is asked about them.
+func TestKeepDropsIssuesBeforeTheCritic(t *testing.T) {
+	var calls atomic.Int32
+	critic := &fakeLLM{fn: func(req llm.LLMRequest) (*llm.LLMResponse, error) {
+		calls.Add(1)
+		return toolResp("judge_issue", map[string]any{"valid": true, "severity": "medium"}), nil
+	}}
+	s := &Summarizer{Critic: critic, Policy: DefaultPolicy(), Keep: func(_ *Unit, is Issue) bool { return is.Severity != "low" }}
+	u := &Unit{File: "a.go"}
+	s.setIssuesIn(context.Background(), u, map[string]any{"issues": []any{
+		map[string]any{"title": "bug", "severity": "medium", "failure_scenario": "x"},
+		map[string]any{"title": "nit", "severity": "low", "failure_scenario": "y"},
+	}}, "")
+	if len(u.Issues) != 1 || u.Issues[0].Title != "bug" || calls.Load() != 1 {
+		t.Errorf("issues = %+v, critic calls = %d", u.Issues, calls.Load())
 	}
 }

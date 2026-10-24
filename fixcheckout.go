@@ -538,7 +538,7 @@ func (co *repoCheckout) commitFix(ctx context.Context, n int, files []string, e 
 	if err != nil || staged == "" {
 		return "", err
 	}
-	if _, err := co.git(ctx, append([]string{"commit", "-q", "--no-verify", "-m", fixCommitMessage(e)}, paths...)...); err != nil {
+	if _, err := co.git(ctx, append([]string{"commit", "-q", "--no-verify", "-m", withFixTrailer(fixCommitMessage(e))}, paths...)...); err != nil {
 		return "", err
 	}
 	head, err := co.git(ctx, "rev-parse", "HEAD")

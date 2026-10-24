@@ -12,6 +12,13 @@ function took(t) {
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
 }
 
+// tokens is a thread's model tokens, short: "57K tokens".
+function tokens(n) {
+  if (!n) return "";
+  const s = n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
+  return `${s} tokens`;
+}
+
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour12: false });
 
 const isDiff = (s) => /^(diff --git |--- |@@ )/.test(s) || /\n@@ -\d/.test(s);
@@ -94,14 +101,15 @@ export function mountActivity(el, jobId) {
     const r = row(t);
     const d = r.el;
     d.dataset.status = t.status;
-    d.querySelector(".act-time").textContent = `${t.lines.length ? t.lines.length + (t.dropped || 0) + " lines · " : ""}${took(t)}`;
+    const spent = tokens((t.in || 0) + (t.out || 0));
+    d.querySelector(".act-time").textContent = `${t.lines.length ? t.lines.length + (t.dropped || 0) + " lines · " : ""}${spent ? spent + " · " : ""}${took(t)}`;
+    if (spent) d.querySelector(".act-time").title = `${(t.in || 0).toLocaleString()} in / ${(t.out || 0).toLocaleString()} out`;
     if (!r.touched && follow.checked) d.open = t.status === "running";
     const total = (t.dropped || 0) + t.lines.length;
     const fresh = t.lines.slice(Math.max(0, t.lines.length - (total - r.seen)));
     if (!fresh.length) return;
     r.seen = total;
     const pre = d.querySelector(".act-lines");
-    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 20;
     const frag = document.createDocumentFragment();
     for (const l of fresh) {
       const div = document.createElement("div");
@@ -116,17 +124,18 @@ export function mountActivity(el, jobId) {
     }
     pre.appendChild(frag);
     while (pre.childElementCount > MAX_DOM_LINES) pre.firstElementChild.remove();
-    if (atBottom) pre.scrollTop = pre.scrollHeight;
   }
 
   return async function refresh() {
     const threads = (await api(`/api/jobs/${jobId}/log`)).map((t) => ({ ...t, lines: t.lines || [] }));
-    const listAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 20;
+    const page = document.scrollingElement;
+    const atBottom = page.scrollHeight - page.scrollTop - page.clientHeight < 20;
     threads.forEach(update);
     const running = threads.filter((t) => t.status === "running").length;
     const failed = threads.filter((t) => t.status === "error").length;
+    const spent = tokens(threads.reduce((n, t) => n + (t.in || 0) + (t.out || 0), 0));
     el.querySelector(".act-count").textContent =
-      ` ${threads.length} threads · ${running} running${failed ? ` · ${failed} failed` : ""}`;
-    if (listAtBottom) list.scrollTop = list.scrollHeight;
+      ` ${threads.length} threads · ${running} running${failed ? ` · ${failed} failed` : ""}${spent ? ` · ${spent}` : ""}`;
+    if (atBottom) page.scrollTop = page.scrollHeight;
   };
 }

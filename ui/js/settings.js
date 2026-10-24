@@ -18,6 +18,7 @@ const ROLES = [
   { role: "summarizer", model: "summary_model", def: "summary_model", label: "reviewer" },
   { role: "translator", model: "translate_model", def: "translate_model", label: "translator", noOff: true },
   { role: "chat", model: "chat_model", def: "chat_model", label: "chat agent", noOff: true },
+  { role: "fix_auditor", model: "fix_audit_model", def: "fix_audit_model", label: "fix auditor" },
 ];
 let P = null; // GET /api/providers
 const saved = (k) => localStorage.getItem(`pr-manager.${k}`) || "";
@@ -250,6 +251,14 @@ export function jobSettings() {
   if (lang) body.summary_lang = lang;
   const effort = $("#translate_effort").value;
   if (effort) body.translate_effort = effort;
+  // The tests' and the auditor's settings, when set here: otherwise the
+  // server's flags decide.
+  for (const k of ["tests", "fix_audit_effort"]) if (saved(k) !== "") body[k] = saved(k);
+  for (const k of ["test_network", "second_opinion"]) if (saved(k)) body[k] = saved(k) === "1";
+  const auditor = $("#fix_auditor").value;
+  if (auditor) body.fix_auditor = auditor;
+  const auditModel = $("#fix_audit_model").value;
+  if (auditor && auditModel && auditModel !== "__custom") body.fix_audit_model = auditModel;
   return { ...body, ...codeSources() };
 }
 
@@ -305,6 +314,33 @@ function initHotkey(id, label) {
   };
   $(`#${id}_reset`).onclick = () => set("");
   show();
+}
+
+// initTestsAndAudit wires the tests' and the fix audit's fields; the
+// auditor's provider and model are a ROLES pair.
+function initTestsAndAudit() {
+  const sel = $("#tests");
+  sel.value = saved("tests") || S.cfg?.tests || "off";
+  if (!sel.value) sel.value = "off";
+  sel.onchange = () => save("tests", sel.value);
+  // The test command and trusted authors are the operator's: the server
+  // ignores them from here, so they are shown, not edited.
+  for (const id of ["test_cmd", "trusted_authors"]) {
+    const el = $(`#${id}`);
+    el.value = S.cfg?.[id] || "";
+    el.readOnly = true;
+    el.title = "Set by the server's operator (its flags); it can't be changed here.";
+  }
+  for (const id of ["test_network", "second_opinion"]) {
+    const el = $(`#${id}`);
+    el.checked = saved(id) ? saved(id) === "1" : !!S.cfg?.[id];
+    el.onchange = () => save(id, el.checked ? "1" : "0");
+  }
+  const effort = $("#fix_audit_effort");
+  const levels = ["low", "medium", "high", "xhigh"];
+  effort.innerHTML = `<option value="">default (${esc(S.cfg?.fix_audit_effort || "medium")})</option>` + levels.map((e) => `<option value="${e}">${e}</option>`).join("");
+  effort.value = levels.includes(saved("fix_audit_effort")) ? saved("fix_audit_effort") : "";
+  effort.onchange = () => save("fix_audit_effort", effort.value);
 }
 
 // initSettings wires the dialog. changed() runs when the budget moves,
@@ -415,6 +451,7 @@ export function initSettings(changed, langChanged) {
     rounds.value = String(Math.max(1, Math.min(10, Number(rounds.value) || 3)));
     save("max_fix_rounds", rounds.value);
   };
+  initTestsAndAudit();
   fillLang();
   fillEffort();
   fillCodeSources();

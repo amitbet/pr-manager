@@ -231,7 +231,11 @@ func gitlabGet(ctx context.Context, r revRepo, path string, v any) error {
 	if err != nil {
 		return err
 	}
-	if tok := firstEnv("GITLAB_TOKEN", "GL_TOKEN", "GITLAB_PRIVATE_TOKEN"); tok != "" {
+	// The token goes only to gitlab.com or the GitLab named by GITLAB_HOST,
+	// not to any host typed into the picker.
+	host := strings.ToLower(r.Ref.HostName())
+	glHost := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(os.Getenv("GITLAB_HOST"), "https://"), "http://"), "/"))
+	if tok := firstEnv("GITLAB_TOKEN", "GL_TOKEN", "GITLAB_PRIVATE_TOKEN"); tok != "" && (host == "gitlab.com" || (glHost != "" && host == glHost)) {
 		req.Header.Set("PRIVATE-TOKEN", tok)
 	}
 	resp, err := http.DefaultClient.Do(req)

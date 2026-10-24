@@ -48,7 +48,7 @@ var claudeCodeModels = []Model{
 
 // Fallback lists when a provider is usable but its list can't be read.
 var fallbackModels = map[string][]Model{
-	"codex": {{ID: "gpt-6-astra"}, {ID: "gpt-6-sol"}, {ID: "gpt-6-luna"}, {ID: "gpt-5.6-sol"}, {ID: "gpt-5.6-terra"}, {ID: "gpt-5.6-luna"}},
+	"codex": {{ID: "gpt-6-astra"}, {ID: "gpt-6.1-sol"}, {ID: "gpt-6-sol"}, {ID: "gpt-6-luna"}, {ID: "gpt-5.6-sol"}, {ID: "gpt-5.6-terra"}, {ID: "gpt-5.6-luna"}},
 	ClaudeAPI: {{ID: AnthropicClaudeOpus55, Label: "Claude Opus 5.5"}, {ID: AnthropicClaudeSonnet5, Label: "Claude Sonnet 5"},
 		{ID: AnthropicClaudeHaiku45, Label: "Claude Haiku 4.5"}},
 	OpenAIAPI: {{ID: OpenAIGPT6Sol}, {ID: OpenAIGPT56Sol}, {ID: OpenAIGPT54}, {ID: OpenAIGPT54Mini}, {ID: OpenAIGPT54Nano}},

@@ -31,6 +31,7 @@ import { initChat } from "./chat.js";
 import { initViewCtx, selection, clearSelection, fields as openFields, fieldText } from "./viewctx.js";
 import { initAgentAPI, changeOf, describe as agentDescribe, run as agentRun } from "./agentapi.js";
 import { relatedHTML, actions as relatedActions, onKeydown as relatedKeydown } from "./related.js";
+import { testsLine, auditLine, initTests, actions as testsActions } from "./tests.js";
 import * as budget from "./budget.js";
 
 // TABS are the views of a triaged PR. mount runs after the tab's HTML is on
@@ -60,7 +61,7 @@ function openClaims() {
 const MODES = [["walk", "Walkthrough"], ["files", "Files"], ["classic", "Classic"]];
 
 const actions = {
-  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions, ...relatedActions,
+  ...diffActions, ...commentActions, ...reviewActions, ...walkActions, ...filesActions, ...treemapActions, ...fixActions, ...enActions, ...overviewActions, ...issueActions, ...pendingActions, ...seqActions, ...relatedActions, ...testsActions,
   tab: (el) => { S.tab = el.dataset.tab; syncURL(); },
   mode: (el) => { S.tab = "review"; S.mode = el.dataset.mode; syncURL(); },
   "create-pr": async (el) => {
@@ -225,7 +226,9 @@ function prHeadHTML(r) {
         <span class="dz ${attLevel(r.attention)}" title="highest review attention">max attention ${r.attention}</span>
         ${r.codemap ? `<span title="code map build">map ${esc(r.codemap)}</span>` : ""}</div>` : ""}
       ${carriedLine(r)}
+      ${testsLine(r)}
       ${r.local_fix_dir ? `<div class="meta">Local fix branch: <code>${esc(r.local_fix_branch || "detached")}</code> · ${r.local_fix_location === "clone" ? "cached clone" : r.local_fix_location === "branch" ? "current checkout" : "worktree"}: <code>${esc(r.local_fix_dir)}</code> · ${r.fix_rounds} fix and review round${r.fix_rounds === 1 ? "" : "s"}${r.fix_from_rev ? ` · fixes issues found in <code>${esc(r.fix_from_rev)}</code>` : ""}</div>` : ""}
+      ${auditLine(r)}
       ${r.fix_warning ? `<div class="tr-banner warn" role="status">${esc(r.fix_warning)}</div>` : ""}
     </div>`;
 }
@@ -306,6 +309,10 @@ const chat = initChat({
 onRender(() => {
   const r = S.result;
   if (!r) return;
+  // A job's view stays until it is left (back, or a result opened): a
+  // fix's banner or a suggestion re-rendering the result must not replace it.
+  if (S.jobView && $("#main .job-view")) { chat.sync(); return; }
+  S.jobView = null;
   syncComposer();
   syncDismiss();
   const kept = keepTyping(() => {
@@ -328,6 +335,7 @@ let showing = 0;
 
 async function showKey(key) {
   const call = ++showing;
+  S.jobView = null;
   const r = await api(`/api/results/${encodeURIComponent(key)}`);
   if (call !== showing) return;
   budget.apply(r, S.cfg);
@@ -352,6 +360,8 @@ async function showKey(key) {
   loadOverview().finally(() => { if (S.result === r) translate(); });
   loadSequence(); // before the tab is opened, so it is not waited for there
 }
+
+initTests(showKey);
 
 // openResult shows a result, or the log of the triage that is replacing it
 // while that runs.

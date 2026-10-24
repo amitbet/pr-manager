@@ -52,6 +52,9 @@ type Unit struct {
 	// (see Linter). Deterministic, so it is shown whether or not the
 	// review agrees with it.
 	Lint []LintFinding `json:"lint,omitempty"`
+	// Coverage is how much of the unit's added code the passing tests ran
+	// (see Tester); nil when they weren't run or don't instrument it.
+	Coverage *Coverage `json:"coverage,omitempty"`
 	// Score is how the bucket was picked (nil for units never classified).
 	Score *Score `json:"score,omitempty"`
 	// CarriedFrom is set when the unit kept the review an earlier run of
@@ -67,6 +70,9 @@ func (u *Unit) Diff() string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+// HasLine reports whether the unit's hunks hold new-file line line.
+func (u *Unit) HasLine(line int) bool { return unitHasLine(u, line) }
 
 func (u *Unit) Added() (add, del int) {
 	for _, h := range u.Hunks {
@@ -137,6 +143,17 @@ func BuildUnits(files []FileDiff, content ContentFunc, maxChars int) []*Unit {
 type declRange struct {
 	name       string
 	start, end int
+}
+
+// DeclSpan is the lines of the innermost declaration of path's src that
+// holds line; ok is false when none does or the language has none.
+func DeclSpan(path string, src []byte, line int) (start, end int, ok bool) {
+	for _, d := range declRanges(path, src) {
+		if d.start <= line && line <= d.end && (!ok || d.end-d.start < end-start) {
+			start, end, ok = d.start, d.end, true
+		}
+	}
+	return start, end, ok
 }
 
 // declRanges names the declarations of a Go, TS/JS, Java, Python, C#, Rust

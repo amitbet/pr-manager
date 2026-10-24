@@ -38,6 +38,7 @@ export async function showStats(el) {
     el.addEventListener("focusin", onHover);
     el.addEventListener("pointerleave", hideTip);
     el.addEventListener("focusout", hideTip);
+    el.addEventListener("scroll", hideTip);
     el.addEventListener("keydown", (e) => {
       const row = (e.key === "Enter" || e.key === " ") && e.target.closest?.('[data-st="repo"]');
       if (row) { e.preventDefault(); row.click(); }
@@ -206,10 +207,14 @@ function onHover(e) {
   }
   tip.innerHTML = `<div class="st-tip-head">${esc(head)}</div>${body}`;
   tip.hidden = false;
+  // Fixed, and kept inside the pane: placed in it, a tip near the bottom
+  // made the pane taller and moved its scroll.
   const pr = pane.getBoundingClientRect(), er = el.getBoundingClientRect();
-  const left = Math.min(er.left - pr.left + er.width / 2 + 12, pane.clientWidth - tip.offsetWidth - 4);
-  tip.style.left = `${Math.max(0, left)}px`;
-  tip.style.top = `${er.top - pr.top + pane.scrollTop + Math.min(er.height, 40)}px`;
+  const left = Math.min(er.left + er.width / 2 + 12, pr.right - tip.offsetWidth - 4);
+  let top = er.top + Math.min(er.height, 40);
+  if (top + tip.offsetHeight > pr.bottom - 4) top = er.top - tip.offsetHeight - 4;
+  tip.style.left = `${Math.max(pr.left, left)}px`;
+  tip.style.top = `${Math.max(pr.top, top)}px`;
   el.classList.add("hover");
   el.addEventListener("pointerleave", () => el.classList.remove("hover"), { once: true });
 }

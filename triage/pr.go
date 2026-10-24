@@ -122,11 +122,15 @@ type PRInfo struct {
 	URL          string `json:"url"`
 	Title        string `json:"title"`
 	Author       string `json:"author"`
-	State        string `json:"state"`
-	HeadOid      string `json:"head_oid"`
-	BaseOid      string `json:"base_oid"` // merge base actually diffed against
-	BaseRef      string `json:"base_ref"`
-	HeadRef      string `json:"head_ref"`
+	// Fork: the PR's branch is in another repository, so its author may
+	// have no write access to this one; its tests don't run unasked. A
+	// PR saved before this field was recorded reads as a fork.
+	Fork    bool   `json:"fork"`
+	State   string `json:"state"`
+	HeadOid string `json:"head_oid"`
+	BaseOid string `json:"base_oid"` // merge base actually diffed against
+	BaseRef string `json:"base_ref"`
+	HeadRef string `json:"head_ref"`
 	// StackedOn is set, to BaseRef, when a local branch is diffed from
 	// another branch than origin's default one, DefaultBase: the branch
 	// its PR targets, or is to target. StackPR is that branch's open PR.
@@ -147,6 +151,25 @@ type PRInfo struct {
 	// Related are the PRs the reader connects to the change, for the
 	// overview, the sequence and the fixer; set for a run, not saved.
 	Related []RelatedCode `json:"-"`
+}
+
+// UnmarshalJSON reads a PR saved without a "fork" key as a fork, so a
+// result from before it was recorded fails closed.
+func (p *PRInfo) UnmarshalJSON(b []byte) error {
+	type plain PRInfo
+	v := struct {
+		*plain
+		Fork *bool `json:"fork"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	if v.Fork != nil {
+		p.Fork = *v.Fork
+	} else {
+		p.Fork = p.Number != 0 && p.LocalPath == ""
+	}
+	return nil
 }
 
 // PRFetcher keeps blobless clones under Dir and diffs PRs locally, so
@@ -238,7 +261,7 @@ func (f *PRFetcher) Fetch(ctx context.Context, ref PRRef) (*PRInfo, *Source, err
 // check its head against saved results before the slower fetch.
 func (f *PRFetcher) Resolve(ctx context.Context, ref PRRef) (*PRInfo, error) {
 	raw, err := run(ctx, "", "gh", "pr", "view", strconv.Itoa(ref.Number), "-R", ref.RepoArg(), "--json",
-		"url,title,author,state,headRefOid,baseRefName,headRefName,body,additions,deletions,mergedAt,mergeCommit")
+		"url,title,author,state,headRefOid,baseRefName,headRefName,body,additions,deletions,mergedAt,mergeCommit,isCrossRepository")
 	if err != nil {
 		return nil, err
 	}
@@ -254,6 +277,7 @@ func (f *PRFetcher) Resolve(ctx context.Context, ref PRRef) (*PRInfo, error) {
 		Additions   int                    `json:"additions"`
 		Deletions   int                    `json:"deletions"`
 		MergedAt    string                 `json:"mergedAt"`
+		Fork        bool                   `json:"isCrossRepository"`
 		MergeCommit *struct {
 			Oid string `json:"oid"`
 		} `json:"mergeCommit"`
@@ -264,7 +288,7 @@ func (f *PRFetcher) Resolve(ctx context.Context, ref PRRef) (*PRInfo, error) {
 	info := &PRInfo{
 		PRRef: ref, URL: v.URL, Title: v.Title, Author: v.Author.Login, State: v.State,
 		HeadOid: v.HeadRefOid, BaseRef: v.BaseRefName, HeadRef: v.HeadRefName, Body: v.Body,
-		Adds: v.Additions, Dels: v.Deletions, MergedAt: v.MergedAt,
+		Adds: v.Additions, Dels: v.Deletions, MergedAt: v.MergedAt, Fork: v.Fork,
 	}
 	if v.MergeCommit != nil {
 		info.mergeOid = v.MergeCommit.Oid

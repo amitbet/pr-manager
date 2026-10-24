@@ -20,7 +20,8 @@ const g2 = (x) => String(+x.toFixed(2)); // Go's %.2g for these values
 
 export function place(u, b) {
   const s = u.score, att = u.attention || 0;
-  const f = b.trust * (s.clean || 0);
+  // Score.trust in Go: a clean review's share, with its evidence, capped.
+  const f = Math.min(0.9, b.trust * (s.clean || 0) * (1 + (s.evidence || 0)));
   const lowered = Math.round(s.prior * (1 - f));
   const total = Math.max(att, lowered);
   // A comment pin wins over any other pin but human (Score.pin in Go).
@@ -36,7 +37,7 @@ export function place(u, b) {
   else if (total >= b.skim) [bucket, cut] = ["skim", `≥ ${b.skim}`];
   let x = String(s.base);
   if (s.kind !== 1) x += ` × kind ${g2(s.kind)}`;
-  if (f > 0) x += ` × ${g2(1 - f)} (${s.clean < 1 ? "only low issues" : "clean review"})`;
+  if (f > 0) x += ` × ${g2(1 - f)} (${s.clean < 1 ? "only low issues" : "clean review"}${s.evidence > 0 && s.evidence_why ? `, ${s.evidence_why}` : ""})`;
   if (att > lowered) x = `review attention ${att} (over ${x})`;
   let why = `score ${total} = ${x} → ${bucket} (${cut} on ${b.name})`;
   if (s.floor && RANK[s.floor] > RANK[bucket]) {

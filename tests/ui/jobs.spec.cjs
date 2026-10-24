@@ -17,7 +17,7 @@ for (const surface of ['sidebar', 'triage log', 'fix log']) {
     const row = page.locator('#jobs .job-item');
     await expect(row).toBeVisible();
     if (surface !== 'sidebar') await row.locator('.u').click();
-    const container = page.locator(surface === 'sidebar' ? '#jobs' : surface === 'fix log' ? '#job-log' : '#main');
+    const container = page.locator(surface === 'sidebar' ? '#jobs' : '#main');
     await container.getByRole('button', { name: 'Stop', exact: true }).click();
     const warning = page.locator('.ask-dlg');
     await expect(warning).toContainText('Unfinished work may be lost');
@@ -39,6 +39,6 @@ test('a running job past its cancellation boundary has no Stop button', async ({
   await page.route('**/api/jobs/committing/log**', route => route.fulfill({ json: [] }));
   await page.goto('/');
   await page.locator('#jobs .job-item').click();
-  await expect(page.locator('#job-log')).toContainText('committing');
+  await expect(page.locator('#main .job-view')).toContainText('committing');
   await expect(page.locator('.job-stop')).toHaveCount(0);
 });

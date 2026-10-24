@@ -45,15 +45,25 @@ type Issue struct {
 	Compared bool      `json:"compared,omitempty"`
 }
 
-// Live reports whether the issue still counts toward a unit's bucket:
-// nobody dismissed it and it does not repeat another.
+// Live reports whether the issue still stands: nobody dismissed it and it
+// does not repeat another.
 func (is Issue) Live() bool { return !is.Dismissed && is.SameAs == nil }
 
-// liveIssues drops the ones a person dismissed and the repeats.
+// ScopeIssueSource is Issue.Source on what a fix's audit found the fix
+// added beyond its issues. Those issues are shown, and can be fixed (which
+// trims the addition), but they say what a fix did, not what is wrong with
+// the code: they don't count toward the bucket.
+const ScopeIssueSource = "fix-audit"
+
+// Counts reports whether the issue counts toward a unit's bucket: it is
+// Live and not a fix audit's note on scope.
+func (is Issue) Counts() bool { return is.Live() && is.Source != ScopeIssueSource }
+
+// liveIssues keeps the issues that count (see Counts).
 func liveIssues(issues []Issue) []Issue {
 	out := issues[:0:0]
 	for _, is := range issues {
-		if is.Live() {
+		if is.Counts() {
 			out = append(out, is)
 		}
 	}
@@ -200,6 +210,11 @@ type Score struct {
 	// Clean is the share of the budget's trust the review earned: 1 found
 	// nothing, 0.5 only low issues, 0 not reviewed.
 	Clean float64 `json:"clean"`
+	// Evidence is what checks independent of the review add to the trust a
+	// clean review earned (0-1: up to doubling it), and why: the passing
+	// tests that run the unit's added code. It counts only with Clean.
+	Evidence    float64 `json:"evidence,omitempty"`
+	EvidenceWhy string  `json:"evidence_why,omitempty"`
 	// Classified is the classifier's bucket (after its confidence thresholds).
 	Classified Bucket `json:"classified,omitempty"`
 	// Pin fixes the bucket whatever the budget; Floor is the lowest it can go.
@@ -250,7 +265,17 @@ type Score struct {
 // TotalAt is the score under b: the prior lowered by the trust a clean
 // review earned, but never below the review's attention.
 func (s *Score) TotalAt(b Budget, attention int) int {
-	return max(attention, int(math.Round(float64(s.Prior)*(1-b.Trust*s.Clean))))
+	return max(attention, int(math.Round(float64(s.Prior)*(1-s.trust(b)))))
+}
+
+// maxTrust caps how much of a unit's prior a review and its evidence can
+// take away, so no amount of evidence makes the score nothing.
+const maxTrust = 0.9
+
+// trust is the share of the prior a clean review, with its evidence,
+// takes away under b.
+func (s *Score) trust(b Budget) float64 {
+	return min(maxTrust, b.Trust*s.Clean*(1+s.Evidence))
 }
 
 // Place picks the bucket under b and says why.
@@ -312,14 +337,17 @@ func (s *Score) arithmetic(b Budget, attention int) string {
 	if s.Kind != 1 {
 		x += fmt.Sprintf(" × kind %.2g", s.Kind)
 	}
-	if f := b.Trust * s.Clean; f > 0 {
+	if f := s.trust(b); f > 0 {
 		what := "clean review"
 		if s.Clean < 1 {
 			what = "only low issues"
 		}
+		if s.Evidence > 0 && s.EvidenceWhy != "" {
+			what += ", " + s.EvidenceWhy
+		}
 		x += fmt.Sprintf(" × %.2g (%s)", 1-f, what)
 	}
-	if lowered := int(math.Round(float64(s.Prior) * (1 - b.Trust*s.Clean))); attention > lowered {
+	if lowered := int(math.Round(float64(s.Prior) * (1 - s.trust(b)))); attention > lowered {
 		x = fmt.Sprintf("review attention %d (over %s)", attention, x)
 	}
 	return x
@@ -432,6 +460,47 @@ func (tp TierPolicy) afterReview(u *Unit, prev Bucket) {
 	}
 	s.Clean = cleanShare(u)
 	tp.place(u)
+}
+
+// afterTests applies what the tests found to a scored unit: a failure it
+// is about counts like an issue the review found (a regression pins it
+// to human), and passing tests that run its added code are evidence for
+// a clean review.
+func (tp TierPolicy) afterTests(u *Unit) {
+	s := u.Score
+	if s == nil {
+		return
+	}
+	var failed []Issue
+	for _, is := range u.Issues {
+		if is.Source == TestIssueSource && is.Live() {
+			failed = append(failed, is)
+		}
+	}
+	if len(failed) > 0 {
+		u.Attention = max(u.Attention, attentionScore(u.Issues))
+		if w := worstIssue(failed); severityWeight[w.Severity] >= severityWeight["medium"] && s.Pin != BucketHuman {
+			if !s.PinIssue {
+				s.PinBefore, s.PinBeforeWhy = s.Pin, s.PinWhy
+			}
+			s.Pin, s.PinWhy, s.PinIssue = BucketHuman, "a test fails with this change: "+w.Title, true
+		}
+		if u.Reviewed {
+			s.Clean = cleanShare(u)
+		}
+	}
+	s.Evidence, s.EvidenceWhy = coverageEvidence(u.Coverage)
+	tp.place(u)
+}
+
+// coverageEvidence is the trust passing tests that run a unit's added
+// statements add: up to half as much again as the clean review's.
+func coverageEvidence(c *Coverage) (float64, string) {
+	if c == nil || c.Statements == 0 || c.Covered == 0 {
+		return 0, ""
+	}
+	share := float64(c.Covered) / float64(c.Statements)
+	return math.Round(50*share) / 100, fmt.Sprintf("passing tests run %d of %d added statements", c.Covered, c.Statements)
 }
 
 // cleanShare is how much of the budget's trust the review earned: all of
@@ -566,7 +635,7 @@ func Rebucket(units []*Unit, tp TierPolicy, budget string) error {
 func worstIssue(issues []Issue) Issue {
 	var w Issue
 	for _, is := range issues {
-		if is.Live() && severityWeight[is.Severity] > severityWeight[w.Severity] {
+		if is.Counts() && severityWeight[is.Severity] > severityWeight[w.Severity] {
 			w = is
 		}
 	}

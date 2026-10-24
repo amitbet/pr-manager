@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/amitbet/pr-manager/internal/activity"
 )
 
 // Every model call's tokens are recorded, with what it was for: the
@@ -78,6 +80,7 @@ func recordUsage(ctx context.Context, l LLMTool, tool string, u *Usage) {
 	if u == nil || u.InputTokens+u.OutputTokens == 0 {
 		return
 	}
+	activity.AddTokens(ctx, u.InputTokens, u.OutputTokens)
 	usageSink.RLock()
 	f := usageSink.f
 	usageSink.RUnlock()

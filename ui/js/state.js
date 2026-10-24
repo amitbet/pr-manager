@@ -27,6 +27,9 @@ export const focusTop = () => localStorage.getItem("pr-manager.focus_top") === "
 
 export const S = {
   result: null,
+  // jobView is the job whose view #main shows over the result (jobs.js),
+  // until it is left; null otherwise.
+  jobView: null,
   cfg: null,
   view: diffViewDefault(),
   hidden: new Set(),

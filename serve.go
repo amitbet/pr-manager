@@ -105,6 +105,15 @@ type PRResult struct {
 	// Reviewers is the last run of each extra reviewer on this result
 	// (see reviewers.go); nil when none was run.
 	Reviewers []extraRun `json:"reviewers,omitempty"`
+	// Tests is the run of the change's tests, or why there was none (see
+	// tests.go); nil for results from before tests ran.
+	Tests *triage.TestRun `json:"tests,omitempty"`
+	// FixAudit is every fix round's audit, over this fix and the ones it
+	// continued, and FixAuditNote this fix's in a line (see fixaudit.go).
+	FixAudit     []fixAuditRound `json:"fix_audit,omitempty"`
+	FixAuditNote string          `json:"fix_audit_note,omitempty"`
+	// Suggestions are the fixes suggested on the Issues tab (suggest.go).
+	Suggestions []fixSuggestion `json:"suggestions,omitempty"`
 }
 
 // tierPolicy is the budget table the result was triaged with (the
@@ -267,7 +276,17 @@ type jobOptions struct {
 	ChatModel string  `json:"chat_model"`
 	CodeRoot  *string `json:"code_root"`
 	Org       *string `json:"org"`
-	Force     bool    `json:"force"`
+	// Tests and TestNetwork can only narrow the operator's tests settings
+	// (tests.go); the test command and trusted authors are the operator's.
+	Tests       *string `json:"tests"`
+	TestNetwork *bool   `json:"test_network"`
+	// FixAuditor, FixAuditModel and FixAuditEffort pick the model that
+	// audits fix rounds (fixaudit.go): auto, off or a provider.
+	FixAuditor     *string `json:"fix_auditor"`
+	FixAuditModel  *string `json:"fix_audit_model"`
+	FixAuditEffort *string `json:"fix_audit_effort"`
+	SecondOpinion  *bool   `json:"second_opinion"`
+	Force          bool    `json:"force"`
 	// Rereview reviews these units again and keeps every other unit's
 	// review from the result RereviewOf (see chatactions.go).
 	Rereview   []string `json:"rereview,omitempty"`
@@ -334,6 +353,30 @@ func (t *triager) options(jo jobOptions) options {
 	}
 	if jo.Org != nil {
 		o.org = strings.TrimSpace(*jo.Org)
+	}
+	// Any local web page can POST here, so a request may only narrow the
+	// operator's tests settings, never widen them: the command, the trusted
+	// authors and turning tests or their network on stay the operator's.
+	if jo.Tests != nil {
+		switch m := strings.TrimSpace(*jo.Tests); {
+		case m == "off", m == "on" && o.tests == "all":
+			o.tests = m
+		}
+	}
+	if jo.TestNetwork != nil && !*jo.TestNetwork {
+		o.testNetwork = false
+	}
+	if jo.FixAuditor != nil {
+		o.fixAuditor = strings.TrimSpace(*jo.FixAuditor)
+	}
+	if jo.FixAuditModel != nil {
+		o.fixAuditModel = strings.TrimSpace(*jo.FixAuditModel)
+	}
+	if jo.FixAuditEffort != nil {
+		o.fixAuditEffort = strings.TrimSpace(*jo.FixAuditEffort)
+	}
+	if jo.SecondOpinion != nil {
+		o.secondOpinion = *jo.SecondOpinion
 	}
 	return resolveProviders(o)
 }
@@ -479,6 +522,10 @@ func (t *triager) withPRInfo(r *PRResult, info *triage.PRInfo) *PRResult {
 
 func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo, src *triage.Source, pipe *triage.Pipeline, o options, carry *carryPlan) (*PRResult, error) {
 	start := time.Now()
+	testsSkipped := ""
+	if pipe.Tests == nil {
+		pipe.Tests, testsSkipped = testerFor(o, info)
+	}
 	units := pipe.Run(ctx, src)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -497,6 +544,11 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 			pipe.Progress("dedupe", 0, 0)
 		}
 		pipe.Summarizer.Dedupe(ctx, units, pipe.Presorter.Policy.Tiers)
+		// A second model on the units one clean review only just moved down.
+		if pipe.Progress != nil {
+			pipe.Progress("second opinion", 0, 0)
+		}
+		secondOpinions(ctx, o, units, pipe.Presorter.Policy.Tiers)
 	}
 
 	r := &PRResult{
@@ -507,6 +559,7 @@ func (t *triager) runSource(ctx context.Context, key string, info *triage.PRInfo
 	r.Classifier, r.Summarizer = runBy(o)
 	r.Impact, r.Likelihood, r.Attention = (&triage.Report{Units: units}).Scores()
 	r.Carried = triage.CountCarried(units)
+	r.Tests = testsResult(pipe.Tests, testsSkipped)
 	if pipe.CodeMap != nil {
 		r.CodeMap = codeMapVersion(pipe.CodeMap.Map)
 	}
@@ -981,12 +1034,14 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	t.chatActionRoutes(mux)
 	t.dismissed.routes(mux, t)
 	t.stackRoutes(mux)
+	t.testsRoutes(mux)
+	t.suggestRoutes(mux)
 	newUISettings(o.cache).routes(mux)
 	treemapRoute(mux, o)
 	mux.Handle("GET /", http.FileServerFS(static))
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		d := resolveProviders(o)
-		writeJSON(w, 200, map[string]any{
+		cfg := map[string]any{
 			"classifier": d.classifier, "classify_model": d.classifyModel,
 			"summarizer": d.summarizer, "summary_model": d.summaryModel,
 			"translator": d.translator, "translate_model": d.translateModel, "translate_effort": d.translateEffort,
@@ -1013,7 +1068,11 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			"version":        displayVersion(),
 			"commit":         commit,
 			"built":          date,
-		})
+		}
+		// The tests' and the fix audit's defaults (tests.go, fixaudit.go).
+		cfg["tests"], cfg["test_cmd"], cfg["test_network"], cfg["trusted_authors"] = o.tests, o.testCmd, o.testNetwork, o.trustedAuthors
+		cfg["fix_audit_effort"], cfg["second_opinion"] = orDefault(o.fixAuditEffort, defaultAuditEffort), o.secondOpinion
+		writeJSON(w, 200, cfg)
 	})
 	mux.HandleFunc("POST /api/codemap/index", func(w http.ResponseWriter, r *http.Request) {
 		var jo jobOptions
@@ -1362,6 +1421,10 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "uncommitted"})
 			return
 		}
+		if errors.Is(err, errFixRounds) {
+			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "rounds"})
+			return
+		}
 		if errors.Is(err, errRev) {
 			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "rev"})
 			return
@@ -1649,7 +1712,8 @@ type providerChoice struct {
 	TranslateEffort string      `json:"translate_effort,omitempty"`
 	SummaryModel    string      `json:"summary_model,omitempty"`
 	ChatModel       string      `json:"chat_model,omitempty"` // the summary model's defaults
-	Summarize       bool        `json:"summarize"`            // openjev only classifies
+	FixAuditModel   string      `json:"fix_audit_model,omitempty"`
+	Summarize       bool        `json:"summarize"` // openjev only classifies
 }
 
 // providerList is GET /api/providers: the providers this machine can run
@@ -1667,7 +1731,7 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 		pc := providerChoice{ID: c.Provider, Reason: c.Reason, Live: c.Live, Models: c.Models,
 			ClassifyModel: llm.PickModel(c, classifyDefaults[c.Provider]...), SummaryModel: llm.PickModel(c, summaryDefaults[c.Provider]...),
 			TranslateModel: llm.PickModel(c, translatePrefs(c.Provider)...), Summarize: c.Provider != "openjev", TranslateEffort: o.translateEffort}
-		pc.ChatModel = pc.SummaryModel
+		pc.ChatModel, pc.FixAuditModel = pc.SummaryModel, pc.SummaryModel
 		if pc.TranslateEffort == "auto" { // a -translate-effort flag applies to every provider
 			pc.TranslateEffort = orDefault(translateEfforts[c.Provider], "low")
 		}
@@ -1680,12 +1744,17 @@ func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 		}
 		avail = append(avail, pc)
 	}
+	auditor, auditModel := "off", ""
+	if a := resolveAuditor(d); a != nil {
+		auditor, auditModel = a.provider, a.model
+	}
 	return map[string]any{
 		"providers": avail, "unavailable": missing,
 		"classifier": d.classifier, "classify_model": d.classifyModel,
 		"summarizer": d.summarizer, "summary_model": d.summaryModel,
 		"translator": d.translator, "translate_model": d.translateModel,
 		"chat": d.chat, "chat_model": d.chatModel,
+		"fix_auditor": auditor, "fix_audit_model": auditModel,
 	}
 }
 

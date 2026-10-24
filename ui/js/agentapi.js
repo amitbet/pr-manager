@@ -187,7 +187,7 @@ export const ACTIONS = {
     risk: "job", label: (a) => a.all ? `Fix all issues${a.comments ? " and confirmed comments" : ""}` : `Fix ${(a.targets || []).length} issue(s)`,
     run: async (a, progress) => {
       let target;
-      if (a.all) target = { all: true, comments: !!a.comments };
+      if (a.all) target = { all: true, low: !!a.low, comments: !!a.comments };
       else {
         const ts = need(a.targets, "targets").map((x) => {
           const { u } = unitOf(need(x.unit, "unit"));

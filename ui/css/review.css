@@ -41,6 +41,7 @@ ul.lk-factors li { margin: 1px 0; }
 .split-btn > .caret { border-radius: 0 12px 12px 0; border-left: 0; padding: 1px 7px; }
 .split-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.15); font-size: 14px; white-space: nowrap; }
 .split-menu label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.split-menu label + label { margin-top: 6px; }
 .split-menu .muted { color: var(--muted); }
 .threads .tauthor { font-size: 13px; margin: 0 4px; }
 .threads .tcomment { margin: 2px 0 0 2px; font-size: 13px; color: var(--muted); }

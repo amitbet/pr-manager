@@ -45,6 +45,9 @@ type Thread struct {
 	// Dropped counts lines cut from the front to keep the thread small.
 	Dropped int    `json:"dropped,omitempty"`
 	Lines   []Line `json:"lines"`
+	// In and Out are the tokens the thread's model calls spent.
+	In  int `json:"in,omitempty"`
+	Out int `json:"out,omitempty"`
 
 	log    *Log
 	failed bool
@@ -127,6 +130,23 @@ func PrintData(ctx context.Context, data any, format string, args ...any) {
 	t.log.mu.Lock()
 	defer t.log.mu.Unlock()
 	t.add(Line{T: time.Now(), Text: clip(fmt.Sprintf(format, args...)), Data: b})
+}
+
+// AddTokens counts a model call's tokens on ctx's thread (on the "job"
+// thread when there is none).
+func AddTokens(ctx context.Context, in, out int) {
+	t, _ := ctx.Value(threadKey{}).(*Thread)
+	if t == nil {
+		l := from(ctx)
+		if l == nil {
+			return
+		}
+		t = l.jobThread()
+	}
+	t.log.mu.Lock()
+	defer t.log.mu.Unlock()
+	t.In += in
+	t.Out += out
 }
 
 // Errorf is Printf for a failure: the thread ends as failed.

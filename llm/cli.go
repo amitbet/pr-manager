@@ -31,7 +31,7 @@ import (
 // Subscription model presets.
 const (
 	CodexSmall      = "gpt-6-luna"
-	CodexLarge      = OpenAIGPT6Sol
+	CodexLarge      = "gpt-6.1-sol"
 	ClaudeCodeSmall = "claude-haiku-4-5"
 	ClaudeCodeLarge = AnthropicClaudeOpus55
 	// The fastest to translate in a benchmark of the models on each CLI.
@@ -441,6 +441,14 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
+		// usage is the main agent's last turn; modelUsage is the whole
+		// session's, its subagents' included, by model.
+		ModelUsage map[string]struct {
+			InputTokens              int `json:"inputTokens"`
+			OutputTokens             int `json:"outputTokens"`
+			CacheReadInputTokens     int `json:"cacheReadInputTokens"`
+			CacheCreationInputTokens int `json:"cacheCreationInputTokens"`
+		} `json:"modelUsage"`
 	}
 	var res *result
 	for _, line := range strings.Split(string(out), "\n") {
@@ -462,6 +470,13 @@ func (c *ClaudeCodeCLI) Call(ctx context.Context, req LLMRequest) (*LLMResponse,
 	usage := Usage{
 		InputTokens:  res.Usage.InputTokens + res.Usage.CacheCreationInputTokens + res.Usage.CacheReadInputTokens,
 		OutputTokens: res.Usage.OutputTokens,
+	}
+	if len(res.ModelUsage) > 0 {
+		usage = Usage{}
+		for _, m := range res.ModelUsage {
+			usage.InputTokens += m.InputTokens + m.CacheCreationInputTokens + m.CacheReadInputTokens
+			usage.OutputTokens += m.OutputTokens
+		}
 	}
 	return structuredResponse(tool, res.Result, res.StructuredOutput, usage)
 }

@@ -297,7 +297,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .st-stack { display: flex; gap: 2px; height: 12px; min-width: 2px; }
 .st-stack span { min-width: 2px; }
 .st-stack span:last-child { border-radius: 0 4px 4px 0; }
-.st-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12px; min-width: 180px; }
+.st-tip { position: fixed; z-index: 5; pointer-events: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12px; min-width: 180px; }
 .st-tip-head { color: var(--muted); margin-bottom: 4px; }
 .st-tip-row { display: flex; gap: 6px; align-items: center; }
 .st-tip-row span { color: var(--muted); }
@@ -310,7 +310,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .job-item:has(.job-stop) { padding-right: 88px; }
 .job-stop { color: var(--human); font-size: 12px; }
 .job-item .job-stop { position: absolute; top: 7px; right: 6px; }
-.progress-what .job-stop, .job-log-stage .job-stop { float: right; margin: 0 0 8px 12px; }
+.progress-what .job-stop { float: right; margin: 0 0 8px 12px; }
 
 /* Settings, Reviewers (reviewers.js) */
 .reviewers-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
@@ -343,3 +343,21 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .rel-empty { margin: 0 0 8px; color: var(--muted); }
 .rel-add { display: flex; flex-wrap: wrap; gap: 6px; }
 .rel-add input { flex: 1 1 160px; min-width: 0; font-size: 13px; }
+
+/* The change's tests and the fix audit, in a result's header (tests.js). */
+.tests-line { margin-top: 6px; }
+.tests-chip.ok { color: var(--ok, #1a7f37); }
+.tests-chip.bad { color: var(--bad, #cf222e); }
+.tests-fails { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
+.audit-line { margin-top: 6px; }
+
+/* A suggested fix under its row on the Issues tab (suggest.js). */
+.suggestion { margin: 6px 0 2px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.suggestion .warn { color: var(--warn, #9a6700); }
+.suggest-patch { margin: 0; padding: 8px 10px; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font: 12px/1.45 var(--mono); white-space: pre; }
+.suggest-patch .add { color: var(--ok, #1a7f37); }
+.suggest-patch .del { color: var(--bad, #cf222e); }
+.suggest-patch .hunk, .suggest-patch .file { color: var(--muted); }
+.suggest-acts { display: flex; gap: 10px; align-items: center; }
+.suggesting { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.suggesting .spinner { width: 10px; height: 10px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }

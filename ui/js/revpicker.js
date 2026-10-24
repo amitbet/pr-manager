@@ -124,7 +124,11 @@ function renderBase() {
     opt("pick", "Pick a commit or branch below…"),
     parent?.web ? opt("pickup", `Pick from upstream ${parent.repo}…`) : "",
   ].join("");
+  // A list from the forge has no origin branches: it compares as automatic.
+  if (mode === "origin" && list.remote) mode = "auto";
   sel.value = picking ? (upList ? "pickup" : "pick") : mode;
+  // Upstream before the upstream is known compares as automatic.
+  if (!sel.value) sel.value = "auto";
   const wt = dlg.querySelector(".rev-worktree");
   wt.checked = worktree;
   wt.closest("label").hidden = picking || mode !== "auto" || !list.current || tab !== "branches";
@@ -175,8 +179,10 @@ function show(next) {
 async function relist(fetch) {
   const t = mode === "origin" ? "" : token();
   const q = list.remote ? { path: box, ...codeSources() } : { path: list.dir, ...(fetch ? { fetch: "1" } : {}), ...(t ? { base: t } : {}) };
+  const was = list;
   const next = await api(`/api/revs?${new URLSearchParams(q)}`);
-  show({ ...next, repo: list.repo });
+  if (list !== was) return; // the picker was opened again since
+  show({ ...next, repo: was.repo });
 }
 
 // setMode switches the base. An upstream branch or commit is fetched into
@@ -187,7 +193,6 @@ async function setMode(next, picked) {
   picking = false;
   upList = null;
   mode = next;
-  if (next !== "ref") localStorage.setItem("pr-manager.revbase", next);
   try {
     if (next === "ref") {
       base = picked;
@@ -208,6 +213,7 @@ async function setMode(next, picked) {
       status("Counting…");
       await relist(false);
     }
+    if (next !== "ref") localStorage.setItem("pr-manager.revbase", next);
     status("");
   } catch (e) {
     ({ mode, base } = prev);
@@ -246,7 +252,11 @@ function stopPicking() {
 // findParent asks whether a checkout is a fork, for the upstream
 // choices; a list from the forge says so itself.
 async function findParent() {
-  if (!list || list.remote) return;
+  if (!list) return;
+  if (list.remote) {
+    if (mode === "upstream" && !parent) setMode("auto");
+    return;
+  }
   const dir = list.dir;
   try {
     parent = (await api(`/api/revs/parent?${new URLSearchParams({ path: dir })}`)).parent;

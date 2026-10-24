@@ -102,6 +102,9 @@ type Summarizer struct {
 	// Pipeline.Run sets it to the analyze stage's limit, since a group's
 	// critic calls run side by side once its review is in.
 	calls chan struct{}
+	// Keep, when set, drops the issues a review reports that it returns
+	// false for, before the critic is asked about them.
+	Keep func(*Unit, Issue) bool
 }
 
 // callTool is llm.CallToolIn in the summarizer's workspace, waiting for a
@@ -205,6 +208,9 @@ func (s *Summarizer) setIssuesIn(ctx context.Context, u *Unit, args map[string]a
 		u.Reviewed = false
 		s.reviewFailed(u, errors.New("review returned no readable issues"))
 		return
+	}
+	if s.Keep != nil {
+		u.Issues = slices.DeleteFunc(u.Issues, func(is Issue) bool { return !s.Keep(u, is) })
 	}
 	u.Issues = s.criticize(ctx, u, u.Issues, context)
 	u.Reviewed = true

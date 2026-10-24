@@ -105,6 +105,26 @@ func TestFixTargets(t *testing.T) {
 	}
 }
 
+// Fix all leaves the low issues out while worse ones are left, unless
+// asked for them.
+func TestFixAllLeavesLowIssuesForLater(t *testing.T) {
+	r := &PRResult{Files: []resultFile{
+		{FileDiff: triage.FileDiff{Path: "a.go"}, Units: []resultUnit{
+			{Unit: &triage.Unit{ID: "a.go:f", Issues: []triage.Issue{{Title: "bug", Severity: "high"}, {Title: "nit", Severity: "low"}}}},
+		}},
+	}}
+	if got := issueTitles(fixTargets(r, fixRequest{All: true})); got != "bug" {
+		t.Errorf("all = %q", got)
+	}
+	if got := issueTitles(fixTargets(r, fixRequest{All: true, Low: true})); got != "bug,nit" {
+		t.Errorf("all with low = %q", got)
+	}
+	r.Files[0].Units[0].Issues[0].Dismissed = true
+	if got := issueTitles(fixTargets(r, fixRequest{All: true})); got != "nit" {
+		t.Errorf("all, only low left = %q", got)
+	}
+}
+
 func TestFixable(t *testing.T) {
 	pr := func(p triage.PRInfo) *PRResult { return &PRResult{PR: &p} }
 	for _, c := range []struct {
@@ -920,19 +940,20 @@ func TestRoundTrackerChasesWhatConverges(t *testing.T) {
 	}
 	reviewed := map[string]bool{"a.go:f": true}
 	rt := newRoundTracker()
-	partial, fixed := at("partial", "low"), at("fixed", "high")
+	// A low issue gets one round; a medium one another when it isn't fixed.
+	partial, still, fixed := at("partial", "low"), at("still", "medium"), at("fixed", "high")
 	thread := targetedIssue{UnitID: "a.go:f", Comment: &fixComment{Thread: "t1"}}
 	declined := targetedIssue{UnitID: "b.go:g", File: "b.go", Issue: triage.Issue{Severity: "high", Title: "declined", Evidence: "g()"}}
 	touched := map[string]bool{"a.go:f": true}
-	got := rt.next([]targetedIssue{partial, fixed, declined, thread}, reviewed, touched, []targetedIssue{partial, declined, at("new medium", "medium"), at("new low", "low"), thread})
-	if titles := issueTitles(got); titles != "partial,new medium," {
+	got := rt.next([]targetedIssue{partial, still, fixed, declined, thread}, reviewed, touched, []targetedIssue{partial, still, declined, at("new medium", "medium"), at("new low", "low"), thread}, nil)
+	if titles := issueTitles(got); titles != "still,new medium," {
 		t.Errorf("round 2 works on %q", titles)
 	}
-	got = rt.next(got, reviewed, touched, []targetedIssue{fixed})
+	got = rt.next(got, reviewed, touched, []targetedIssue{fixed}, nil)
 	if len(got) != 0 {
 		t.Errorf("round 3 works on %q, want nothing: the fixed issue came back", issueTitles(got))
 	}
-	if w := rt.warning(); !strings.Contains(w, "1 issue(s) a check had found fixed came back") || !strings.Contains(w, "1 new low-severity") || !strings.Contains(w, "1 issue(s) the fixer left unchanged") {
+	if w := rt.warning(); !strings.Contains(w, "1 issue(s) a check had found fixed came back") || !strings.Contains(w, "1 new low-severity") || !strings.Contains(w, "1 issue(s) the fixer left unchanged") || !strings.Contains(w, "1 low-severity issue(s) a round didn't fully fix") {
 		t.Errorf("warning = %q", w)
 	}
 }
@@ -1049,7 +1070,7 @@ func TestFixChange(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644)
 	found := targetedIssue{UnitID: "a.go:f", File: "a.go", Issue: triage.Issue{Title: "a new bug"}}
-	prompt, err := fixPrompt(dir, r, []targetedIssue{targets[0], found}, nil, nil, true)
+	prompt, err := fixPrompt(dir, r, []targetedIssue{targets[0], found}, nil, fixCall{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

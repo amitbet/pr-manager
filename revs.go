@@ -233,6 +233,10 @@ func fetchRevs(ctx context.Context, dir string) error {
 	cmd := proc.CommandContext(ctx, "git", triage.GitArgs("fetch", "--prune", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")...)
 	cmd.Dir = dir
 	cmd.Env = noPromptEnv()
+	if v := os.Getenv("GIT_SSH_COMMAND"); v != "" {
+		// The user's ssh command gets BatchMode too (the last value wins).
+		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND="+v+" -o BatchMode=yes")
+	}
 	out, err := cmd.CombinedOutput()
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
