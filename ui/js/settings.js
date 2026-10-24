@@ -186,7 +186,7 @@ function showLine() {
 
 // Code map sources. Empty fields fall back to the server's
 // PR_MANAGER_CODE_ROOT / PR_MANAGER_ORG, shown as placeholders.
-function codeSources() {
+export function codeSources() {
   const body = {};
   for (const k of ["code_root", "org"]) {
     const v = $("#" + k).value.trim();

@@ -1136,16 +1136,37 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		}
 		writeJSON(w, 202, t.snapshot(j))
 	})
+	// path is what the box holds: a checkout's path, or a repository's
+	// URL or owner/repo (revrepo.go), found in the code directory
+	// (code_root, as the job settings send it) or the workspace.
 	mux.HandleFunc("GET /api/revs", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Query().Get("path")
+		q := r.URL.Query()
+		var jo jobOptions
+		if q.Has("code_root") {
+			root := q.Get("code_root")
+			jo.CodeRoot = &root
+		}
+		if strings.TrimSpace(q.Get("path")) == "" {
+			writeErr(w, 400, errors.New("enter a repository path or URL"))
+			return
+		}
+		dir, repo, dest, err := resolveRevPath(t.options(jo), q.Get("path"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if dir == "" {
+			writeJSON(w, 200, &revList{Repo: repo.Name(), CloneTo: dest, Branches: []revBranch{}, Commits: []revCommit{}})
+			return
+		}
 		// fetch=1 is the picker's refresh: fetch origin first. A failed
 		// fetch still lists the local history, with the reason.
 		var fetchErr error
-		fetch := r.URL.Query().Get("fetch") == "1"
+		fetch := q.Get("fetch") == "1"
 		if fetch {
-			fetchErr = fetchRevs(r.Context(), path)
+			fetchErr = fetchRevs(r.Context(), dir)
 		}
-		revs, err := listRevs(path)
+		revs, err := listRevs(dir)
 		if err != nil {
 			writeErr(w, 400, err)
 			return
@@ -1156,6 +1177,43 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 				revs.FetchError = fetchErr.Error()
 			}
 		}
+		if repo != nil {
+			revs.Repo = repo.Name()
+		}
+		writeJSON(w, 200, revs)
+	})
+	// The picker's Clone: a repository without a checkout is cloned into
+	// the workspace, then listed.
+	mux.HandleFunc("POST /api/revs/clone", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Path     string  `json:"path"`
+			CodeRoot *string `json:"code_root"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		dir, repo, dest, err := resolveRevPath(t.options(jobOptions{CodeRoot: req.CodeRoot}), req.Path)
+		if err == nil && repo == nil {
+			err = errors.New("clone takes a repository URL or owner/repo, not a path")
+		}
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if dir == "" {
+			if err := cloneRevRepo(r.Context(), *repo, dest); err != nil {
+				writeErr(w, 502, err)
+				return
+			}
+			dir = dest
+		}
+		revs, err := listRevs(dir)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		revs.Repo = repo.Name()
 		writeJSON(w, 200, revs)
 	})
 	mux.HandleFunc("POST /api/local/{key}/publish", func(w http.ResponseWriter, r *http.Request) {

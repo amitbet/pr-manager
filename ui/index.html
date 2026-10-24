@@ -213,6 +213,10 @@
       <input class="rev-filter" type="search" placeholder="Filter by message, SHA, author or name" spellcheck="false">
       <button type="button" class="rev-refresh" title="Fetch origin, then list its branches and commits again">↻ Refresh</button>
     </div>
+    <div class="rev-compare" hidden>
+      <label>Compare with <select class="rev-base"></select></label>
+      <label><input type="checkbox" class="rev-worktree"> Include the checked-out branch's uncommitted changes</label>
+    </div>
     <div class="hint rev-status" hidden></div>
     <div class="rev-list"></div>
   </form>

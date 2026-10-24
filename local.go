@@ -97,7 +97,8 @@ func splitRev(path string) (string, string) {
 // inspectLocal reads a checkout's change for triage. A bare path is the
 // checked-out branch from its merge base, working tree included;
 // path#rev is a commit on its own (from its first parent) or a branch
-// from its merge base, as committed.
+// from its merge base, as committed, and path#base...branch is the
+// branch from its merge base with base.
 func inspectLocal(ctx context.Context, path string) (*localSnapshot, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("enter a repository path")
@@ -308,35 +309,72 @@ func missingParent(dir, commit string) string {
 	return ""
 }
 
-// inspectRev reads rev in the checkout at dir, as committed: a local or
-// origin branch from its merge base with origin's default branch, or any
-// other commit from its first parent. The working tree is not read.
-func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
-	if strings.HasPrefix(rev, "-") {
-		return nil, fmt.Errorf("bad revision %q", rev)
-	}
-	// A branch is read from its own ref: git resolves a bare name to a
-	// tag before a branch, which would review the tag under the branch's
-	// name.
-	branch, ref := "", rev
+// branchRef finds rev's branch in dir: the branch's name as the picker
+// shows it (feature, origin/feature) and its full ref, or empty when rev
+// is no branch. A branch is read from its own ref: git resolves a bare
+// name to a tag before a branch, which would review the tag under the
+// branch's name.
+func branchRef(dir, rev string) (branch, ref string) {
 	name := strings.TrimPrefix(strings.TrimPrefix(rev, "refs/heads/"), "refs/remotes/")
 	for _, r := range []string{"refs/heads/" + name, "refs/remotes/origin/" + name, "refs/remotes/" + name} {
 		if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", r); err == nil {
-			branch = strings.TrimPrefix(strings.TrimPrefix(r, "refs/heads/"), "refs/remotes/")
-			ref = r
-			break
+			return strings.TrimPrefix(strings.TrimPrefix(r, "refs/heads/"), "refs/remotes/"), r
 		}
+	}
+	return "", ""
+}
+
+// revRange splits base...head; ok is false for a single rev.
+func revRange(rev string) (base, head string, ok bool) {
+	return strings.Cut(rev, "...")
+}
+
+// inspectRev reads rev in the checkout at dir, as committed: a local or
+// origin branch from its merge base with origin's default branch, or any
+// other commit from its first parent. base...branch is the branch from
+// its merge base with base, any branch or commit: origin/feature for the
+// commits not pushed yet. The working tree is not read.
+func inspectRev(ctx context.Context, dir, rev string) (*localSnapshot, error) {
+	headRev := rev
+	baseRev, h, ranged := revRange(rev)
+	if ranged {
+		headRev = h
+	}
+	if strings.HasPrefix(headRev, "-") || strings.HasPrefix(baseRev, "-") || (ranged && (baseRev == "" || headRev == "")) {
+		return nil, fmt.Errorf("bad revision %q", rev)
+	}
+	branch, ref := branchRef(dir, headRev)
+	if ref == "" {
+		if ranged {
+			return nil, fmt.Errorf("%s is not a branch in %s; compare a branch with %s", headRev, dir, baseRev)
+		}
+		ref = headRev
 	}
 	head, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	if err != nil {
-		return nil, fmt.Errorf("%s is not a commit or branch in %s", rev, dir)
+		return nil, fmt.Errorf("%s is not a commit or branch in %s", headRev, dir)
 	}
 	head = strings.TrimSpace(head)
 	info := &triage.PRInfo{PRRef: localRepoRef(dir), LocalPath: dir, State: "LOCAL", Rev: rev, HeadOid: head}
 	var base, empty string
 	if branch != "" {
-		baseRef, baseBranch, err := localBase(dir)
-		if err != nil {
+		var baseRef, baseBranch string
+		if ranged {
+			b, r := branchRef(dir, baseRev)
+			if r == "" {
+				r = baseRev
+			}
+			oid, err := triage.Git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", r+"^{commit}")
+			if err != nil {
+				return nil, fmt.Errorf("%s is not a commit or branch in %s", baseRev, dir)
+			}
+			// BaseRef is what a PR would go into: the branch's name on
+			// origin, or the commit.
+			baseRef, baseBranch = r, strings.TrimPrefix(b, "origin/")
+			if b == "" {
+				baseBranch = strings.TrimSpace(oid)[:10]
+			}
+		} else if baseRef, baseBranch, err = localBase(dir); err != nil {
 			return nil, err
 		}
 		if base, err = triage.Git(dir, "merge-base", baseRef, head); err != nil {
@@ -599,6 +637,13 @@ func publishLocal(r *PRResult, describe func(*triage.PRInfo) string) (publishOut
 	}
 	if r.PR.SingleCommit {
 		return none, errors.New("create PRs from a branch, not a single commit")
+	}
+	// A branch compared with base...branch opens its PR into base, so base
+	// has to be a branch origin has, or a local one of origin's name.
+	if base, _, ok := revRange(r.PR.Rev); ok {
+		if _, ref := branchRef(r.PR.LocalPath, base); !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/remotes/origin/") {
+			return none, fmt.Errorf("%s is not a branch; compare with a branch to create a PR", base)
+		}
 	}
 	if _, err := triage.Git(r.PR.LocalPath, "fetch", "--quiet", "--no-tags", "origin", fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", r.PR.BaseRef, r.PR.BaseRef)); err != nil {
 		return none, err

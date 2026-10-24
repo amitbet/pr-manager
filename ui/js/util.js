@@ -31,6 +31,13 @@ const KIND_ICON = {
   commit: `<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>`,
 };
 export const KIND_TITLE = { pr: "pull request", repo: "working tree", branch: "local branch", commit: "local commit" };
+// revParts splits a local review's rev, base...branch for a branch
+// compared with another, into the branch and what it was compared with
+// ("" for the default branch).
+export const revParts = (rev) => {
+  const [base, head] = String(rev || "").includes("...") ? rev.split("...") : ["", rev || ""];
+  return { base, head };
+};
 export const kindOf = (p) => (!p.local_path ? "pr" : p.single_commit ? "commit" : p.rev ? "branch" : "repo");
 export const prState = (p) => (kindOf(p) === "pr" && p.state ? p.state.toLowerCase() : "");
 export const kindBadge = (p) => {

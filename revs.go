@@ -17,9 +17,11 @@ import (
 // revList is what the picker offers in a checkout: its branches, newest
 // first, and its recent commits on any of them.
 type revList struct {
-	Dir      string      `json:"dir"`
-	Current  string      `json:"current,omitempty"` // checked-out branch
-	BaseRef  string      `json:"base_ref,omitempty"`
+	Dir     string `json:"dir"`
+	Current string `json:"current,omitempty"` // checked-out branch
+	BaseRef string `json:"base_ref,omitempty"`
+	// Base is the ref branches are counted from: origin/main.
+	Base     string      `json:"base,omitempty"`
 	Branches []revBranch `json:"branches"`
 	Commits  []revCommit `json:"commits"`
 	// Fetched says the list follows a fetch from origin; FetchError is
@@ -27,6 +29,11 @@ type revList struct {
 	// either way.
 	Fetched    bool   `json:"fetched,omitempty"`
 	FetchError string `json:"fetch_error,omitempty"`
+	// Repo is set when the box named a repository rather than a path.
+	// CloneTo is where it would be cloned while it has no checkout; Dir
+	// is empty then, and so are the lists.
+	Repo    string `json:"repo,omitempty"`
+	CloneTo string `json:"clone_to,omitempty"`
 }
 
 type revBranch struct {
@@ -39,6 +46,12 @@ type revBranch struct {
 	// Ahead counts its commits the default branch doesn't have; -1 when
 	// it wasn't counted.
 	Ahead int `json:"ahead"`
+	// Upstream is origin's branch of a local branch's name, when origin
+	// has one. Unpushed and Unpulled count the commits each has that the
+	// other doesn't; -1 when they weren't counted.
+	Upstream string `json:"upstream,omitempty"`
+	Unpushed int    `json:"unpushed"`
+	Unpulled int    `json:"unpulled"`
 }
 
 type revCommit struct {
@@ -77,30 +90,55 @@ func listRevs(path string) (*revList, error) {
 	}
 	baseRef, baseBranch, baseErr := localBase(dir)
 	if baseErr == nil {
-		out.BaseRef = baseBranch
+		out.BaseRef, out.Base = baseBranch, baseRef
 	}
 	refs, err := triage.Git(dir, "for-each-ref", "--sort=-committerdate", "--count="+strconv.Itoa(revBranchLimit),
 		"--format=%(refname)%00%(objectname)%00%(committerdate:iso-strict)%00%(authorname)%00%(subject)", "refs/heads", "refs/remotes/origin")
 	if err != nil {
 		return nil, err
 	}
+	onOrigin := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(refs), "\n") {
 		f := strings.Split(line, "\x00")
 		if len(f) != 5 || f[0] == "refs/remotes/origin/HEAD" {
 			continue
 		}
-		b := revBranch{Oid: f[1], Date: f[2], Author: f[3], Title: f[4], Ahead: -1}
+		b := revBranch{Oid: f[1], Date: f[2], Author: f[3], Title: f[4], Ahead: -1, Unpushed: -1, Unpulled: -1}
 		if name, ok := strings.CutPrefix(f[0], "refs/heads/"); ok {
 			b.Name = name
 		} else {
 			b.Name, b.Remote = strings.TrimPrefix(f[0], "refs/remotes/"), true
+			onOrigin[b.Name] = true
 		}
-		if baseErr == nil && len(out.Branches) < revAheadLimit {
+		out.Branches = append(out.Branches, b)
+	}
+	// The list may hold only one side of a pair; origin's side is then
+	// looked up on its own.
+	for i := range out.Branches {
+		b := &out.Branches[i]
+		if baseErr == nil && i < revAheadLimit {
 			if n, err := triage.Git(dir, "rev-list", "--count", baseRef+".."+b.Oid); err == nil {
 				b.Ahead, _ = strconv.Atoi(strings.TrimSpace(n))
 			}
 		}
-		out.Branches = append(out.Branches, b)
+		if b.Remote {
+			continue
+		}
+		up := "origin/" + b.Name
+		if !onOrigin[up] {
+			if _, err := triage.Git(dir, "show-ref", "--verify", "--quiet", "refs/remotes/"+up); err != nil {
+				continue
+			}
+		}
+		b.Upstream = up
+		if i < revAheadLimit {
+			if n, err := triage.Git(dir, "rev-list", "--left-right", "--count", "refs/remotes/"+up+"..."+b.Oid); err == nil {
+				if f := strings.Fields(n); len(f) == 2 {
+					b.Unpulled, _ = strconv.Atoi(f[0])
+					b.Unpushed, _ = strconv.Atoi(f[1])
+				}
+			}
+		}
 	}
 	// Records start with \x1e; --shortstat follows each one's header.
 	log, err := triage.Git(dir, "log", "--branches", "--remotes=origin", "--date-order", "-n", strconv.Itoa(revCommitLimit),
@@ -136,23 +174,19 @@ func listRevs(path string) (*revList, error) {
 // leaves the list as it was rather than holding the dialog.
 const revFetchTimeout = 90 * time.Second
 
-// fetchRevs fetches path's origin, so the picker lists its new branches
-// and commits, and drops branches deleted there. It never prompts: a
-// remote that needs a password fails and says so.
-func fetchRevs(ctx context.Context, path string) error {
-	path, _ = splitRev(path)
-	dir, err := checkoutRoot(path)
-	if err != nil {
-		return err
-	}
+// fetchRevs fetches every branch of dir's origin, so the picker lists
+// its new branches and commits, and drops branches deleted there. The
+// refspec is spelled out so a single-branch clone gets them all too. It
+// never prompts: a remote that needs a password fails and says so.
+func fetchRevs(ctx context.Context, dir string) error {
 	if _, err := triage.Git(dir, "remote", "get-url", "origin"); err != nil {
 		return errors.New("the checkout has no origin remote to fetch from")
 	}
 	ctx, cancel := context.WithTimeout(ctx, revFetchTimeout)
 	defer cancel()
-	cmd := proc.CommandContext(ctx, "git", triage.GitArgs("fetch", "--prune", "--quiet", "origin")...)
+	cmd := proc.CommandContext(ctx, "git", triage.GitArgs("fetch", "--prune", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	cmd.Env = noPromptEnv()
 	out, err := cmd.CombinedOutput()
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:

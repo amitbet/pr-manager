@@ -3,7 +3,7 @@
 // in its repository's checkout, each one ending in the Issues tab's list
 // of the PR's fixes; a local review's run one at a time, and a completed
 // one opens its reviewed result and worktree path.
-import { $, esc, postJSON, say } from "./util.js";
+import { $, esc, postJSON, say, revParts } from "./util.js";
 import { S, render, allUnits } from "./state.js";
 import { fixSettings } from "./settings.js";
 import { refreshJobs, showLog, stageText, pollJob, cancelJob } from "./jobs.js";
@@ -125,11 +125,12 @@ document.addEventListener("keydown", (e) => {
 // out: check it out and fix it, or fix the checkout's current code.
 function askRev(pr) {
   const dlg = $("#fix-rev");
-  const what = pr.single_commit ? `commit <code>${esc(pr.rev)}</code>` : `branch <code>${esc(pr.rev)}</code>`;
-  const branch = pr.single_commit ? `a new branch <code>pr-manager/${esc(pr.head_oid.slice(0, 10))}</code> at the commit` : pr.rev.startsWith("origin/") ? `a local <code>${esc(pr.rev.slice(7))}</code> branch tracking it` : `<code>${esc(pr.rev)}</code>`;
+  const rev = revParts(pr.rev).head;
+  const what = pr.single_commit ? `commit <code>${esc(rev)}</code>` : `branch <code>${esc(rev)}</code>`;
+  const branch = pr.single_commit ? `a new branch <code>pr-manager/${esc(pr.head_oid.slice(0, 10))}</code> at the commit` : rev.startsWith("origin/") ? `a local <code>${esc(rev.slice(7))}</code> branch tracking it` : `<code>${esc(rev)}</code>`;
   dlg.querySelector(".fix-rev-what").innerHTML = `This is a review of ${what}, which isn't checked out in <code>${esc(pr.local_path)}</code>.`;
   dlg.querySelector(".fix-rev-checkout").innerHTML = `<b>Check out and fix</b> switches the checkout to ${branch} and fixes it there. The working tree has to be clean.`;
-  dlg.querySelector("button[value=checkout]").textContent = `Check out ${pr.single_commit ? pr.rev : pr.rev.replace(/^origin\//, "")} and fix`;
+  dlg.querySelector("button[value=checkout]").textContent = `Check out ${pr.single_commit ? rev : rev.replace(/^origin\//, "")} and fix`;
   dlg.returnValue = "";
   dlg.showModal();
   return new Promise((res) => dlg.addEventListener("close", () => {
