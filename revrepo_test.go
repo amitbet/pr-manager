@@ -175,54 +175,119 @@ func TestFetchRevsSingleBranchClone(t *testing.T) {
 }
 
 // A repository named by URL resolves to its checkout in the code
-// directory, else to a workspace clone the picker makes.
-func TestResolveRevPathClones(t *testing.T) {
+// directory, else the workspace's, else none: nothing is cloned for it.
+func TestResolveRevPathFindsCheckouts(t *testing.T) {
 	root, _ := revFixture(t)
-	cache := filepath.Join(root, "cache")
 	t.Setenv("PR_MANAGER_WORKSPACE", "")
-	o := options{cache: cache}
-
-	// Not GitHub, so git clones the URL; a file URL stands in for one.
-	remote := "file://" + filepath.ToSlash(filepath.Join(root, "remote.git"))
-	r := revRepo{Ref: triage.PRRef{Host: "git.example.com", Owner: "acme", Repo: "api"}, URL: remote}
-	dir, dest, err := findRevRepo(o, r)
-	if err != nil || dir != "" || filepath.Base(dest) != "api" {
-		t.Fatalf("before cloning: %q %q %v", dir, dest, err)
+	o := options{cache: filepath.Join(root, "cache")}
+	r := revRepo{Ref: triage.PRRef{Host: "git.example.com", Owner: "acme", Repo: "api"}, URL: "https://git.example.com/acme/api"}
+	if dir, err := findRevRepo(o, r); err != nil || dir != "" {
+		t.Fatalf("no checkout: %q %v", dir, err)
 	}
-	if err := cloneRevRepo(context.Background(), r, dest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(dest), ".api.cloning")); !os.IsNotExist(err) {
-		t.Fatalf("temporary clone left: %v", err)
-	}
-	revs, err := listRevs(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, b := range revs.Branches {
-		found = found || b.Name == "origin/feature"
-	}
-	if !found {
-		t.Fatalf("clone lists %+v", revs.Branches)
+	if _, err := os.Stat(filepath.Join(root, "cache", "workspace", "code", "api")); !os.IsNotExist(err) {
+		t.Fatalf("something was made in the workspace: %v", err)
 	}
 
-	// The clone's origin is the file URL, not git.example.com, so it isn't
-	// taken for that repository; one whose origin matches is.
-	gitTest(t, dest, "remote", "set-url", "origin", "https://git.example.com/acme/api")
-	dir, _, err = findRevRepo(o, r)
-	if want, _ := filepath.EvalSymlinks(dest); err != nil || dir != want {
-		t.Fatalf("existing clone: %q %v, want %q", dir, err, want)
+	ws := filepath.Join(root, "cache", "workspace", "code", "api")
+	gitTest(t, root, "clone", "-q", filepath.Join(root, "remote.git"), ws)
+	gitTest(t, ws, "remote", "set-url", "origin", "https://git.example.com/acme/api")
+	if dir, err := findRevRepo(o, r); err != nil || dir != mustReal(t, ws) {
+		t.Fatalf("workspace checkout: %q %v", dir, err)
 	}
 
-	// A checkout in the code directory comes first.
 	code := filepath.Join(root, "code")
 	mine := filepath.Join(code, "api")
 	gitTest(t, root, "clone", "-q", filepath.Join(root, "remote.git"), mine)
 	gitTest(t, mine, "remote", "set-url", "origin", "https://git.example.com/acme/api")
 	o.codeRoot = code
-	dir, _, err = findRevRepo(o, r)
-	if want, _ := filepath.EvalSymlinks(mine); err != nil || dir != want {
-		t.Fatalf("code directory checkout: %q %v, want %q", dir, err, want)
+	if dir, err := findRevRepo(o, r); err != nil || dir != mustReal(t, mine) {
+		t.Fatalf("code directory checkout: %q %v", dir, err)
+	}
+}
+
+func mustReal(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestSplitRemoteRev(t *testing.T) {
+	t.Setenv("GH_HOST", "")
+	for _, tc := range []struct{ in, name, rev string }{
+		{"https://github.com/acme/api#feature", "github.com/acme/api", "feature"},
+		{"https://github.com/acme/api#main...feat/x", "github.com/acme/api", "main...feat/x"},
+		{"https://gitlab.com/group/sub/api#fix", "gitlab.com/group/sub/api", "fix"},
+	} {
+		r, rev, ok := splitRemoteRev(tc.in)
+		if !ok || r.Name() != tc.name || rev != tc.rev {
+			t.Errorf("%s: %v %q %q", tc.in, ok, r.Name(), rev)
+		}
+	}
+	for _, in := range []string{"https://github.com/acme/api", "https://github.com/acme/api#12", "acme/api#feature", "/src/api#feature", "https://github.com/acme/api#"} {
+		if r, rev, ok := splitRemoteRev(in); ok {
+			t.Errorf("%s: read as %s#%s", in, r.Name(), rev)
+		}
+	}
+}
+
+// A rev picked from a forge's list is fetched into a clone without files
+// and reviewed there; fixes are refused for it.
+func TestFetchRemoteRev(t *testing.T) {
+	root, clone := revFixture(t)
+	gitTest(t, clone, "push", "-q", "origin", "feature")
+	cache := filepath.Join(root, "repos")
+	r := revRepo{Ref: triage.PRRef{Host: "git.example.com", Owner: "acme", Repo: "api"}, URL: "file://" + filepath.ToSlash(filepath.Join(root, "remote.git"))}
+	ctx := context.Background()
+	var stages []string
+	progress := func(s string, _, _ int) { stages = append(stages, s) }
+
+	dir, local, err := fetchRemoteRev(ctx, cache, r, "feature", progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local != "origin/feature" || strings.Join(stages, ",") != "clonerev,fetchrev" {
+		t.Fatalf("local %q, stages %v", local, stages)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "base.txt")); !os.IsNotExist(err) {
+		t.Fatalf("files were checked out: %v", err)
+	}
+	remoteRevRoot = cache
+	t.Cleanup(func() { remoteRevRoot = "" })
+	if !remoteRevDir(dir) || remoteRevDir(clone) {
+		t.Fatal("remoteRevDir")
+	}
+	s, err := inspectLocal(ctx, dir+"#"+local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.info.Ahead != 2 || s.info.BaseRef != "main" || !strings.Contains(s.raw, "local.txt") {
+		t.Fatalf("review: %+v\n%s", s.info, s.raw)
+	}
+	if err := fixable(&PRResult{PR: s.info}, "worktree"); err == nil || !strings.Contains(err.Error(), "forge") {
+		t.Fatalf("fixable: %v", err)
+	}
+
+	// A new commit on origin is fetched on the next pick, and a range
+	// and a commit name origin's refs and the commit.
+	gitTest(t, clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more")
+	gitTest(t, clone, "push", "-q", "origin", "feature")
+	stages = nil
+	if _, local, err = fetchRemoteRev(ctx, cache, r, "main...feature", progress); err != nil || local != "origin/main...origin/feature" || strings.Join(stages, ",") != "fetchrev" {
+		t.Fatalf("range: %q %v %v", local, err, stages)
+	}
+	head := gitTest(t, clone, "rev-parse", "HEAD")
+	if got := gitTest(t, dir, "rev-parse", "origin/feature"); got != head {
+		t.Fatalf("origin/feature at %s, want %s", got, head)
+	}
+	if _, local, err = fetchRemoteRev(ctx, cache, r, head, progress); err != nil || local != head {
+		t.Fatalf("commit: %q %v", local, err)
+	}
+	for _, bad := range []string{"-x", "a b", "main...", "x:y"} {
+		if _, _, err := fetchRemoteRev(ctx, cache, r, bad, progress); err == nil {
+			t.Errorf("%q: no error", bad)
+		}
 	}
 }

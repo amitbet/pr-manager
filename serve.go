@@ -243,6 +243,7 @@ func newTriager(o options) (*triager, error) {
 		return nil, err
 	}
 	t.dismissed = d
+	remoteRevRoot = t.fetcher.Dir
 	return t, os.MkdirAll(t.results, 0o755)
 }
 
@@ -834,6 +835,9 @@ func (t *triager) startIndex(jo jobOptions) *job {
 func (t *triager) start(url string, jo jobOptions) (*job, error) {
 	ref, err := triage.ParsePRRef(url)
 	if err != nil {
+		if r, rev, ok := splitRemoteRev(url); ok {
+			return t.startRemoteRev(url, r, rev, jo), nil
+		}
 		return nil, err
 	}
 	j, ctx, progress := t.newJob("triage", ref.URL())
@@ -1138,7 +1142,8 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 	})
 	// path is what the box holds: a checkout's path, or a repository's
 	// URL or owner/repo (revrepo.go), found in the code directory
-	// (code_root, as the job settings send it) or the workspace.
+	// (code_root, as the job settings send it) or the workspace, else
+	// listed from its forge.
 	mux.HandleFunc("GET /api/revs", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		var jo jobOptions
@@ -1150,13 +1155,18 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 			writeErr(w, 400, errors.New("enter a repository path or URL"))
 			return
 		}
-		dir, repo, dest, err := resolveRevPath(t.options(jo), q.Get("path"))
+		dir, repo, err := resolveRevPath(t.options(jo), q.Get("path"))
 		if err != nil {
 			writeErr(w, 400, err)
 			return
 		}
 		if dir == "" {
-			writeJSON(w, 200, &revList{Repo: repo.Name(), CloneTo: dest, Branches: []revBranch{}, Commits: []revCommit{}})
+			revs, err := listRemoteRevs(r.Context(), *repo)
+			if err != nil {
+				writeErr(w, 502, err)
+				return
+			}
+			writeJSON(w, 200, revs)
 			return
 		}
 		// fetch=1 is the picker's refresh: fetch origin first. A failed
@@ -1180,40 +1190,6 @@ func newServeHandler(o options) (http.Handler, func(), error) {
 		if repo != nil {
 			revs.Repo = repo.Name()
 		}
-		writeJSON(w, 200, revs)
-	})
-	// The picker's Clone: a repository without a checkout is cloned into
-	// the workspace, then listed.
-	mux.HandleFunc("POST /api/revs/clone", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Path     string  `json:"path"`
-			CodeRoot *string `json:"code_root"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		dir, repo, dest, err := resolveRevPath(t.options(jobOptions{CodeRoot: req.CodeRoot}), req.Path)
-		if err == nil && repo == nil {
-			err = errors.New("clone takes a repository URL or owner/repo, not a path")
-		}
-		if err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		if dir == "" {
-			if err := cloneRevRepo(r.Context(), *repo, dest); err != nil {
-				writeErr(w, 502, err)
-				return
-			}
-			dir = dest
-		}
-		revs, err := listRevs(dir)
-		if err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		revs.Repo = repo.Name()
 		writeJSON(w, 200, revs)
 	})
 	mux.HandleFunc("POST /api/local/{key}/publish", func(w http.ResponseWriter, r *http.Request) {

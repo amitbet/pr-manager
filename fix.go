@@ -301,6 +301,9 @@ func fixable(r *PRResult, location string) error {
 	if r.PR.LocalPath == "" && r.PR.State != "OPEN" {
 		return fmt.Errorf("the PR is %s; only open PRs and local repositories can be fixed", strings.ToLower(r.PR.State))
 	}
+	if remoteRevDir(r.PR.LocalPath) {
+		return errors.New("this branch was reviewed from its forge, without a checkout here; open a PR for it, or review it in a local checkout, to fix it")
+	}
 	if r.PR.LocalPath != "" && location == "clone" {
 		return errors.New("local fixes go in a separate worktree or the current branch")
 	}

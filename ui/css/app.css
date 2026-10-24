@@ -216,9 +216,6 @@ kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-wid
 .rev-dlg .rev-compare { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin: 0 0 8px; font-size: 13px; }
 .rev-dlg .rev-compare[hidden], .rev-dlg .rev-compare label[hidden] { display: none; }
 .rev-dlg .rev-compare select { font-size: 13px; max-width: 320px; }
-.rev-dlg .rev-clone { padding: 6px 18px 4px; }
-.rev-dlg .rev-clone .hint { padding: 0; }
-.rev-dlg .rev-clone code { word-break: break-all; }
 .rev-dlg .rev-list { max-height: min(60vh, 560px); overflow-y: auto; margin: 0 -18px 10px; border-top: 1px solid var(--border); }
 .rev-item { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 2px 12px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: none; padding: 7px 18px; font-size: 13px; cursor: pointer; }
 .rev-item:hover:not([disabled]), .rev-item:focus-visible { background: var(--bg3); outline: none; }

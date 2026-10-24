@@ -1,25 +1,22 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/amitbet/pr-manager/codemap"
-	"github.com/amitbet/pr-manager/internal/proc"
 	"github.com/amitbet/pr-manager/triage"
 )
 
 // A repository typed in the box as a URL or owner/repo, rather than a
-// path, is picked from in a checkout of it: the one in the code directory,
-// else a clone in the workspace (codemap_build.go), which the picker makes
-// when asked to. The code map then finds the same clone.
+// path, is picked from in its checkout in the code directory or the
+// workspace (codemap_build.go) when there is one. Otherwise its branches
+// and commits come from the forge's API (revremote.go), nothing is cloned
+// to list them, and the one picked is fetched for its review into the
+// clone PR reviews use, which holds no files on disk.
 
 // revRepo is a repository named by URL or owner/repo.
 type revRepo struct {
@@ -30,6 +27,18 @@ type revRepo struct {
 }
 
 func (r revRepo) Name() string { return r.Ref.RepoArg() }
+
+// Web is the repository's page, which a picked rev is named on:
+// https://github.com/acme/api#feature.
+func (r revRepo) Web() string { return "https://" + r.Name() }
+
+// CloneURL is what git clones.
+func (r revRepo) CloneURL() string {
+	if r.URL != "" {
+		return r.URL
+	}
+	return r.Web() + ".git"
+}
 
 var drivePath = regexp.MustCompile(`^[A-Za-z]:`)
 
@@ -61,6 +70,7 @@ func parseRevRepo(s string) (revRepo, bool) {
 		ref.Number = 0
 		return revRepo{Ref: ref}, true
 	}
+	s, _, _ = strings.Cut(s, "#") // a rev on it: acme/api#feature
 	remote := s
 	if u, err := url.Parse(s); err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
 		p := strings.Trim(u.Path, "/")
@@ -89,82 +99,38 @@ func parseRevRepo(s string) (revRepo, bool) {
 }
 
 // findRevRepo finds r's checkout: in the code directory, else the
-// workspace's clone. With none, dir is empty and dest is where a clone
-// would go.
-func findRevRepo(o options, r revRepo) (dir, dest string, err error) {
+// workspace's; empty when it has none.
+func findRevRepo(o options, r revRepo) (string, error) {
 	if o.codeRoot != "" {
 		if cos, err := scanCheckouts(o.codeRoot); err == nil {
 			if co, ok := cos[checkoutKey(r.Ref)]; ok {
-				return co.Dir, "", nil
+				return co.Dir, nil
 			}
 		}
 	}
 	ws, err := workspaceDir(o)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	dest = filepath.Join(ws, "code", workspaceName(ws, r.Ref, ""))
-	if fileExists(filepath.Join(dest, ".git")) && dirIdentity(dest) == repoIdentity(r.Ref) {
-		real, err := codemap.ResolveLink(dest) // a link to a checkout in the code directory
-		return real, "", err
+	dir := filepath.Join(ws, "code", workspaceName(ws, r.Ref, ""))
+	if fileExists(filepath.Join(dir, ".git")) && dirIdentity(dir) == repoIdentity(r.Ref) {
+		return codemap.ResolveLink(dir) // a link to a checkout in the code directory
 	}
-	return "", dest, nil
+	return "", nil
 }
 
 // resolveRevPath resolves what the box holds to a checkout: a path's root,
-// or a repository's checkout. repo is set for a repository, and dest is
-// where it would be cloned when it has no checkout yet.
-func resolveRevPath(o options, s string) (dir string, repo *revRepo, dest string, err error) {
+// or a repository's checkout. repo is set for a repository; dir is empty
+// for one without a checkout here.
+func resolveRevPath(o options, s string) (dir string, repo *revRepo, err error) {
 	r, ok := parseRevRepo(s)
 	if !ok {
 		path, _ := splitRev(s)
 		dir, err = checkoutRoot(path)
-		return dir, nil, "", err
+		return dir, nil, err
 	}
-	dir, dest, err = findRevRepo(o, r)
-	return dir, &r, dest, err
-}
-
-var revCloneMu sync.Mutex
-
-// cloneRevRepo clones r into dest, blobs on demand as the workspace's
-// other clones are. It clones next to dest and renames, so the code map
-// never sees half a clone. It never prompts.
-func cloneRevRepo(ctx context.Context, r revRepo, dest string) error {
-	revCloneMu.Lock()
-	defer revCloneMu.Unlock()
-	if fileExists(filepath.Join(dest, ".git")) {
-		return nil
-	}
-	tmp := filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+".cloning")
-	_ = os.RemoveAll(tmp)
-	flags := []string{"--filter=blob:none", "--quiet", "--config=core.longpaths=true"}
-	var cmd *exec.Cmd
-	if r.URL == "" {
-		cmd = proc.CommandContext(ctx, "gh", append([]string{"repo", "clone", r.Ref.RepoArg(), tmp, "--"}, flags...)...)
-	} else {
-		cmd = proc.CommandContext(ctx, "git", append(append([]string{"clone"}, flags...), "--", r.URL, tmp)...)
-	}
-	cmd.Env = noPromptEnv()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		_ = os.RemoveAll(tmp)
-		if r.URL == "" {
-			if gerr := triage.GHError(err, out); gerr != nil {
-				return fmt.Errorf("cloning %s: %w", r.Name(), gerr)
-			}
-		}
-		msg := tail(out)
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("cloning %s: %s", r.Name(), msg)
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.RemoveAll(tmp)
-		return err
-	}
-	return nil
+	dir, err = findRevRepo(o, r)
+	return dir, &r, err
 }
 
 // noPromptEnv is the environment for git talking to a remote from the UI:

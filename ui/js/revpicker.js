@@ -2,9 +2,11 @@
 // triages the one picked as path#rev. The box may hold the checkout's
 // path, or a repository's URL or owner/repo: its checkout in the code
 // directory or the workspace is used, and one without a checkout is
-// cloned into the workspace when asked. A branch is compared with the
-// default branch, its origin branch, or any other branch (base...branch).
-import { $, esc, api, postJSON } from "./util.js";
+// listed from GitHub or GitLab, without cloning, its picks named on the
+// repository's page (https://github.com/acme/api#feature). A branch is
+// compared with the default branch, its origin branch, or any other
+// branch (base...branch).
+import { $, esc, api } from "./util.js";
 import { triageURL } from "./triage.js";
 import { codeSources } from "./settings.js";
 
@@ -31,7 +33,7 @@ const compareBase = () => (compare.startsWith("branch:") ? compare.slice(7) : ""
 // the meta line's counts, and why it is disabled, if it is.
 function branchView(b) {
   const cur = !b.remote && b.name === list.current;
-  const at = `${list.dir}#`;
+  const at = `${list.remote ? list.web : list.dir}#`;
   if (compare === "upstream") {
     if (!b.upstream) return { src: "", off: "Not on origin" };
     const counts = b.unpushed >= 0 ? `${b.unpushed} unpushed${b.unpulled > 0 ? `, ${b.unpulled} behind ${esc(b.upstream)}` : ""}` : "";
@@ -39,6 +41,8 @@ function branchView(b) {
   }
   const base = compareBase();
   if (base) return { src: `${at}${base}...${b.name}`, counts: "", off: base === b.name ? "This is the branch compared with" : "" };
+  // A branch with an open PR opens as the PR.
+  if (b.pr) return { src: b.pr, counts: b.ahead >= 0 ? `${b.ahead} ahead of ${esc(list.base)}` : "", off: "" };
   // The checked-out branch opens as the bare path, working tree included.
   const wt = cur && worktree;
   const counts = b.ahead >= 0 ? `${b.ahead} ahead of ${esc(list.base || list.base_ref)}` : "";
@@ -48,7 +52,8 @@ function branchView(b) {
 function branchRow(b) {
   const cur = !b.remote && b.name === list.current;
   const v = branchView(b);
-  const chip = cur ? ` <span class="chip">checked out${v.wt ? " · includes working tree" : ""}</span>` : "";
+  const chip = cur ? ` <span class="chip">checked out${v.wt ? " · includes working tree" : ""}</span>`
+    : b.pr && compare === "default" ? ` <span class="chip" title="Opens the PR">PR #${b.pr_number}</span>` : "";
   return `<button type="button" class="rev-item" data-src="${esc(v.src)}" ${v.off ? `disabled title="${esc(v.off)}"` : ""}>
     <span class="rev-name"><code>${esc(b.name)}</code>${chip}</span>
     <span class="rev-title">${esc(b.title)}</span>
@@ -56,10 +61,12 @@ function branchRow(b) {
 }
 
 function commitRow(c) {
-  return `<button type="button" class="rev-item" data-src="${esc(`${list.dir}#${c.oid.slice(0, 12)}`)}">
+  const src = list.remote ? `${list.web}#${c.oid}` : `${list.dir}#${c.oid.slice(0, 12)}`;
+  const files = c.files >= 0 ? `${c.files} file${c.files === 1 ? "" : "s"} ` : "";
+  return `<button type="button" class="rev-item" data-src="${esc(src)}">
     <span class="rev-name"><code>${esc(c.oid.slice(0, 8))}</code>${c.merge ? ` <span class="chip" title="Reviewed against its first parent">merge</span>` : ""}</span>
     <span class="rev-title">${esc(c.title)}</span>
-    <span class="rev-meta">${c.merge ? "" : `${c.files} file${c.files === 1 ? "" : "s"} <span class="rev-add">+${c.additions}</span> <span class="rev-del">−${c.deletions}</span> · `}${esc(c.author)} · ${ago(c.date)}</span></button>`;
+    <span class="rev-meta">${c.merge ? "" : `${files}<span class="rev-add">+${c.additions}</span> <span class="rev-del">−${c.deletions}</span> · `}${esc(c.author)} · ${ago(c.date)}</span></button>`;
 }
 
 // renderCompare fills the branch tab's "Compare with" choices from the
@@ -68,9 +75,11 @@ function renderCompare() {
   const dlg = $("#rev-picker");
   const sel = dlg.querySelector(".rev-base");
   if (compareBase() && !list.branches.some((b) => b.name === compareBase())) compare = "default";
+  // A list from the forge has no local branches to have unpushed commits.
+  if (list.remote && compare === "upstream") compare = "default";
   const base = list.base || (list.base_ref ? `origin/${list.base_ref}` : "the default branch");
   sel.innerHTML = `<option value="default">${esc(base)} (default branch)</option>
-    <option value="upstream">its origin branch (unpushed commits)</option>
+    ${list.remote ? "" : `<option value="upstream">its origin branch (unpushed commits)</option>`}
     <optgroup label="Another branch">${list.branches.map((b) => `<option value="branch:${esc(b.name)}">${esc(b.name)}</option>`).join("")}</optgroup>`;
   sel.value = compare;
   const wt = dlg.querySelector(".rev-worktree");
@@ -103,33 +112,9 @@ function status(text) {
 function show(next) {
   const dlg = $("#rev-picker");
   list = next;
-  dlg.querySelector(".rev-dir").textContent = list.repo ? `${list.repo} · ${list.dir}` : list.dir;
+  dlg.querySelector(".rev-dir").textContent = list.remote ? `${list.repo} · listed from ${list.web.split("/")[2]}, not cloned` : list.repo ? `${list.repo} · ${list.dir}` : list.dir;
   renderList();
   dlg.querySelector(".rev-filter").focus();
-}
-
-// offerClone says the repository has no checkout here, and clones it into
-// the workspace when asked.
-function offerClone(res) {
-  const dlg = $("#rev-picker");
-  const body = dlg.querySelector(".rev-list");
-  dlg.querySelector(".rev-dir").textContent = res.repo;
-  body.innerHTML = `<div class="rev-clone"><p class="hint"><b>${esc(res.repo)}</b> isn't cloned on this computer, in the code directory or the app's workspace. Clone it to pick a branch or commit in it; reviews then read that clone.</p>
-    <p class="hint">Into <code>${esc(res.clone_to)}</code></p>
-    <button type="button" class="primary rev-clone-go">Clone</button></div>`;
-  body.querySelector(".rev-clone-go").onclick = async (e) => {
-    e.target.disabled = true;
-    e.target.setAttribute("aria-busy", "true");
-    status(`Cloning ${res.repo}… a large repository takes a while.`);
-    try {
-      show(await postJSON("/api/revs/clone", { path: box, ...codeSources() }));
-      status("");
-    } catch (err) {
-      status(`Clone failed: ${err.message}`);
-      e.target.disabled = false;
-      e.target.removeAttribute("aria-busy");
-    }
-  };
 }
 
 async function open() {
@@ -149,11 +134,10 @@ async function open() {
   body.innerHTML = `<p class="hint">loading…</p>`;
   try {
     const res = await api(`/api/revs?${new URLSearchParams({ path: box, ...codeSources() })}`);
-    if (!res.dir) return offerClone(res);
     show(res);
-    // A repository named by URL is the remote's: fetch it so its branches
-    // are origin's as they are now.
-    if (res.repo) refresh();
+    // A checkout found for a repository named by URL is fetched, so its
+    // branches are origin's as they are now. A list from the forge is.
+    if (res.repo && !res.remote) refresh();
   } catch (e) {
     body.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   }
@@ -167,9 +151,9 @@ async function refresh() {
   if (!list || btn.disabled) return;
   btn.disabled = true;
   btn.setAttribute("aria-busy", "true");
-  status("Fetching origin…");
+  status(list.remote ? `Listing ${list.repo}…` : "Fetching origin…");
   try {
-    const next = await api(`/api/revs?${new URLSearchParams({ path: list.dir, fetch: "1" })}`);
+    const next = await api(`/api/revs?${new URLSearchParams(list.remote ? { path: box, ...codeSources() } : { path: list.dir, fetch: "1" })}`);
     show({ ...next, repo: list.repo });
     status(list.fetch_error ? `Showing local history: ${list.fetch_error}` : "");
   } catch (e) {

@@ -107,10 +107,12 @@ export async function cancelJob(id) {
 }
 
 export function stageText(j) {
-  const repo = /^https?:\/\//.test(j.url) ? j.url.split("/")[4] || "this repo" : "this repo";
+  const repo = /^https?:\/\//.test(j.url) ? j.url.split("/")[4]?.split("#")[0] || "this repo" : "this repo";
   const what = {
     fetch: "fetching PR and diffing",
     inspect: "reading the local changes",
+    clonerev: `getting ${repo}'s history (no files) for the first time…`,
+    fetchrev: `fetching the branch from ${repo}`,
     commit: "committing the working tree changes",
     comments: j.total ? `checking review comments ${j.done}/${j.total}` : "loading review comments",
     lint: "running static analysis over the changed lines",

@@ -30,10 +30,12 @@ type revList struct {
 	Fetched    bool   `json:"fetched,omitempty"`
 	FetchError string `json:"fetch_error,omitempty"`
 	// Repo is set when the box named a repository rather than a path.
-	// CloneTo is where it would be cloned while it has no checkout; Dir
-	// is empty then, and so are the lists.
-	Repo    string `json:"repo,omitempty"`
-	CloneTo string `json:"clone_to,omitempty"`
+	// Remote is set when it has no checkout here and the list is the
+	// forge's (revremote.go): Dir is empty, and picks are named on Web,
+	// the repository's page.
+	Repo   string `json:"repo,omitempty"`
+	Remote bool   `json:"remote,omitempty"`
+	Web    string `json:"web,omitempty"`
 }
 
 type revBranch struct {
@@ -52,6 +54,9 @@ type revBranch struct {
 	Upstream string `json:"upstream,omitempty"`
 	Unpushed int    `json:"unpushed"`
 	Unpulled int    `json:"unpulled"`
+	// PR is the branch's open PR, in a list from GitHub.
+	PR       string `json:"pr,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
 }
 
 type revCommit struct {

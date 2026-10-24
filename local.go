@@ -503,7 +503,14 @@ func (t *triager) RunLocal(ctx context.Context, path string, jo jobOptions, prog
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureLocalCodeMap(ctx, o, s.info, progress); err != nil {
+	if remoteRevDir(s.info.LocalPath) {
+		// A rev fetched from its forge has no files on disk to map: the
+		// repository is mapped as for a PR.
+		err = ensureCodeMap(ctx, o, s.info.PRRef, progress)
+	} else {
+		err = ensureLocalCodeMap(ctx, o, s.info, progress)
+	}
+	if err != nil {
 		return nil, err
 	}
 	// The branch's PR, opened from here or anywhere else, so the result
@@ -593,10 +600,33 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("enter a repository path")
 	}
-	j, ctx, progress := t.newJob("triage", path)
+	return t.startLocalJob(path, func(context.Context, func(string, int, int)) (string, error) { return path, nil }, jo), nil
+}
+
+// startRemoteRev triages a rev picked from a forge's list, src being
+// https://host/owner/repo#rev: it is fetched into the PR clone first
+// (revremote.go), and triaged there as a local rev.
+func (t *triager) startRemoteRev(src string, r revRepo, rev string, jo jobOptions) *job {
+	return t.startLocalJob(src, func(ctx context.Context, progress func(string, int, int)) (string, error) {
+		dir, local, err := fetchRemoteRev(ctx, t.fetcher.Dir, r, rev, progress)
+		if err != nil {
+			return "", err
+		}
+		return dir + "#" + local, nil
+	}, jo)
+}
+
+// startLocalJob runs a local triage job named label on the path resolve
+// returns.
+func (t *triager) startLocalJob(label string, resolve func(context.Context, func(string, int, int)) (string, error), jo jobOptions) *job {
+	j, ctx, progress := t.newJob("triage", label)
 	go func() {
 		defer t.saveJobLog(j) // after the job's outcome is set below
-		r, err := t.RunLocal(ctx, path, jo, progress)
+		path, err := resolve(ctx, progress)
+		var r *PRResult
+		if err == nil {
+			r, err = t.RunLocal(ctx, path, jo, progress)
+		}
 		j.finish(err)
 		t.mu.Lock()
 		defer t.mu.Unlock()
@@ -612,7 +642,7 @@ func (t *triager) startLocal(path string, jo jobOptions) (*job, error) {
 			j.markCached(r)
 		}
 	}()
-	return j, nil
+	return j
 }
 
 // publishOutcome is what publishLocal did: opened the PR at URL, or, when
