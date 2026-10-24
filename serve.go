@@ -1721,8 +1721,9 @@ type providerChoice struct {
 // ones it can't and why, and the server's defaults.
 func providerList(ctx context.Context, o options, refresh bool) map[string]any {
 	d := resolveProviders(o)
-	var avail []providerChoice
-	var missing []map[string]string
+	// Empty lists, not null, on a machine with no provider: the UI lists them.
+	avail := []providerChoice{}
+	missing := []map[string]string{}
 	for _, c := range llm.Catalogs(ctx, o.openjevURL, refresh) {
 		if !c.Available {
 			missing = append(missing, map[string]string{"id": c.Provider, "reason": c.Reason})
