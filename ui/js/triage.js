@@ -42,7 +42,7 @@ export const isLocalPath = (s) => /^([/~.\\]|[A-Za-z]:)/.test(s) || (!/^https?:\
 // the rev may name either.
 export function syncURLKind(kind, state = "") {
   const url = $("#url").value.trim();
-  $("#url").dataset.kind = kind || (!url ? "" : !isLocalPath(url) ? "pr" : url.includes("#") ? "branch" : "repo");
+  $("#url").dataset.kind = kind || (!url ? "" : url.includes("...") ? "compare" : !isLocalPath(url) ? "pr" : url.includes("#") ? "branch" : "repo");
   $("#url").dataset.state = state;
 }
 

@@ -1,5 +1,5 @@
 // Sidebar: triaged PRs, latest result per PR, grouped by repo.
-import { $, esc, api, postJSON, pills, ask, say, kindBadge, prState, USED_EVENT } from "./util.js";
+import { $, esc, api, postJSON, pills, ask, say, kindBadge, prState, USED_EVENT, revLabel } from "./util.js";
 import { S, repoName, localSrc, render } from "./state.js";
 import { impactPill, likelihoodPill } from "./scores.js";
 import { markTriaging } from "./jobs.js";
@@ -257,7 +257,7 @@ function renderList(list) {
       <div class="repo-prs">${prs.map((r, i) => `
         <a class="pr-item ${S.result?.key === r.key ? "active" : ""} ${extra(r, i) ? "extra" : ""}" data-key="${esc(r.key)}" data-src="${esc(localSrc(r) || `https://${r.pr.host || "github.com"}/${r.pr.owner}/${r.pr.repo}/pull/${r.pr.number}`)}">
           <button class="pr-del" title="Delete this change from the list" aria-label="Delete ${esc(r.local_path ? r.head_ref : `#${r.pr.number}`)}">✕</button>
-          <span class="t">${kindBadge(r)}${r.local_path ? `<code>${esc(r.head_ref)}</code>` : `#${r.pr.number}`} ${esc(r.title)}</span>
+          <span class="t">${kindBadge(r)}${r.local_path ? `<code>${esc(revLabel(r))}</code>` : `#${r.pr.number}`} ${esc(r.title)}</span>
           <span class="m">${pills(r.counts)} ${r.impact ? impactPill(r.impact, "imp") : ""}${r.likelihood ? likelihoodPill(r.likelihood, "lik") : ""} <span>${esc(r.state.toLowerCase())}</span> <span title="${esc(r.classifier)}">· ${esc(r.classifier.split("/").pop())}</span></span>
         </a>`).join("")}${hidden ? `
         <button class="repo-more" data-repo="${esc(repo)}" data-more="${moreLabel}">${all ? "Show less" : moreLabel}</button>` : ""}</div>

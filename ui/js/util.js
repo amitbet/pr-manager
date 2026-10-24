@@ -22,15 +22,17 @@ export const $ = (s) => document.querySelector(s);
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 // kindBadge is the colored icon square before a title saying what was
-// triaged: a PR, a local repo's working tree, a branch in it or one commit.
+// triaged: a PR, a local repo's working tree, a branch in it, one commit,
+// or a comparison of a branch or commit with a base (base...head).
 // A PR's is colored by its state (open, merged or closed).
 const KIND_ICON = {
   pr: `<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/>`,
   repo: `<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/><circle cx="12" cy="13" r="2"/><path d="M7 13h3M14 13h3"/>`,
   branch: `<circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 3v12M18 9a9 9 0 0 1-9 9"/>`,
   commit: `<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>`,
+  compare: `<circle cx="5" cy="6" r="3"/><circle cx="19" cy="18" r="3"/><path d="M12 6h5a2 2 0 0 1 2 2v7M12 18H7a2 2 0 0 1-2-2V9M15 9l-3-3 3-3M9 15l3 3-3 3"/>`,
 };
-export const KIND_TITLE = { pr: "pull request", repo: "working tree", branch: "local branch", commit: "local commit" };
+export const KIND_TITLE = { pr: "pull request", repo: "working tree", branch: "local branch", commit: "local commit", compare: "comparison" };
 // revParts splits a local review's rev, base...branch for a branch
 // compared with another, into the branch and what it was compared with
 // ("" for the default branch).
@@ -38,7 +40,14 @@ export const revParts = (rev) => {
   const [base, head] = String(rev || "").includes("...") ? rev.split("...") : ["", rev || ""];
   return { base, head };
 };
-export const kindOf = (p) => (!p.local_path ? "pr" : p.single_commit ? "commit" : p.rev ? "branch" : "repo");
+export const kindOf = (p) => (!p.local_path ? "pr" : p.single_commit ? "commit" : p.rev?.includes("...") ? "compare" : p.rev ? "branch" : "repo");
+// revLabel names a local review in a list: its branch or commit, and
+// base…head for a comparison, SHAs shortened.
+export const revLabel = (p) => {
+  const sha = (s) => (/^[0-9a-f]{12,40}$/.test(s) ? s.slice(0, 8) : s);
+  const { base, head } = revParts(p.rev);
+  return base ? `${sha(base)}…${sha(head)}` : p.head_ref;
+};
 export const prState = (p) => (kindOf(p) === "pr" && p.state ? p.state.toLowerCase() : "");
 export const kindBadge = (p) => {
   const k = kindOf(p);
